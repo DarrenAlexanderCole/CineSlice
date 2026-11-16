@@ -129,39 +129,59 @@ public struct LoopRange: Codable, Hashable, Sendable {
 
 // MARK: - Export
 
+/// What the exported file contains. Preview always plays the full mix.
+public enum SoundPolicy: String, Codable, CaseIterable, Sendable {
+    /// No sound: for attaching the licensed song inside Instagram afterwards.
+    case silent
+    /// The clips' own sound; the reference music is left out.
+    case clipsOnly
+    /// Exactly what the preview plays. For private drafts, not for Instagram upload.
+    case clipsAndMusic
+
+    public var includesClipAudio: Bool { self != .silent }
+    public var includesMusic: Bool { self == .clipsAndMusic }
+}
+
 public struct ExportSettings: Codable, Hashable, Sendable {
     public var width: Int
     public var height: Int
     public var frameRate: Int
-    /// false = no original clip sound in the export.
-    public var includeClipAudio: Bool
-    /// false = leave the reference music out. Both off = silent export
-    /// (for attaching licensed music inside Instagram).
-    public var includeMusic: Bool
+    /// nil until the user picks one; see `Project.exportSoundPolicy` for the default.
+    public var soundPolicy: SoundPolicy?
 
-    public init(
-        width: Int = 1080, height: Int = 1920, frameRate: Int = 30,
-        includeClipAudio: Bool = true, includeMusic: Bool = true
-    ) {
+    public init(width: Int = 1080, height: Int = 1920, frameRate: Int = 30, soundPolicy: SoundPolicy? = nil) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
-        self.includeClipAudio = includeClipAudio
-        self.includeMusic = includeMusic
+        self.soundPolicy = soundPolicy
     }
 
     enum CodingKeys: String, CodingKey {
-        case width, height, frameRate, includeClipAudio, includeMusic
+        case width, height, frameRate, soundPolicy
+        /// Phase 1: false meant a silent export.
+        case includeClipAudio
     }
 
-    // Tolerant decoding: Phase 1 projects have no includeMusic.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         width = try c.decode(Int.self, forKey: .width)
         height = try c.decode(Int.self, forKey: .height)
         frameRate = try c.decode(Int.self, forKey: .frameRate)
-        includeClipAudio = try c.decodeIfPresent(Bool.self, forKey: .includeClipAudio) ?? true
-        includeMusic = try c.decodeIfPresent(Bool.self, forKey: .includeMusic) ?? true
+        if let policy = try c.decodeIfPresent(SoundPolicy.self, forKey: .soundPolicy) {
+            soundPolicy = policy
+        } else {
+            // Clip audio on was the Phase 1 default, so only "off" counts as a choice.
+            let clipAudio = try c.decodeIfPresent(Bool.self, forKey: .includeClipAudio) ?? true
+            soundPolicy = clipAudio ? nil : .silent
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(width, forKey: .width)
+        try c.encode(height, forKey: .height)
+        try c.encode(frameRate, forKey: .frameRate)
+        try c.encodeIfPresent(soundPolicy, forKey: .soundPolicy)
     }
 
     public static let vertical1080 = ExportSettings()

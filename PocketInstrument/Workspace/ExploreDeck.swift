@@ -11,6 +11,9 @@ struct ExploreDeck: View {
         VStack(spacing: 12) {
             if let clip = model.selectedClip, let source = model.selectedSource {
                 Filmstrip(model: model, clip: clip, source: source)
+                if let music = model.project.referenceAudio, let waveform = model.waveform {
+                    TrimMusicStrip(model: model, clip: clip, source: source, music: music, waveform: waveform)
+                }
                 readouts(range: model.draftRange ?? clip.sourceRange, frameRate: source.frameRate)
             }
             TransportRow(model: model) {
@@ -199,5 +202,56 @@ struct Filmstrip: View {
                 }
                 model.perform(TrimClipCommand(clipID: clip.id, sourceRange: r))
             }
+    }
+}
+
+/// The reference music that plays under each frame of the source, aligned with the
+/// filmstrip above. Moving the In point slides it, because the frame at In always plays
+/// at the clip's place in the sequence. Outside In/Out is dimmed (not heard).
+struct TrimMusicStrip: View {
+    var model: WorkspaceModel
+    let clip: TimelineClip
+    let source: SourceAsset
+    let music: AudioTrack
+    let waveform: Waveform
+
+    private let height: CGFloat = 24
+    private let handleWidth: CGFloat = 16  // matches the filmstrip's inset
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let range = model.draftRange ?? clip.sourceRange
+            let clipStart = model.sequenceMap.compositionStart(of: clip.id) ?? .zero
+            // composition = clipStart + (source − In) / speed; audio = composition − offset
+            let audioAt = { (s: MediaTime) -> MediaTime in
+                let local = s - range.start
+                return clipStart + (clip.speed == 1 ? local : local.scaled(by: 1 / clip.speed)) - music.offset
+            }
+            let inX = x(for: range.start, width)
+            let outX = x(for: range.end, width)
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.obsidian)
+                WaveformBars(waveform: waveform, from: audioAt(.zero), to: audioAt(source.duration))
+                Rectangle().fill(.black.opacity(0.55)).frame(width: max(0, inX), height: height)
+                Rectangle().fill(.black.opacity(0.55))
+                    .frame(width: max(0, width - outX), height: height)
+                    .offset(x: outX)
+                Rectangle().fill(Theme.ivory)
+                    .frame(width: 2, height: height)
+                    .offset(x: x(for: model.currentTime, width) - 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .frame(height: height)
+        .padding(.horizontal, handleWidth / 2)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func x(for t: MediaTime, _ width: CGFloat) -> CGFloat {
+        let d = source.duration.seconds
+        guard d > 0 else { return 0 }
+        return CGFloat(min(max(t.seconds / d, 0), 1)) * width
     }
 }

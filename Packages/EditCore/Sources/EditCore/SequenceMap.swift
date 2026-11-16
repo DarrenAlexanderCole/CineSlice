@@ -6,10 +6,11 @@ import Foundation
 /// - **clip-local time**: offset from the clip's first frame on the composition timeline
 /// - **composition time**: position in the assembled sequence (what the preview player reports)
 /// - **audio-reference time**: position inside the reference track
-///   (`composition time - AudioTrack.offset`; see `MusicPlacement`)
+///   (`composition time - AudioTrack.offset`; see `MusicPlacement` for where it's audible)
 ///
 /// source = sourceRange.start + clipLocal × speed
 /// composition = entry.start + clipLocal
+/// audio = composition − offset
 public struct SequenceMap: Sendable {
     public struct Entry: Hashable, Sendable {
         public let clipID: UUID
@@ -21,8 +22,11 @@ public struct SequenceMap: Sendable {
 
     public let entries: [Entry]
     public let duration: MediaTime
+    /// `AudioTrack.offset` of the reference music, or nil when there's none.
+    public let referenceOffset: MediaTime?
 
     public init(project: Project) {
+        referenceOffset = project.referenceAudio?.offset
         var cursor = MediaTime.zero
         var built: [Entry] = []
         for (i, clip) in project.clips.enumerated() {
@@ -62,4 +66,12 @@ public struct SequenceMap: Sendable {
         let local = e.speed == 1 ? sourceLocal : sourceLocal.scaled(by: 1 / e.speed)
         return e.compositionRange.start + local.clamped(to: .zero, e.compositionRange.duration)
     }
+
+    // MARK: Audio-reference time
+
+    /// Position in the reference song heard at composition time `t` (negative or past
+    /// the song's end means no music there). nil without reference music.
+    public func audioTime(atComposition t: MediaTime) -> MediaTime? { referenceOffset.map { t - $0 } }
+
+    public func compositionTime(atAudio t: MediaTime) -> MediaTime? { referenceOffset.map { t + $0 } }
 }

@@ -168,7 +168,7 @@ enum MediaImporter {
             tempURL: temp, originalName: "Sound from video", store: store, projectID: projectID)
     }
 
-    private static func adoptAudio(tempURL: URL, originalName: String, store: ProjectStore, projectID: UUID)
+    static func adoptAudio(tempURL: URL, originalName: String, store: ProjectStore, projectID: UUID)
         async throws -> AudioTrack
     {
         let name = try store.adoptMedia(at: tempURL, projectID: projectID)

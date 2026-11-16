@@ -10,7 +10,18 @@ import SwiftUI
 @MainActor
 @Observable
 final class WorkspaceModel {
-    enum Mode: String, CaseIterable { case arrange, explore, mix }
+    enum Mode: String, CaseIterable {
+        case arrange, explore, mix
+
+        /// User-facing name. The explore state is shown as "Trim".
+        var title: String {
+            switch self {
+            case .arrange: "Arrange"
+            case .explore: "Trim"
+            case .mix: "Mix"
+            }
+        }
+    }
 
     private(set) var project: Project
     private(set) var mode: Mode = .arrange
@@ -70,6 +81,9 @@ final class WorkspaceModel {
 
     /// One frame at the export rate: the nudge step for music and loop edges.
     var sequenceFrame: MediaTime { MediaTime(value: 1, timescale: Int32(project.exportSettings.frameRate)) }
+
+    /// The fine music nudge.
+    static let tenMilliseconds = MediaTime(value: 10, timescale: 1000)
 
     // MARK: Lifecycle
 
@@ -136,7 +150,7 @@ final class WorkspaceModel {
         shape.clipAudioVolume = 1
         shape.referenceAudio?.volume = 1
         shape.loop = nil
-        shape.exportSettings.soundPolicy = .clipsAndMusic  // preview always plays the full mix
+        shape.exportSettings = .vertical1080  // preview always plays the full mix; the policy is export-only
         return shape
     }
 
@@ -299,6 +313,33 @@ final class WorkspaceModel {
         perform(SetLoopCommand(loop: LoopRange(range: range, isEnabled: true)))
     }
 
+    /// Loops the selected clip's place in the sequence.
+    func loopSelectedClip() {
+        guard let id = selectedClipID, let range = sequenceMap.entry(for: id)?.compositionRange else { return }
+        setLoopRange(range)
+        Haptics.tap()
+    }
+
+    func loopWholeSequence() {
+        setLoopRange(MediaTimeRange(start: .zero, duration: project.duration))
+        Haptics.tap()
+    }
+
+    /// Loop In / Loop Out at the playhead, keeping the other edge when it still makes sense.
+    func setLoopIn() {
+        guard let loop = LoopRange.settingStart(currentTime, of: activeLoop, sequenceDuration: project.duration)
+        else { return }
+        perform(SetLoopCommand(loop: loop))
+        Haptics.press()
+    }
+
+    func setLoopOut() {
+        guard let loop = LoopRange.settingEnd(currentTime, of: activeLoop, sequenceDuration: project.duration)
+        else { return }
+        perform(SetLoopCommand(loop: loop))
+        Haptics.press()
+    }
+
     // MARK: Arrange edits
 
     func addSources(_ sources: [SourceAsset]) {
@@ -332,9 +373,9 @@ final class WorkspaceModel {
     func setMusicVolume(_ volume: Float) { perform(SetMusicVolumeCommand(volume: volume)) }
     func setMusicOffset(_ offset: MediaTime) { perform(SetMusicOffsetCommand(offset: offset)) }
 
-    func nudgeMusic(frames: Int) {
+    /// Slides the music later (positive) or earlier (negative) by `step`.
+    func nudgeMusic(by step: MediaTime) {
         guard let music = project.referenceAudio else { return }
-        let step = sequenceFrame.scaled(by: Double(frames))
         setMusicOffset(music.offset + step)
         Haptics.detent()
     }
@@ -354,6 +395,15 @@ final class WorkspaceModel {
         importStatus = "Extracting sound…"
         do {
             finishMusicImport(try await MediaImporter.importAudio(fromVideo: item, store: store, projectID: project.id))
+        } catch {
+            finishMusicImport(error)
+        }
+    }
+
+    func addDemoClickTrack() async {
+        importStatus = "Generating click track…"
+        do {
+            finishMusicImport(try await DemoMediaGenerator.makeClickTrack(store: store, projectID: project.id))
         } catch {
             finishMusicImport(error)
         }

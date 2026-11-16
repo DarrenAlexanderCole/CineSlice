@@ -25,9 +25,6 @@ public struct MusicPlacement: Equatable, Sendable {
 }
 
 extension AudioTrack {
-    public func audioTime(atComposition t: MediaTime) -> MediaTime { t - offset }
-    public func compositionTime(atAudio t: MediaTime) -> MediaTime { t + offset }
-
     /// Keeps at least `minimumClipDuration` of music overlapping the sequence, so
     /// the music can't be dragged out of reach.
     public func clampedOffset(_ proposed: MediaTime, sequenceDuration: MediaTime) -> MediaTime {
@@ -50,34 +47,95 @@ extension LoopRange {
     }
 }
 
-// MARK: - Export sound policy
+extension LoopRange {
+    /// Loop In at `t`: keeps the current end when it's still after `t`, otherwise loops to the sequence end.
+    public static func settingStart(
+        _ t: MediaTime, of current: LoopRange?, sequenceDuration duration: MediaTime
+    ) -> LoopRange? {
+        guard duration >= minimumClipDuration else { return nil }
+        let start = t.clamped(to: .zero, duration - minimumClipDuration)
+        var end = duration
+        if let current, current.range.end >= start + minimumClipDuration { end = current.range.end }
+        return LoopRange(range: MediaTimeRange(start: start, end: end)).clamped(toSequence: duration)
+    }
 
-/// What the exported file contains. Preview always plays the full mix.
-public enum SoundPolicy: String, CaseIterable, Sendable {
-    case clipsAndMusic
-    case clipsOnly
-    case musicOnly
-    /// For attaching a licensed song inside Instagram afterwards.
-    case silent
-
-    public var includesClipAudio: Bool { self == .clipsAndMusic || self == .clipsOnly }
-    public var includesMusic: Bool { self == .clipsAndMusic || self == .musicOnly }
+    /// Loop Out at `t`: keeps the current start when it's still before `t`, otherwise loops from 0.
+    public static func settingEnd(
+        _ t: MediaTime, of current: LoopRange?, sequenceDuration duration: MediaTime
+    ) -> LoopRange? {
+        guard duration >= minimumClipDuration else { return nil }
+        let end = t.clamped(to: minimumClipDuration, duration)
+        var start = MediaTime.zero
+        if let current, current.range.start <= end - minimumClipDuration { start = current.range.start }
+        return LoopRange(range: MediaTimeRange(start: start, end: end)).clamped(toSequence: duration)
+    }
 }
 
-extension ExportSettings {
-    public var soundPolicy: SoundPolicy {
-        get {
-            switch (includeClipAudio, includeMusic) {
-            case (true, true): return .clipsAndMusic
-            case (true, false): return .clipsOnly
-            case (false, true): return .musicOnly
-            case (false, false): return .silent
-            }
+// MARK: - Export sound policy
+
+extension Project {
+    /// The policy export uses: the user's choice, otherwise Silent when there's reference music
+    /// (so the licensed song can be added in Instagram) and clip sound when there isn't.
+    /// "Clips + music" without music is just clip sound.
+    public var exportSoundPolicy: SoundPolicy {
+        let hasMusic = referenceAudio != nil
+        let chosen = exportSettings.soundPolicy ?? (hasMusic ? .silent : .clipsOnly)
+        return chosen == .clipsAndMusic && !hasMusic ? .clipsOnly : chosen
+    }
+}
+
+// MARK: - Music sync note
+
+/// Where the reference song sits against the video, for lining up the licensed
+/// copy inside Instagram by hand. Written as a JSON sidecar next to each export.
+public struct MusicSyncNote: Codable, Equatable, Sendable {
+    public var referenceFilename: String
+    /// Composition time of song 0 (negative: the song starts before the video).
+    public var offset: MediaTime
+    public var offsetSeconds: Double
+    public var compositionDurationSeconds: Double
+    /// Song position heard on the first frame.
+    public var songStartSeconds: Double
+    public var soundPolicy: SoundPolicy
+    public var exportFilename: String?
+    /// e.g. "In Instagram, start the song at 0:12.40."
+    public var instruction: String
+    public var caveat: String
+
+    public static let caveatText =
+        "Instagram doesn't let apps set where its music starts, so match it by hand there. "
+        + "It may be off by a fraction of a second; check it before posting."
+
+    /// nil when the project has no reference music.
+    public init?(project: Project, exportFilename: String? = nil) {
+        guard let music = project.referenceAudio else { return nil }
+        referenceFilename = music.originalFilename ?? music.fileName
+        offset = music.offset
+        offsetSeconds = music.offset.seconds
+        compositionDurationSeconds = project.duration.seconds
+        songStartSeconds = max(0, -music.offset.seconds)
+        soundPolicy = project.exportSoundPolicy
+        self.exportFilename = exportFilename
+        if music.offset <= .zero {
+            instruction = "In Instagram, start the song at \(Self.clock(songStartSeconds))."
+        } else {
+            instruction =
+                "In Instagram, start the song at 0:00.00. In this edit it comes in "
+                + "\(Self.clock(music.offset.seconds)) after the video starts, but Instagram plays music from the first frame."
         }
-        set {
-            includeClipAudio = newValue.includesClipAudio
-            includeMusic = newValue.includesMusic
-        }
+        caveat = Self.caveatText
+    }
+
+    /// m:ss.cc, the way music apps show song positions.
+    public static func clock(_ seconds: Double) -> String {
+        let centis = Int((max(0, seconds) * 100).rounded())
+        return String(format: "%d:%02d.%02d", centis / 6000, (centis / 100) % 60, centis % 100)
+    }
+
+    public var jsonData: Data {
+        let e = JSONEncoder()
+        e.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return (try? e.encode(self)) ?? Data()
     }
 }
 

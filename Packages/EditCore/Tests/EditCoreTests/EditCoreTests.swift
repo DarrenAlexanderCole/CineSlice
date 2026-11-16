@@ -193,13 +193,6 @@ final class MusicTests: XCTestCase {
         XCTAssertNil(MusicPlacement(track: track(seconds: 4, offset: 10), sequenceDuration: MediaTime(seconds: 10)))
     }
 
-    func testAudioReferenceMappingRoundTrips() {
-        let t = track(seconds: 60, offset: -3)
-        let audio = t.audioTime(atComposition: MediaTime(seconds: 1))
-        XCTAssertEqual(audio, MediaTime(seconds: 4))
-        XCTAssertEqual(t.compositionTime(atAudio: audio), MediaTime(seconds: 1))
-    }
-
     func testOffsetCommandKeepsMusicInReach() throws {
         var p = project(seconds: 10)
         try SetReferenceAudioCommand(track: track(seconds: 30)).apply(to: &p)
@@ -231,23 +224,6 @@ final class MusicTests: XCTestCase {
         XCTAssertNil(past.clamped(toSequence: .zero))
     }
 
-    func testSoundPolicyMapsToFlags() {
-        var s = ExportSettings()
-        XCTAssertEqual(s.soundPolicy, .clipsAndMusic)
-        s.soundPolicy = .musicOnly
-        XCTAssertFalse(s.includeClipAudio)
-        XCTAssertTrue(s.includeMusic)
-        s.soundPolicy = .silent
-        XCTAssertEqual(s.soundPolicy, .silent)
-    }
-
-    func testPhase1ExportSettingsStillDecode() throws {
-        let json = #"{"width":1080,"height":1920,"frameRate":30,"includeClipAudio":false}"#
-        let s = try JSONDecoder().decode(ExportSettings.self, from: Data(json.utf8))
-        XCTAssertFalse(s.includeClipAudio)
-        XCTAssertTrue(s.includeMusic)
-    }
-
     func testWaveformEnvelopeAndCache() {
         let w = Waveform(peaksPerSecond: 10, peaks: (0..<20).map { Float($0) / 20 })
         // 2s of audio in 2 buckets: max of each second.
@@ -256,5 +232,232 @@ final class MusicTests: XCTestCase {
         XCTAssertEqual(w.envelope(from: MediaTime(seconds: -2), to: .zero, buckets: 2), [0, 0])
         XCTAssertEqual(Waveform(data: w.data), w)
         XCTAssertNil(Waveform(data: Data([1, 2, 3])))
+    }
+
+    // MARK: Audio-reference mapping
+
+    func testSequenceMapAudioTimeWithPositiveOffset() throws {
+        var p = project(seconds: 10)
+        try SetReferenceAudioCommand(track: track(seconds: 30, offset: 2)).apply(to: &p)
+        let map = SequenceMap(project: p)
+        // Song 0 enters 2s into the video; before that the song position is negative (silence).
+        XCTAssertEqual(map.audioTime(atComposition: MediaTime(seconds: 5)), MediaTime(seconds: 3))
+        XCTAssertEqual(map.audioTime(atComposition: .zero), MediaTime(seconds: -2))
+        XCTAssertEqual(map.compositionTime(atAudio: .zero), MediaTime(seconds: 2))
+    }
+
+    func testSequenceMapAudioTimeWithNegativeOffset() throws {
+        // The song starts 12.4s before the video: the first frame hears song 12.4s.
+        var p = project(seconds: 10)
+        try SetReferenceAudioCommand(track: track(seconds: 60, offset: -12.4)).apply(to: &p)
+        let map = SequenceMap(project: p)
+        XCTAssertEqual(map.audioTime(atComposition: .zero), MediaTime(seconds: 12.4))
+        XCTAssertEqual(map.audioTime(atComposition: MediaTime(seconds: 1)), MediaTime(seconds: 13.4))
+        let back = map.compositionTime(atAudio: MediaTime(seconds: 13.4))
+        XCTAssertEqual(back, MediaTime(seconds: 1))
+        XCTAssertEqual(map.compositionTime(atAudio: .zero), MediaTime(seconds: -12.4))
+    }
+
+    func testSequenceMapWithoutMusicHasNoAudioTime() {
+        let map = SequenceMap(project: project(seconds: 10))
+        XCTAssertNil(map.audioTime(atComposition: .zero))
+        XCTAssertNil(map.compositionTime(atAudio: .zero))
+    }
+
+    // MARK: Offset commands
+
+    func testFrameAndMillisecondNudgesAreExactAndUndoable() throws {
+        var p = project(seconds: 10)
+        var undo = UndoStack()
+        try undo.perform(SetReferenceAudioCommand(track: track(seconds: 30)), on: &p)
+        let frame = MediaTime(value: 1, timescale: 30)
+        let tenMs = MediaTime(value: 10, timescale: 1000)
+        try undo.perform(SetMusicOffsetCommand(offset: p.referenceAudio!.offset - frame), on: &p)
+        try undo.perform(SetMusicOffsetCommand(offset: p.referenceAudio!.offset + tenMs), on: &p)
+        // −1/30 s + 10 ms, held exactly as a rational.
+        XCTAssertEqual(p.referenceAudio?.offset, MediaTime(value: -70, timescale: 3000))
+        XCTAssertEqual(undo.undo(&p), "Move Music")
+        XCTAssertEqual(p.referenceAudio?.offset, MediaTime.zero - frame)
+        XCTAssertEqual(undo.undo(&p), "Move Music")
+        XCTAssertEqual(p.referenceAudio?.offset, .zero)
+        XCTAssertEqual(undo.undo(&p), "Set Music")
+        XCTAssertNil(p.referenceAudio)
+    }
+
+    func testReplaceAndRemoveMusicAreUndoable() throws {
+        var p = project(seconds: 10)
+        var undo = UndoStack()
+        let first = track(seconds: 30)
+        var second = track(seconds: 20)
+        second.fileName = "b.wav"
+        try undo.perform(SetReferenceAudioCommand(track: first), on: &p)
+        try undo.perform(SetReferenceAudioCommand(track: second), on: &p)
+        try undo.perform(SetReferenceAudioCommand(track: nil), on: &p)
+        XCTAssertNil(p.referenceAudio)
+        undo.undo(&p)
+        XCTAssertEqual(p.referenceAudio?.fileName, "b.wav")
+        undo.undo(&p)
+        XCTAssertEqual(p.referenceAudio, first)
+    }
+
+    // MARK: Loop ranges
+
+    func testLoopInAndOutAtPlayhead() {
+        let d = MediaTime(seconds: 10)
+        let bar = LoopRange(range: MediaTimeRange(start: MediaTime(seconds: 2), end: MediaTime(seconds: 4)))
+        // Loop In inside the current loop keeps its end.
+        XCTAssertEqual(
+            LoopRange.settingStart(MediaTime(seconds: 3), of: bar, sequenceDuration: d)?.range,
+            MediaTimeRange(start: MediaTime(seconds: 3), end: MediaTime(seconds: 4)))
+        // Loop In after the current end loops to the end of the sequence.
+        XCTAssertEqual(
+            LoopRange.settingStart(MediaTime(seconds: 6), of: bar, sequenceDuration: d)?.range,
+            MediaTimeRange(start: MediaTime(seconds: 6), end: d))
+        // Loop Out after the start keeps the start; before it, loops from 0.
+        XCTAssertEqual(
+            LoopRange.settingEnd(MediaTime(seconds: 8), of: bar, sequenceDuration: d)?.range,
+            MediaTimeRange(start: MediaTime(seconds: 2), end: MediaTime(seconds: 8)))
+        XCTAssertEqual(
+            LoopRange.settingEnd(MediaTime(seconds: 1), of: bar, sequenceDuration: d)?.range,
+            MediaTimeRange(start: .zero, end: MediaTime(seconds: 1)))
+        // Without a loop: In → to the end, Out → from 0. Both come back enabled.
+        let fresh = LoopRange.settingStart(MediaTime(seconds: 9.99), of: nil, sequenceDuration: d)
+        XCTAssertEqual(fresh?.range.end, d)
+        XCTAssertEqual(fresh?.range.duration, minimumClipDuration)
+        XCTAssertEqual(fresh?.isEnabled, true)
+        XCTAssertNil(LoopRange.settingEnd(.zero, of: nil, sequenceDuration: .zero))
+    }
+
+    func testLoopToggleIsUndoableAndPersists() throws {
+        var p = project(seconds: 10)
+        var undo = UndoStack()
+        let bar = LoopRange(range: MediaTimeRange(start: MediaTime(seconds: 2), end: MediaTime(seconds: 4)))
+        try undo.perform(SetLoopCommand(loop: bar), on: &p)
+        var off = bar
+        off.isEnabled = false
+        try undo.perform(SetLoopCommand(loop: off), on: &p)
+        XCTAssertEqual(p.loop?.isEnabled, false)
+        let decoded = try JSONDecoder().decode(Project.self, from: JSONEncoder().encode(p))
+        XCTAssertEqual(decoded.loop, off)
+        undo.undo(&p)
+        XCTAssertEqual(p.loop, bar)
+    }
+
+    // MARK: Export sound policy
+
+    func testSoundPolicyDefaultsToSilentWithMusic() throws {
+        var p = project(seconds: 10)
+        XCTAssertEqual(p.exportSoundPolicy, .clipsOnly)
+        try SetReferenceAudioCommand(track: track(seconds: 30)).apply(to: &p)
+        XCTAssertEqual(p.exportSoundPolicy, .silent)
+        p.exportSettings.soundPolicy = .clipsAndMusic
+        XCTAssertEqual(p.exportSoundPolicy, .clipsAndMusic)
+        // A chosen "clips + music" means clip sound once the music is removed.
+        try SetReferenceAudioCommand(track: nil).apply(to: &p)
+        XCTAssertEqual(p.exportSoundPolicy, .clipsOnly)
+        XCTAssertFalse(SoundPolicy.silent.includesClipAudio || SoundPolicy.silent.includesMusic)
+        XCTAssertFalse(SoundPolicy.clipsOnly.includesMusic)
+    }
+
+    func testExportSettingsRoundTripWithoutLegacyKeys() throws {
+        let settings = ExportSettings(soundPolicy: .clipsAndMusic)
+        let data = try JSONEncoder().encode(settings)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("includeClipAudio"))
+        XCTAssertEqual(try JSONDecoder().decode(ExportSettings.self, from: data), settings)
+    }
+
+    // MARK: Older project files
+
+    /// A project.json exactly as Phase 1 wrote it (no music, no loop, includeClipAudio flag).
+    private func phase1JSON(includeClipAudio: Bool) -> String {
+        """
+        {
+          "clipAudioVolume" : 1,
+          "clips" : [
+            {
+              "framing" : "fill",
+              "id" : "6B1F1D1C-6C1A-4F55-9E0E-0A8C0C9B6A01",
+              "sourceID" : "0F8F3C2E-1E9B-4A2B-8F3B-7E2F0C1D2A01",
+              "sourceRange" : {
+                "duration" : { "timescale" : 600, "value" : 1800 },
+                "start" : { "timescale" : 30, "value" : 15 }
+              },
+              "speed" : 1
+            }
+          ],
+          "createdAt" : 784900000.5,
+          "exportSettings" : {
+            "frameRate" : 30,
+            "height" : 1920,
+            "includeClipAudio" : \(includeClipAudio),
+            "width" : 1080
+          },
+          "id" : "A0F1B2C3-D4E5-4F60-8172-93A4B5C6D7E8",
+          "modifiedAt" : 784900100.25,
+          "name" : "Beach day",
+          "schemaVersion" : 1,
+          "sources" : [
+            {
+              "duration" : { "timescale" : 600, "value" : 3600 },
+              "fileName" : "4C1D.mov",
+              "hasAudio" : true,
+              "height" : 1920,
+              "id" : "0F8F3C2E-1E9B-4A2B-8F3B-7E2F0C1D2A01",
+              "importedAt" : 784900000.5,
+              "nominalFrameRate" : 29.97,
+              "originalFilename" : "IMG_0001.MOV",
+              "width" : 1080
+            }
+          ],
+          "volumeAutomation" : [ ]
+        }
+        """
+    }
+
+    func testPhase1ProjectFileStillOpens() throws {
+        let p = try ProjectStore.decoder.decode(Project.self, from: Data(phase1JSON(includeClipAudio: true).utf8))
+        XCTAssertEqual(p.name, "Beach day")
+        XCTAssertEqual(p.clips.count, 1)
+        XCTAssertEqual(p.clips[0].sourceRange.start, MediaTime(seconds: 0.5))
+        XCTAssertEqual(p.duration, MediaTime(seconds: 3))
+        XCTAssertNil(p.referenceAudio)
+        XCTAssertNil(p.loop)
+        XCTAssertNil(p.exportSettings.soundPolicy)
+        XCTAssertEqual(p.exportSoundPolicy, .clipsOnly)
+
+        let silent = try ProjectStore.decoder.decode(
+            Project.self, from: Data(phase1JSON(includeClipAudio: false).utf8))
+        XCTAssertEqual(silent.exportSettings.soundPolicy, .silent)
+
+        // Saving rewrites it in the current format, and it still reads back the same.
+        let again = try ProjectStore.decoder.decode(Project.self, from: ProjectStore.encoder.encode(silent))
+        XCTAssertEqual(again, silent)
+    }
+
+    // MARK: Sync note
+
+    func testSyncNoteForSongStartingBeforeVideo() throws {
+        var p = project(seconds: 10)
+        var music = track(seconds: 60, offset: -12.4)
+        music.originalFilename = "Song.m4a"
+        try SetReferenceAudioCommand(track: music).apply(to: &p)
+        let note = try XCTUnwrap(MusicSyncNote(project: p, exportFilename: "Out.mp4"))
+        XCTAssertEqual(note.instruction, "In Instagram, start the song at 0:12.40.")
+        XCTAssertEqual(note.referenceFilename, "Song.m4a")
+        XCTAssertEqual(note.offsetSeconds, -12.4, accuracy: 1e-9)
+        XCTAssertEqual(note.compositionDurationSeconds, 10, accuracy: 1e-9)
+        XCTAssertEqual(note.soundPolicy, .silent)
+        let decoded = try JSONDecoder().decode(MusicSyncNote.self, from: note.jsonData)
+        XCTAssertEqual(decoded, note)
+    }
+
+    func testSyncNoteForSongEnteringLate() throws {
+        var p = project(seconds: 10)
+        try SetReferenceAudioCommand(track: track(seconds: 60, offset: 1.2)).apply(to: &p)
+        let note = try XCTUnwrap(MusicSyncNote(project: p))
+        XCTAssertTrue(note.instruction.hasPrefix("In Instagram, start the song at 0:00.00."))
+        XCTAssertTrue(note.instruction.contains("0:01.20"))
+        XCTAssertNil(MusicSyncNote(project: project(seconds: 10)))
+        XCTAssertEqual(MusicSyncNote.clock(72.405), "1:12.41")
     }
 }

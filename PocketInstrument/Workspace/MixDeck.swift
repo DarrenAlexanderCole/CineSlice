@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Mix state: line the reference music up with the sequence and balance it
 /// against the clips' own sound. Everything here is in composition time.
+/// Dragging the waveform slides the music; the clip band above it scrubs.
 struct MixDeck: View {
     var model: WorkspaceModel
     var onAddMusicFile: () -> Void
@@ -10,10 +11,9 @@ struct MixDeck: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            SequenceRuler(model: model)
+            SequenceLane(model: model, waveformDrag: .slideMusic)
             if let music = model.project.referenceAudio {
-                MusicLane(model: model, music: music)
-                alignmentRow(music)
+                alignment(music)
             } else {
                 emptyMusic
             }
@@ -45,40 +45,47 @@ struct MixDeck: View {
             HStack(spacing: 10) {
                 Button("Files", action: onAddMusicFile).buttonStyle(.instrument(.key))
                 Button("From a video", action: onAddMusicFromVideo).buttonStyle(.instrument())
+                Button("Click") { Task { await model.addDemoClickTrack() } }
+                    .buttonStyle(.instrument())
+                    .accessibilityLabel("Demo click track")
+                    .accessibilityHint("Generates a 30 second, 120 BPM metronome for testing sync")
             }
         }
         .frame(maxWidth: .infinity, minHeight: 100)
     }
 
-    /// Where the song sits relative to the video, with one-frame nudges.
-    private func alignmentRow(_ music: AudioTrack) -> some View {
+    /// Where the song sits relative to the video, with frame and 10 ms nudges.
+    private func alignment(_ music: AudioTrack) -> some View {
         let startsBefore = music.offset <= .zero
-        return HStack(spacing: 8) {
-            Button {
-                model.nudgeMusic(frames: -1)
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-            .buttonStyle(.instrument())
-            .accessibilityLabel("Move music one frame earlier")
-            VStack(spacing: 2) {
-                Text(startsBefore ? "SONG AT VIDEO START" : "SONG ENTERS AT VIDEO")
+        let frame = model.sequenceFrame
+        let fine = WorkspaceModel.tenMilliseconds
+        return VStack(spacing: 6) {
+            HStack {
+                Text(startsBefore ? "SONG AT VIDEO START" : "SONG ENTERS AT")
                     .font(Theme.caption)
                     .foregroundStyle(Theme.secondaryLabel)
-                TimecodeText(
-                    time: startsBefore ? MediaTime.zero - music.offset : music.offset,
-                    frameRate: Double(model.project.exportSettings.frameRate), size: 15, color: Theme.signal)
+                Spacer()
+                Text(MusicSyncNote.clock(abs(music.offset.seconds)))
+                    .font(Theme.mono(15))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.signal)
             }
-            .frame(maxWidth: .infinity)
             .accessibilityElement(children: .combine)
-            Button {
-                model.nudgeMusic(frames: 1)
-            } label: {
-                Image(systemName: "chevron.right")
+            HStack(spacing: 6) {
+                nudge("−1F", by: MediaTime.zero - frame, label: "Music one frame earlier")
+                nudge("−10MS", by: MediaTime.zero - fine, label: "Music 10 milliseconds earlier")
+                Spacer(minLength: 0)
+                nudge("+10MS", by: fine, label: "Music 10 milliseconds later")
+                nudge("+1F", by: frame, label: "Music one frame later")
             }
-            .buttonStyle(.instrument())
-            .accessibilityLabel("Move music one frame later")
         }
+        .padding(.horizontal, 8)
+    }
+
+    private func nudge(_ title: String, by step: MediaTime, label: String) -> some View {
+        Button(title) { model.nudgeMusic(by: step) }
+            .buttonStyle(.instrument())
+            .accessibilityLabel(label)
     }
 
     private var musicMenu: some View {
@@ -90,6 +97,11 @@ struct MixDeck: View {
             }
             Button(action: onAddMusicFromVideo) {
                 Label("Sound from a video", systemImage: "film")
+            }
+            Button {
+                Task { await model.addDemoClickTrack() }
+            } label: {
+                Label("Demo click track", systemImage: "metronome")
             }
             if model.project.referenceAudio != nil {
                 Button(role: .destructive) {
@@ -114,124 +126,5 @@ struct MixDeck: View {
                         .strokeBorder(Theme.hairline))
         }
         .accessibilityLabel("Music")
-    }
-}
-
-/// The song's waveform laid under the sequence. Drag it sideways to slide the
-/// music earlier or later; the dimmed band marks where music is heard.
-struct MusicLane: View {
-    var model: WorkspaceModel
-    let music: AudioTrack
-
-    private let height: CGFloat = 56
-    @State private var draftOffset: MediaTime?
-    @State private var baseOffset: MediaTime = .zero
-
-    var body: some View {
-        GeometryReader { geo in
-            let width = geo.size.width
-            let offset = draftOffset ?? music.offset
-            let duration = model.project.duration
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.obsidian)
-                if let placement = MusicPlacement(
-                    track: AudioTrack(fileName: music.fileName, duration: music.duration, offset: offset),
-                    sequenceDuration: duration)
-                {
-                    let x0 = x(for: placement.compositionRange.start, width)
-                    let x1 = x(for: placement.compositionRange.end, width)
-                    Rectangle().fill(Theme.olive.opacity(0.25))
-                        .frame(width: max(1, x1 - x0), height: height)
-                        .offset(x: x0)
-                }
-                if let waveform = model.waveform {
-                    bars(waveform, offset: offset, width: width)
-                } else if model.musicURL == nil {
-                    status("Music file is missing")
-                } else {
-                    status("Reading waveform…")
-                }
-                Rectangle().fill(Theme.ivory)
-                    .frame(width: 2, height: height)
-                    .offset(x: x(for: model.currentTime, width) - 1)
-                Text(music.originalFilename ?? "Music")
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.label)
-                    .lineLimit(1)
-                    .padding(6)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(draftOffset == nil ? Theme.hairline : Theme.signal)
-            )
-            .contentShape(Rectangle())
-            .gesture(slideGesture(width: width))
-        }
-        .frame(height: height)
-        .padding(.horizontal, 8)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Music position")
-        .accessibilityValue(
-            String(
-                format: "Song starts %.2f seconds %@ the video", abs(music.offset.seconds),
-                music.offset <= .zero ? "before" : "into")
-        )
-        .accessibilityAdjustableAction { direction in
-            model.setMusicOffset(music.offset + MediaTime(seconds: direction == .increment ? 1 : -1))
-        }
-    }
-
-    private func x(for t: MediaTime, _ width: CGFloat) -> CGFloat {
-        let d = model.project.duration.seconds
-        guard d > 0 else { return 0 }
-        return CGFloat(min(max(t.seconds / d, 0), 1)) * width
-    }
-
-    private func bars(_ waveform: Waveform, offset: MediaTime, width: CGFloat) -> some View {
-        let barWidth: CGFloat = 2
-        let gap: CGFloat = 1
-        let count = max(1, Int(width / (barWidth + gap)))
-        // The lane spans composition 0…duration, i.e. audio −offset…duration−offset.
-        let levels = waveform.envelope(
-            from: MediaTime.zero - offset, to: model.project.duration - offset, buckets: count)
-        return Canvas { context, size in
-            let mid = size.height / 2
-            for (i, level) in levels.enumerated() where level > 0 {
-                let h = max(1, CGFloat(level) * (size.height - 8))
-                let rect = CGRect(x: CGFloat(i) * (barWidth + gap), y: mid - h / 2, width: barWidth, height: h)
-                context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(Theme.signal.opacity(0.85)))
-            }
-        }
-        .frame(width: width, height: height)
-        .allowsHitTesting(false)
-    }
-
-    private func status(_ text: String) -> some View {
-        Text(text)
-            .font(Theme.caption)
-            .foregroundStyle(Theme.secondaryLabel)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func slideGesture(width: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 4)
-            .onChanged { g in
-                if draftOffset == nil {
-                    baseOffset = music.offset
-                    Haptics.press()
-                }
-                let seconds = Double(g.translation.width / max(width, 1)) * model.project.duration.seconds
-                // Snap to the export frame grid.
-                let fps = model.sequenceFrame.timescale
-                let proposed = MediaTime(
-                    value: Int64(((baseOffset.seconds + seconds) * Double(fps)).rounded()), timescale: fps)
-                draftOffset = music.clampedOffset(proposed, sequenceDuration: model.project.duration)
-            }
-            .onEnded { _ in
-                if let final = draftOffset { model.setMusicOffset(final) }
-                draftOffset = nil
-                Haptics.detent()
-            }
     }
 }

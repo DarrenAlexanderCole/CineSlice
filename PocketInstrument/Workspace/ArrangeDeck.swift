@@ -4,6 +4,7 @@ import SwiftUI
 /// Arrange state: the whole sequence as tiles. Tap selects (and cues the
 /// playhead), long-press then drag reorders; the Explore state opens the
 /// selected clip. Reorder and trim never share a gesture: trimming lives in Explore.
+/// Under the tiles, the sequence lane shows the music waveform, cuts and loop bracket.
 struct ArrangeDeck: View {
     var model: WorkspaceModel
     var onAddPhotos: () -> Void
@@ -11,8 +12,8 @@ struct ArrangeDeck: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            SequenceRuler(model: model)
             ClipStrip(model: model, onAddPhotos: onAddPhotos, onAddFiles: onAddFiles)
+            SequenceLane(model: model)
             selectedClipBar
             TransportRow(model: model) {
                 Color.clear.frame(width: 44, height: 44)
@@ -161,7 +162,7 @@ struct ClipStrip: View {
             isSelected ? AccessibilityTraits([.isButton, .isSelected]) : AccessibilityTraits.isButton
         )
         .accessibilityAction { model.select(clip.id) }
-        .accessibilityAction(named: "Explore") { model.enterExplore(clip.id) }
+        .accessibilityAction(named: "Trim") { model.enterExplore(clip.id) }
         .accessibilityAction(named: "Move left") { model.move(clip.id, to: index - 1) }
         .accessibilityAction(named: "Move right") { model.move(clip.id, to: index + 1) }
     }

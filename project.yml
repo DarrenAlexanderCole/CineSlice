@@ -27,6 +27,10 @@ targets:
       - path: PocketInstrument
     dependencies:
       - package: EditCore
+    scheme:
+      testTargets:
+        - PocketInstrumentTests
+        - PocketInstrumentUITests
     preBuildScripts:
       # Reports swift-format issues as Xcode warnings; never fails the build.
       # Rules live in .swift-format at the repo root.
@@ -36,7 +40,7 @@ targets:
           if xcrun --find swift-format >/dev/null 2>&1; then
             # swift-format prints cwd-relative paths; make them absolute so Xcode can jump to them.
             cd "$SRCROOT"
-            xcrun swift-format lint -r PocketInstrument Packages 2>&1 \
+            xcrun swift-format lint -r PocketInstrument PocketInstrumentTests PocketInstrumentUITests Packages 2>&1 \
               | sed -E "s|^([^/][^:]*\.swift:)|$SRCROOT/\1|"
           else
             echo "warning: swift-format not found; install Xcode 16 or later to lint."
@@ -64,5 +68,32 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         # Set your team in Xcode (Signing & Capabilities) or here:
         # DEVELOPMENT_TEAM: XXXXXXXXXX
+
+  # Media pipeline tests (AVFoundation), hosted in the app on the Simulator:
+  #   xcodebuild test -scheme PocketInstrument -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
+  PocketInstrumentTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: PocketInstrumentTests
+    dependencies:
+      - target: PocketInstrument
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.pocketinstrument.tests
+
+  # Taps through the workspace states and attaches a screenshot of each (layout check).
+  PocketInstrumentUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: PocketInstrumentUITests
+    dependencies:
+      - target: PocketInstrument
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.pocketinstrument.uitests
 
 # Core logic tests run without Xcode: cd Packages/EditCore && swift test

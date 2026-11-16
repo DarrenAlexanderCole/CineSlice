@@ -137,7 +137,7 @@ struct WorkspaceView: View {
                     GlassChip {
                         HStack(spacing: 6) {
                             LED(isOn: model.engine.isPlaying)
-                            Text(model.mode.rawValue.uppercased())
+                            Text(model.mode.title.uppercased())
                                 .font(Theme.caption)
                                 .foregroundStyle(Theme.label)
                         }
@@ -283,7 +283,9 @@ struct TransportRow<Leading: View, Trailing: View>: View {
     }
 }
 
-/// Explore loops the clip's in/out; Arrange and Mix loop the bracketed region of the sequence.
+/// Explore loops the clip's in/out. Arrange and Mix loop the bracketed region of the
+/// sequence: tap toggles it, and holding opens Loop In / Loop Out at the playhead,
+/// loop the selected clip, or loop everything.
 struct LoopButton: View {
     var model: WorkspaceModel
 
@@ -291,20 +293,52 @@ struct LoopButton: View {
     private var isOn: Bool { isExplore ? model.loopSelection : model.activeLoop != nil }
 
     var body: some View {
-        Button {
-            if isExplore {
+        if isExplore {
+            Button {
                 model.loopSelection.toggle()
                 Haptics.tap()
-            } else {
+            } label: {
+                Image(systemName: "repeat")
+            }
+            .buttonStyle(.instrument(.dark, active: isOn))
+            .disabled(model.selectedClip == nil)
+            .accessibilityLabel("Loop in to out")
+            .accessibilityValue(isOn ? "On" : "Off")
+        } else {
+            Menu {
+                Button(action: model.setLoopIn) { Label("Loop In at playhead", systemImage: "chevron.left.to.line") }
+                Button(action: model.setLoopOut) {
+                    Label("Loop Out at playhead", systemImage: "chevron.right.to.line")
+                }
+                Button(action: model.loopSelectedClip) { Label("Loop selected clip", systemImage: "film") }
+                    .disabled(model.selectedClipID == nil)
+                Button(action: model.loopWholeSequence) {
+                    Label("Loop whole sequence", systemImage: "arrow.left.and.right")
+                }
+            } label: {
+                Image(systemName: "repeat")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isOn ? Theme.signal : Theme.ivory)
+                    .frame(width: Theme.minTouch + 20, height: Theme.minTouch)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Theme.instrument, Theme.obsidian], startPoint: .top, endPoint: .bottom))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                            .strokeBorder(isOn ? Theme.signal : Theme.hairline, lineWidth: isOn ? 1.5 : 1)
+                            .shadow(color: isOn ? Theme.signal.opacity(0.6) : .clear, radius: 6)
+                    )
+            } primaryAction: {
                 model.toggleLoop()
             }
-        } label: {
-            Image(systemName: "repeat")
+            .disabled(model.project.clips.isEmpty)
+            .accessibilityLabel("Loop region")
+            .accessibilityValue(isOn ? "On" : "Off")
+            .accessibilityHint("Toggles the loop. Hold for Loop In, Loop Out and more.")
         }
-        .buttonStyle(.instrument(.dark, active: isOn))
-        .disabled(isExplore ? model.selectedClip == nil : model.project.clips.isEmpty)
-        .accessibilityLabel(isExplore ? "Loop in to out" : "Loop region")
-        .accessibilityValue(isOn ? "On" : "Off")
     }
 }
 
@@ -319,7 +353,7 @@ struct StateSwitcher: View {
                 Button {
                     model.setMode(mode)
                 } label: {
-                    Text(mode.rawValue).frame(maxWidth: .infinity)
+                    Text(mode.title).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.instrument(.dark, active: isCurrent))
                 .disabled(mode == .explore && model.selectedClip == nil)

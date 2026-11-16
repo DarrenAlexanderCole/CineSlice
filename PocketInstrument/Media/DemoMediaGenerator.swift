@@ -144,4 +144,61 @@ enum DemoMediaGenerator {
             y += textSize.height + 8
         }
     }
+
+    // MARK: Click track
+
+    /// A 30 s, 120 BPM metronome in 4/4 with an accented downbeat, so music sync can be
+    /// tested without a real song. Beats land every 0.5 s (15 frames at 30 fps), so the
+    /// demo clips' whole-second cuts sit exactly on clicks.
+    static func makeClickTrack(store: ProjectStore, projectID: UUID) async throws -> AudioTrack {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        try writeClickTrack(to: temp)
+        return try await MediaImporter.adoptAudio(
+            tempURL: temp, originalName: "Demo click 120 BPM", store: store, projectID: projectID)
+    }
+
+    static let clickBPM = 120.0
+    static let clickSeconds = 30.0
+
+    static func writeClickTrack(to url: URL, sampleRate: Double = 44_100) throws {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else {
+            throw ExportError.failed("No audio format")
+        }
+        let frameCount = AVAudioFrameCount(sampleRate * clickSeconds)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+            let samples = buffer.floatChannelData?[0]
+        else { throw ExportError.failed("No audio buffer") }
+        buffer.frameLength = frameCount
+        for i in 0..<Int(frameCount) { samples[i] = 0 }
+
+        let beatSamples = Int(sampleRate * 60 / clickBPM)
+        let clickLength = Int(sampleRate * 0.04)
+        var beat = 0
+        while beat * beatSamples < Int(frameCount) {
+            // Downbeat: higher and louder, so bars are easy to see in the waveform and hear.
+            let isDownbeat = beat % 4 == 0
+            let pitch = isDownbeat ? 1_600.0 : 1_000.0
+            let gain: Float = isDownbeat ? 0.9 : 0.45
+            let start = beat * beatSamples
+            for n in 0..<min(clickLength, Int(frameCount) - start) {
+                let t = Double(n) / sampleRate
+                samples[start + n] = gain * Float(sin(2 * .pi * pitch * t) * exp(-t * 120))
+            }
+            beat += 1
+        }
+
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+            ],
+            commonFormat: .pcmFormatFloat32, interleaved: false)
+        try file.write(from: buffer)
+    }
 }

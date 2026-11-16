@@ -10,7 +10,7 @@ struct ExportSheet: View {
     private enum Phase: Equatable {
         case ready
         case exporting(Double)
-        case done(URL)
+        case done(ExportResult)
         case failed(String)
     }
 
@@ -25,9 +25,9 @@ struct ExportSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 details(settings)
-                soundPicker(settings)
-                if let music = model.project.referenceAudio {
-                    syncNote(music)
+                soundPicker()
+                if let note = MusicSyncNote(project: model.project) {
+                    syncNote(note)
                 }
                 content
             }
@@ -55,15 +55,12 @@ struct ExportSheet: View {
 
     // MARK: Sound
 
-    /// Without music, "Clip sound" keeps the music flag on, so music added later is exported too.
     private var policies: [SoundPolicy] {
-        model.project.referenceAudio == nil ? [.clipsAndMusic, .silent] : SoundPolicy.allCases
+        model.project.referenceAudio == nil ? [.clipsOnly, .silent] : [.silent, .clipsOnly, .clipsAndMusic]
     }
 
-    private func soundPicker(_ settings: ExportSettings) -> some View {
-        let hasMusic = model.project.referenceAudio != nil
-        let current = settings.soundPolicy
-        let shown: SoundPolicy = hasMusic ? current : (current.includesClipAudio ? .clipsAndMusic : .silent)
+    private func soundPicker() -> some View {
+        let current = model.project.exportSoundPolicy
         return VStack(alignment: .leading, spacing: 6) {
             Text("SOUND").font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
             ForEach(policies, id: \.self) { policy in
@@ -72,12 +69,12 @@ struct ExportSheet: View {
                     Haptics.detent()
                 } label: {
                     HStack(spacing: 10) {
-                        LED(isOn: shown == policy)
+                        LED(isOn: current == policy)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(title(policy, hasMusic: hasMusic))
+                            Text(title(policy))
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(Theme.label)
-                            Text(detail(policy, hasMusic: hasMusic))
+                            Text(detail(policy))
                                 .font(.system(size: 12))
                                 .foregroundStyle(Theme.secondaryLabel)
                                 .multilineTextAlignment(.leading)
@@ -89,65 +86,47 @@ struct ExportSheet: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityAddTraits(shown == policy ? .isSelected : [])
+                .accessibilityAddTraits(current == policy ? .isSelected : [])
             }
         }
         .disabled(isExporting)
     }
 
-    private func title(_ policy: SoundPolicy, hasMusic: Bool) -> String {
+    private func title(_ policy: SoundPolicy) -> String {
         switch policy {
-        case .clipsAndMusic: return hasMusic ? "Clips + music" : "Clip sound"
-        case .clipsOnly: return "Clip sound only"
-        case .musicOnly: return "Music only"
         case .silent: return "Silent"
+        case .clipsOnly: return "Clip audio only"
+        case .clipsAndMusic: return "Clip + music"
         }
     }
 
-    private func detail(_ policy: SoundPolicy, hasMusic: Bool) -> String {
+    private func detail(_ policy: SoundPolicy) -> String {
         switch policy {
+        case .silent: return "No sound. Add the licensed song inside Instagram afterwards."
+        case .clipsOnly: return "The original sound from your clips. Your music is left out."
         case .clipsAndMusic:
-            return hasMusic ? "Exactly what you hear in the preview." : "The original sound from your clips."
-        case .clipsOnly: return "Leaves the music out."
-        case .musicOnly: return "Mutes the clips; keeps your music."
-        case .silent: return "No sound. Add a licensed song inside Instagram afterwards."
+            return "Exactly what you hear in the preview. For private drafts, not for Instagram upload."
         }
     }
 
     // MARK: Sync note
 
     /// Where the song sits against the video, for lining up the same song inside Instagram by hand.
-    private func syncNote(_ music: AudioTrack) -> some View {
-        let note = syncText(music)
-        return VStack(alignment: .leading, spacing: 6) {
+    private func syncNote(_ note: MusicSyncNote) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
             Text("MUSIC SYNC").font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
-            Text(note).font(Theme.mono(13)).foregroundStyle(Theme.label)
-            Text(
-                "Instagram doesn't let apps set its music start, so match it by hand there. It may not line up to the exact frame."
-            )
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.secondaryLabel)
-            Button(copiedSync ? "Copied" : "Copy sync note") {
-                UIPasteboard.general.string = "\(model.project.name): \(note)"
+            Text(note.instruction).font(Theme.mono(13)).foregroundStyle(Theme.label)
+            Text(note.caveat)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondaryLabel)
+            Button(copiedSync ? "Copied" : "Copy") {
+                UIPasteboard.general.string = note.instruction
                 copiedSync = true
                 Haptics.success()
             }
             .buttonStyle(.instrument())
+            .accessibilityLabel("Copy sync instruction")
         }
-    }
-
-    private func syncText(_ music: AudioTrack) -> String {
-        let song = music.originalFilename ?? "the song"
-        if music.offset <= .zero {
-            return "Start \(song) at \(clock(MediaTime.zero - music.offset))"
-        }
-        return "\(song) enters \(clock(music.offset)) into the video"
-    }
-
-    /// m:ss.cc, the way music apps show song positions.
-    private func clock(_ t: MediaTime) -> String {
-        let total = max(0, t.seconds)
-        return String(format: "%d:%05.2f", Int(total) / 60, total.truncatingRemainder(dividingBy: 60))
     }
 
     private var isExporting: Bool {
@@ -173,9 +152,14 @@ struct ExportSheet: View {
                 }
             }
 
-        case .done(let url):
+        case .done(let result):
+            let url = result.videoURL
             VStack(alignment: .leading, spacing: 10) {
-                Label("Rendered", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.signal)
+                Label(
+                    model.project.exportSoundPolicy == .silent ? "Rendered (silent)" : "Rendered",
+                    systemImage: "checkmark.circle.fill"
+                )
+                .foregroundStyle(Theme.signal)
                 HStack(spacing: 10) {
                     Button(savedToPhotos ? "Saved to Photos" : "Save to Photos") {
                         Task {
@@ -197,6 +181,10 @@ struct ExportSheet: View {
                         savedToPhotos = false
                     }
                     .buttonStyle(.instrument())
+                }
+                if let noteURL = result.syncNoteURL {
+                    ShareLink(item: noteURL) { Label("Share sync file (.json)", systemImage: "doc.text") }
+                        .buttonStyle(.instrument())
                 }
                 if let saveError {
                     Text(saveError).font(.system(size: 12)).foregroundStyle(Theme.aluminum)
@@ -225,10 +213,10 @@ struct ExportSheet: View {
         phase = .exporting(0)
         exportTask = Task {
             do {
-                let url = try await ExportService.export(project: project, store: store) { p in
+                let result = try await ExportService.export(project: project, store: store) { p in
                     if case .exporting = phase { phase = .exporting(p) }
                 }
-                phase = .done(url)
+                phase = .done(result)
                 Haptics.success()
             } catch is CancellationError {
                 phase = .ready

@@ -24,20 +24,29 @@ private struct ExportSessionBox: @unchecked Sendable {
     let session: AVAssetExportSession
 }
 
+struct ExportResult: Equatable {
+    let videoURL: URL
+    /// `<video>.sync.json` next to the video, written whenever the project has reference music.
+    let syncNoteURL: URL?
+    let syncNote: MusicSyncNote?
+}
+
 /// Renders the project with the same CompositionBuilder the preview uses.
-/// Output: H.264 MP4 at the project's export size (default 1080×1920, 30 fps).
+/// Output: H.264 MP4 at the project's export size (default 1080×1920, 30 fps),
+/// with the sound chosen by `Project.exportSoundPolicy`.
 enum ExportService {
     static func export(
         project: Project, store: ProjectStore,
         progress: @escaping @MainActor (Double) -> Void
-    ) async throws -> URL {
+    ) async throws -> ExportResult {
         let settings = project.exportSettings
+        let policy = project.exportSoundPolicy
         let built = try await CompositionBuilder.build(
             project: project,
             renderSize: CGSize(width: settings.width, height: settings.height),
             frameRate: Int32(settings.frameRate),
-            includeClipAudio: settings.includeClipAudio,
-            includeMusic: settings.includeMusic,
+            includeClipAudio: policy.includesClipAudio,
+            includeMusic: policy.includesMusic,
             mediaURL: { source in
                 store.isMissing(source, projectID: project.id)
                     ? nil : store.mediaURL(for: source, projectID: project.id)
@@ -63,6 +72,7 @@ enum ExportService {
         session.outputURL = url
         session.outputFileType = .mp4
         session.videoComposition = built.videoComposition
+        // A silent export has no audio tracks at all, so there's no mix to apply.
         session.audioMix = built.audioMix
         session.shouldOptimizeForNetworkUse = true
 
@@ -82,8 +92,16 @@ enum ExportService {
         // Only report success if the file really exists and is non-empty.
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
         guard size > 0 else { throw ExportError.failed("No output file was written.") }
+
+        var noteURL: URL?
+        let note = MusicSyncNote(project: project, exportFilename: url.lastPathComponent)
+        if let note {
+            let sidecar = url.deletingPathExtension().appendingPathExtension("sync.json")
+            try note.jsonData.write(to: sidecar, options: .atomic)
+            noteURL = sidecar
+        }
         await progress(1)
-        return url
+        return ExportResult(videoURL: url, syncNoteURL: noteURL, syncNote: note)
     }
 
     /// Runs a configured session to completion; cancelling the calling task cancels the export.
