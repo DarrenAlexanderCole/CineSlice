@@ -83,8 +83,10 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-// MARK: - Audio, automation, loop (later phases; schema reserved now)
+// MARK: - Audio, automation, loop
 
+/// The user-supplied reference music. Stored in the project's Media folder like
+/// clip media; when taken from a video, only its sound is kept (as .m4a).
 public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var fileName: String
@@ -131,14 +133,35 @@ public struct ExportSettings: Codable, Hashable, Sendable {
     public var width: Int
     public var height: Int
     public var frameRate: Int
-    /// false = silent export (for attaching licensed music inside Instagram).
+    /// false = no original clip sound in the export.
     public var includeClipAudio: Bool
+    /// false = leave the reference music out. Both off = silent export
+    /// (for attaching licensed music inside Instagram).
+    public var includeMusic: Bool
 
-    public init(width: Int = 1080, height: Int = 1920, frameRate: Int = 30, includeClipAudio: Bool = true) {
+    public init(
+        width: Int = 1080, height: Int = 1920, frameRate: Int = 30,
+        includeClipAudio: Bool = true, includeMusic: Bool = true
+    ) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
         self.includeClipAudio = includeClipAudio
+        self.includeMusic = includeMusic
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case width, height, frameRate, includeClipAudio, includeMusic
+    }
+
+    // Tolerant decoding: Phase 1 projects have no includeMusic.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        width = try c.decode(Int.self, forKey: .width)
+        height = try c.decode(Int.self, forKey: .height)
+        frameRate = try c.decode(Int.self, forKey: .frameRate)
+        includeClipAudio = try c.decodeIfPresent(Bool.self, forKey: .includeClipAudio) ?? true
+        includeMusic = try c.decodeIfPresent(Bool.self, forKey: .includeMusic) ?? true
     }
 
     public static let vertical1080 = ExportSettings()

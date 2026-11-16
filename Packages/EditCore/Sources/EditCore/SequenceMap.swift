@@ -6,7 +6,7 @@ import Foundation
 /// - **clip-local time**: offset from the clip's first frame on the composition timeline
 /// - **composition time**: position in the assembled sequence (what the preview player reports)
 /// - **audio-reference time**: position inside the reference track
-///   (`composition time - AudioTrack.offset`; used from Phase 2)
+///   (`composition time - AudioTrack.offset`; see `MusicPlacement`)
 ///
 /// source = sourceRange.start + clipLocal × speed
 /// composition = entry.start + clipLocal

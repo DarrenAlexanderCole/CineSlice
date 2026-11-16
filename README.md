@@ -73,7 +73,11 @@ Status is *Implemented* where the code exists and works in the simulator. Device
 | Autosave (debounced, and on backgrounding) and reopen with order, trims and framing intact | Implemented |
 | Export 9:16 1080×1920 H.264 MP4 30 fps, silent option, progress, cancel, Save to Photos, Share | Implemented |
 | Speed | Stored in the model and honoured by composition and export; no UI yet (Phase 4) |
-| Reference audio, waveform, automation, dial, motion | Not started (later phases, by design) |
+| Mix state: reference music from Files or from a video's sound, cached waveform, drag/nudge alignment | Phase 2: built, untested in the UI |
+| Clip and music faders (live while playing, one undo step per move) | Phase 2: built, untested in the UI |
+| Loop region bracket on the sequence ruler (Arrange and Mix), snaps to clip edges | Phase 2: built, untested in the UI |
+| Release sound policy (clips + music, clips only, music only, silent) and music sync note | Phase 2: built, untested in the UI |
+| Volume automation, dial, motion | Not started (later phases, by design) |
 
 ## Device test checklist (please report back)
 1. Create a project, add **Demo clips**, and play. Does the sequence play A → B → C and loop?
@@ -85,6 +89,10 @@ Status is *Implemented* where the code exists and works in the simulator. Device
 7. Force-quit and relaunch, then reopen the project. Are the order and trims intact?
 8. Export with clip audio on and then off. Save to Photos, check that the frames match the preview, and confirm the silent version is silent.
 9. Use the app with VoiceOver for a minute. Can you select, explore and trim?
+
+## Preview vs export
+- Preview always plays clips + music at the Mix levels. The Release sound policy only changes the exported file.
+- Music is trimmed to the sequence. It never plays before the first frame or after the last.
 
 ## Known gaps / risks to watch
 - **Not yet tested on a physical iPhone.** Photos import, HDR footage, touch feel and export quality need a real device.

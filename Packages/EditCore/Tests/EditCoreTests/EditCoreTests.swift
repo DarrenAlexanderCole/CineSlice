@@ -162,3 +162,99 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertThrowsError(try ProjectStore.decoder.decode(Project.self, from: Data(json.utf8)))
     }
 }
+
+final class MusicTests: XCTestCase {
+    private func project(seconds: Double) -> Project {
+        var p = Project(name: "Music")
+        let s = SourceAsset(fileName: "a.mov", duration: MediaTime(seconds: seconds), width: 1080, height: 1920)
+        try! AddClipsCommand(sources: [s]).apply(to: &p)
+        return p
+    }
+
+    private func track(seconds: Double, offset: Double = 0) -> AudioTrack {
+        AudioTrack(fileName: "m.m4a", duration: MediaTime(seconds: seconds), offset: MediaTime(seconds: offset))
+    }
+
+    func testPlacementWhenMusicStartsBeforeVideo() {
+        // Song 0 sits 3s before the video starts: video 0 hears song 3s.
+        let p = MusicPlacement(track: track(seconds: 60, offset: -3), sequenceDuration: MediaTime(seconds: 10))
+        XCTAssertEqual(p?.compositionRange, MediaTimeRange(start: .zero, end: MediaTime(seconds: 10)))
+        XCTAssertEqual(p?.audioStart, MediaTime(seconds: 3))
+    }
+
+    func testPlacementWhenMusicStartsLateAndEndsEarly() {
+        let p = MusicPlacement(track: track(seconds: 4, offset: 2), sequenceDuration: MediaTime(seconds: 10))
+        XCTAssertEqual(p?.compositionRange, MediaTimeRange(start: MediaTime(seconds: 2), end: MediaTime(seconds: 6)))
+        XCTAssertEqual(p?.audioStart, .zero)
+    }
+
+    func testNoPlacementWithoutOverlap() {
+        XCTAssertNil(MusicPlacement(track: track(seconds: 4, offset: -5), sequenceDuration: MediaTime(seconds: 10)))
+        XCTAssertNil(MusicPlacement(track: track(seconds: 4, offset: 10), sequenceDuration: MediaTime(seconds: 10)))
+    }
+
+    func testAudioReferenceMappingRoundTrips() {
+        let t = track(seconds: 60, offset: -3)
+        let audio = t.audioTime(atComposition: MediaTime(seconds: 1))
+        XCTAssertEqual(audio, MediaTime(seconds: 4))
+        XCTAssertEqual(t.compositionTime(atAudio: audio), MediaTime(seconds: 1))
+    }
+
+    func testOffsetCommandKeepsMusicInReach() throws {
+        var p = project(seconds: 10)
+        try SetReferenceAudioCommand(track: track(seconds: 30)).apply(to: &p)
+        try SetMusicOffsetCommand(offset: MediaTime(seconds: -100)).apply(to: &p)
+        // Only `minimumClipDuration` of the song's end still overlaps the video.
+        XCTAssertEqual(p.referenceAudio?.offset, MediaTime.zero - (MediaTime(seconds: 30) - minimumClipDuration))
+        try SetMusicOffsetCommand(offset: MediaTime(seconds: 100)).apply(to: &p)
+        XCTAssertEqual(p.referenceAudio?.offset, MediaTime(seconds: 10) - minimumClipDuration)
+        XCTAssertNotNil(MusicPlacement(track: p.referenceAudio!, sequenceDuration: p.duration))
+    }
+
+    func testVolumesClampAndMusicVolumeNeedsMusic() throws {
+        var p = project(seconds: 10)
+        try SetClipAudioVolumeCommand(volume: 1.7).apply(to: &p)
+        XCTAssertEqual(p.clipAudioVolume, 1)
+        XCTAssertThrowsError(try SetMusicVolumeCommand(volume: 0.5).apply(to: &p))
+        try SetReferenceAudioCommand(track: track(seconds: 30)).apply(to: &p)
+        try SetMusicVolumeCommand(volume: -1).apply(to: &p)
+        XCTAssertEqual(p.referenceAudio?.volume, 0)
+    }
+
+    func testLoopIsFittedToSequence() throws {
+        var p = project(seconds: 10)
+        let wide = LoopRange(range: MediaTimeRange(start: MediaTime(seconds: 8), end: MediaTime(seconds: 20)))
+        try SetLoopCommand(loop: wide).apply(to: &p)
+        XCTAssertEqual(p.loop?.range, MediaTimeRange(start: MediaTime(seconds: 8), end: MediaTime(seconds: 10)))
+        let past = LoopRange(range: MediaTimeRange(start: MediaTime(seconds: 12), end: MediaTime(seconds: 13)))
+        XCTAssertEqual(past.clamped(toSequence: MediaTime(seconds: 10))?.range.end, MediaTime(seconds: 10))
+        XCTAssertNil(past.clamped(toSequence: .zero))
+    }
+
+    func testSoundPolicyMapsToFlags() {
+        var s = ExportSettings()
+        XCTAssertEqual(s.soundPolicy, .clipsAndMusic)
+        s.soundPolicy = .musicOnly
+        XCTAssertFalse(s.includeClipAudio)
+        XCTAssertTrue(s.includeMusic)
+        s.soundPolicy = .silent
+        XCTAssertEqual(s.soundPolicy, .silent)
+    }
+
+    func testPhase1ExportSettingsStillDecode() throws {
+        let json = #"{"width":1080,"height":1920,"frameRate":30,"includeClipAudio":false}"#
+        let s = try JSONDecoder().decode(ExportSettings.self, from: Data(json.utf8))
+        XCTAssertFalse(s.includeClipAudio)
+        XCTAssertTrue(s.includeMusic)
+    }
+
+    func testWaveformEnvelopeAndCache() {
+        let w = Waveform(peaksPerSecond: 10, peaks: (0..<20).map { Float($0) / 20 })
+        // 2s of audio in 2 buckets: max of each second.
+        XCTAssertEqual(w.envelope(from: .zero, to: MediaTime(seconds: 2), buckets: 2), [0.45, 0.95])
+        // Before the song starts reads as silence.
+        XCTAssertEqual(w.envelope(from: MediaTime(seconds: -2), to: .zero, buckets: 2), [0, 0])
+        XCTAssertEqual(Waveform(data: w.data), w)
+        XCTAssertNil(Waveform(data: Data([1, 2, 3])))
+    }
+}

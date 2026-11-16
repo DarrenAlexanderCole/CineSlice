@@ -5,6 +5,7 @@ import Foundation
 ///     <root>/<project-id>/project.json
 ///     <root>/<project-id>/Media/<uuid>.<ext>     imported copies (never modified)
 ///     <root>/<project-id>/Exports/...            rendered files
+///     <root>/<project-id>/Cache/...              derived data (waveforms); safe to delete
 ///
 /// JSON is written atomically, so an interrupted save never corrupts the last good copy.
 public final class ProjectStore: @unchecked Sendable {
@@ -42,6 +43,17 @@ public final class ProjectStore: @unchecked Sendable {
 
     public func isMissing(_ source: SourceAsset, projectID: UUID) -> Bool {
         !fm.fileExists(atPath: mediaURL(for: source, projectID: projectID).path)
+    }
+
+    /// The music file, or nil when it's missing.
+    public func audioURL(for track: AudioTrack, projectID: UUID) -> URL? {
+        let url = mediaDirectory(for: projectID).appendingPathComponent(track.fileName)
+        return fm.fileExists(atPath: url.path) ? url : nil
+    }
+
+    public func waveformCacheURL(for track: AudioTrack, projectID: UUID) -> URL {
+        directory(for: projectID).appendingPathComponent("Cache", isDirectory: true)
+            .appendingPathComponent("\(track.fileName).waveform")
     }
 
     private func fileURL(for projectID: UUID) -> URL {

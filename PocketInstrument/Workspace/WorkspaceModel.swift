@@ -10,13 +10,16 @@ import SwiftUI
 @MainActor
 @Observable
 final class WorkspaceModel {
-    enum Mode: String { case arrange, explore }
+    enum Mode: String, CaseIterable { case arrange, explore, mix }
 
     private(set) var project: Project
-    var mode: Mode = .arrange
+    private(set) var mode: Mode = .arrange
     var selectedClipID: UUID?
-    /// Loops the selected clip (Arrange) or its in/out range (Explore) instead of everything.
+    /// Explore only: loops the clip's in/out range. Arrange and Mix use the project's loop region.
     var loopSelection = false { didSet { updateLoopRange() } }
+
+    /// Peaks for the reference music, loaded from cache or analyzed in the background.
+    private(set) var waveform: Waveform?
 
     /// In-progress trim while a handle is being dragged (committed on release as one undo step).
     var draftRange: MediaTimeRange?
@@ -31,6 +34,9 @@ final class WorkspaceModel {
     @ObservationIgnored private var undoStack = UndoStack()
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
+    @ObservationIgnored private var waveformTask: Task<Void, Never>?
+    /// Audio track IDs in the loaded sequence item, for live level changes.
+    @ObservationIgnored private var loadedTrackIDs: (clip: CMPersistentTrackID?, music: CMPersistentTrackID?)
     private(set) var undoName: String?
     private(set) var redoName: String?
 
@@ -60,24 +66,32 @@ final class WorkspaceModel {
     /// The clip under the playhead in Arrange.
     var clipUnderPlayhead: UUID? { sequenceMap.entry(at: currentTime)?.clipID }
 
+    var musicURL: URL? { project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) } }
+
+    /// One frame at the export rate: the nudge step for music and loop edges.
+    var sequenceFrame: MediaTime { MediaTime(value: 1, timescale: Int32(project.exportSettings.frameRate)) }
+
     // MARK: Lifecycle
 
     func open() {
         rebuildSequence(keepingTime: .zero)
+        loadWaveform()
     }
 
     func close() {
         saveNow()
         engine.tearDown()
         rebuildTask?.cancel()
+        waveformTask?.cancel()
     }
 
     // MARK: Commands / undo
 
     func perform(_ command: EditingCommand) {
+        let previous = project
         do {
             try undoStack.perform(command, on: &project)
-            didEdit()
+            didEdit(from: previous)
         } catch {
             alertMessage = "\(command.actionName) failed: \(error.localizedDescription)"
             Haptics.warning()
@@ -85,24 +99,45 @@ final class WorkspaceModel {
     }
 
     func undo() {
+        let previous = project
         guard undoStack.undo(&project) != nil else { return }
-        didEdit()
+        didEdit(from: previous)
     }
 
     func redo() {
+        let previous = project
         guard undoStack.redo(&project) != nil else { return }
-        didEdit()
+        didEdit(from: previous)
     }
 
-    private func didEdit() {
+    private func didEdit(from previous: Project) {
         undoName = undoStack.undoActionName
         redoName = undoStack.redoActionName
         if let id = selectedClipID, project.clip(id: id) == nil {
             selectedClipID = project.clips.first?.id
         }
         if mode == .explore, selectedClip == nil { mode = .arrange }
+        if previous.referenceAudio?.fileName != project.referenceAudio?.fileName { loadWaveform() }
         scheduleSave()
-        refreshPlayback()
+        if mode != .explore, Self.playbackShape(previous) == Self.playbackShape(project) {
+            // Levels or loop only: adjust the live item instead of reloading it, so playback doesn't stutter.
+            applyLevels()
+            updateLoopRange()
+        } else {
+            refreshPlayback()
+        }
+    }
+
+    /// The parts of a project that need the composition rebuilt when they change.
+    private static func playbackShape(_ p: Project) -> Project {
+        var shape = p
+        shape.modifiedAt = .distantPast
+        shape.name = ""
+        shape.clipAudioVolume = 1
+        shape.referenceAudio?.volume = 1
+        shape.loop = nil
+        shape.exportSettings.soundPolicy = .clipsAndMusic  // preview always plays the full mix
+        return shape
     }
 
     // MARK: Persistence
@@ -124,7 +159,7 @@ final class WorkspaceModel {
 
     private func refreshPlayback() {
         switch mode {
-        case .arrange:
+        case .arrange, .mix:
             rebuildSequence(keepingTime: currentTime)
         case .explore:
             // Source item stays loaded; only the loop window may change.
@@ -146,19 +181,23 @@ final class WorkspaceModel {
                 return
             }
             do {
+                // Preview always plays clips + music at the mix levels; the sound policy applies to export only.
                 let built = try await CompositionBuilder.build(
                     project: snapshot,
                     renderSize: CGSize(width: snapshot.exportSettings.width, height: snapshot.exportSettings.height),
                     frameRate: Int32(snapshot.exportSettings.frameRate),
-                    includeClipAudio: snapshot.exportSettings.includeClipAudio,
+                    includeClipAudio: true,
+                    includeMusic: true,
                     mediaURL: {
                         store.isMissing($0, projectID: snapshot.id)
                             ? nil : store.mediaURL(for: $0, projectID: snapshot.id)
-                    })
-                guard !Task.isCancelled, self.mode == .arrange else { return }
+                    },
+                    musicURL: snapshot.referenceAudio.flatMap { store.audioURL(for: $0, projectID: snapshot.id) })
+                guard !Task.isCancelled, self.mode != .explore else { return }
                 let item = AVPlayerItem(asset: built.composition)
                 item.videoComposition = built.videoComposition
                 item.audioMix = built.audioMix
+                self.loadedTrackIDs = (built.clipAudioTrackID, built.musicTrackID)
                 let target = CMTimeMinimum(time.cmTime, built.duration)
                 self.engine.load(item, duration: built.duration, at: target, resume: resume)
                 self.updateLoopRange()
@@ -170,16 +209,24 @@ final class WorkspaceModel {
     }
 
     private func updateLoopRange() {
-        guard loopSelection, let clip = selectedClip else {
-            engine.loopRange = nil
-            return
-        }
         switch mode {
-        case .arrange:
-            engine.loopRange = sequenceMap.entry(for: clip.id)?.compositionRange.cmTimeRange
+        case .arrange, .mix:
+            engine.loopRange = activeLoop?.range.cmTimeRange
         case .explore:
+            guard loopSelection, let clip = selectedClip else {
+                engine.loopRange = nil
+                return
+            }
             engine.loopRange = (draftRange ?? clip.sourceRange).cmTimeRange
         }
+    }
+
+    /// Sets the player's levels; `clip`/`music` override the project's for live fader previews.
+    func applyLevels(clip: Float? = nil, music: Float? = nil) {
+        guard mode != .explore, let item = engine.player.currentItem else { return }
+        item.audioMix = CompositionBuilder.audioMix(
+            clipAudioTrackID: loadedTrackIDs.clip, clipVolume: clip ?? project.clipAudioVolume,
+            musicTrackID: loadedTrackIDs.music, musicVolume: music ?? project.referenceAudio?.volume ?? 1)
     }
 
     // MARK: Selection & modes
@@ -191,6 +238,25 @@ final class WorkspaceModel {
             engine.seek(to: start.cmTime, precise: true)
         }
         updateLoopRange()
+    }
+
+    func setMode(_ newMode: Mode) {
+        guard newMode != mode else { return }
+        Haptics.detent()
+        switch newMode {
+        case .explore:
+            enterExplore()
+        case .arrange, .mix:
+            let fromExplore = mode == .explore
+            mode = newMode
+            draftRange = nil
+            if fromExplore {
+                let start = selectedClipID.flatMap { sequenceMap.compositionStart(of: $0) } ?? .zero
+                rebuildSequence(keepingTime: start, resume: false)
+            } else {
+                updateLoopRange()
+            }
+        }
     }
 
     func enterExplore(_ clipID: UUID? = nil) {
@@ -207,11 +273,30 @@ final class WorkspaceModel {
         updateLoopRange()
     }
 
-    func returnToArrange() {
-        mode = .arrange
-        draftRange = nil
-        let start = selectedClipID.flatMap { sequenceMap.compositionStart(of: $0) } ?? .zero
-        rebuildSequence(keepingTime: start, resume: false)
+    // MARK: Loop region (composition time)
+
+    /// The loop region fitted to the current sequence, if it's switched on.
+    var activeLoop: LoopRange? {
+        guard let loop = project.loop, loop.isEnabled else { return nil }
+        return loop.clamped(toSequence: project.duration)
+    }
+
+    /// Switches the loop on or off. The first time, it starts as the selected clip (or the whole sequence).
+    func toggleLoop() {
+        if var loop = project.loop {
+            loop.isEnabled.toggle()
+            perform(SetLoopCommand(loop: loop))
+        } else {
+            let range =
+                selectedClipID.flatMap { sequenceMap.entry(for: $0)?.compositionRange }
+                ?? MediaTimeRange(start: .zero, duration: project.duration)
+            perform(SetLoopCommand(loop: LoopRange(range: range)))
+        }
+        Haptics.tap()
+    }
+
+    func setLoopRange(_ range: MediaTimeRange) {
+        perform(SetLoopCommand(loop: LoopRange(range: range, isEnabled: true)))
     }
 
     // MARK: Arrange edits
@@ -235,10 +320,67 @@ final class WorkspaceModel {
         perform(SetFramingCommand(clipID: clipID, framing: clip.framing == .fill ? .fit : .fill))
     }
     func rename(_ name: String) { perform(RenameProjectCommand(name: name)) }
-    func setIncludeClipAudio(_ include: Bool) {
+    func setSoundPolicy(_ policy: SoundPolicy) {
         var settings = project.exportSettings
-        settings.includeClipAudio = include
+        settings.soundPolicy = policy
         perform(SetExportSettingsCommand(settings: settings))
+    }
+
+    // MARK: Mix edits
+
+    func setClipVolume(_ volume: Float) { perform(SetClipAudioVolumeCommand(volume: volume)) }
+    func setMusicVolume(_ volume: Float) { perform(SetMusicVolumeCommand(volume: volume)) }
+    func setMusicOffset(_ offset: MediaTime) { perform(SetMusicOffsetCommand(offset: offset)) }
+
+    func nudgeMusic(frames: Int) {
+        guard let music = project.referenceAudio else { return }
+        let step = sequenceFrame.scaled(by: Double(frames))
+        setMusicOffset(music.offset + step)
+        Haptics.detent()
+    }
+
+    func removeMusic() { perform(SetReferenceAudioCommand(track: nil)) }
+
+    func importMusicFile(_ url: URL) async {
+        importStatus = "Importing music…"
+        do {
+            finishMusicImport(try await MediaImporter.importAudioFile(url, store: store, projectID: project.id))
+        } catch {
+            finishMusicImport(error)
+        }
+    }
+
+    func importMusic(fromVideo item: PhotosPickerItem) async {
+        importStatus = "Extracting sound…"
+        do {
+            finishMusicImport(try await MediaImporter.importAudio(fromVideo: item, store: store, projectID: project.id))
+        } catch {
+            finishMusicImport(error)
+        }
+    }
+
+    private func finishMusicImport(_ track: AudioTrack) {
+        importStatus = nil
+        perform(SetReferenceAudioCommand(track: track))
+        Haptics.success()
+    }
+
+    private func finishMusicImport(_ error: Error) {
+        importStatus = nil
+        alertMessage = error.localizedDescription
+        Haptics.warning()
+    }
+
+    private func loadWaveform() {
+        waveformTask?.cancel()
+        waveform = nil
+        guard let track = project.referenceAudio, let url = musicURL else { return }
+        let cacheURL = store.waveformCacheURL(for: track, projectID: project.id)
+        waveformTask = Task { [weak self] in
+            let result = try? await WaveformAnalyzer.waveform(for: url, cacheURL: cacheURL)
+            guard !Task.isCancelled, let self, self.project.referenceAudio?.fileName == track.fileName else { return }
+            self.waveform = result
+        }
     }
 
     // MARK: Explore edits (source time)

@@ -2,7 +2,8 @@ import EditCore
 import SwiftUI
 
 /// Arrange state: the whole sequence as tiles. Tap selects (and cues the
-/// playhead), long-press then drag reorders, "Explore" opens the clip. Reorder and trim never share a gesture: trimming lives in Explore.
+/// playhead), long-press then drag reorders; the Explore state opens the
+/// selected clip. Reorder and trim never share a gesture: trimming lives in Explore.
 struct ArrangeDeck: View {
     var model: WorkspaceModel
     var onAddPhotos: () -> Void
@@ -10,6 +11,7 @@ struct ArrangeDeck: View {
 
     var body: some View {
         VStack(spacing: 12) {
+            SequenceRuler(model: model)
             ClipStrip(model: model, onAddPhotos: onAddPhotos, onAddFiles: onAddFiles)
             selectedClipBar
             TransportRow(model: model) {
@@ -64,9 +66,6 @@ struct ArrangeDeck: View {
                 }
                 .buttonStyle(.instrument())
                 .accessibilityLabel("Remove clip from sequence")
-
-                Button("Explore") { model.enterExplore(clip.id) }
-                    .buttonStyle(.instrument(.key))
             }
         } else {
             Text("Select a clip to explore and trim it")

@@ -4,15 +4,20 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// One elastic workspace. Preview and transport stay put; the deck below
-/// changes with the contextual state (Arrange ↔ Explore in Phase 1).
+/// changes with the contextual state (Arrange, Explore, Mix). Release is the export sheet.
 struct WorkspaceView: View {
     @State var model: WorkspaceModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// What a picker was opened for. One picker of each kind is shared, since
+    /// SwiftUI only honours one `photosPicker`/`fileImporter` per view.
+    private enum PickPurpose { case clips, music }
+
     @State private var showPhotos = false
     @State private var showFiles = false
+    @State private var pickPurpose = PickPurpose.clips
     @State private var showExport = false
     @State private var photoItems: [PhotosPickerItem] = []
 
@@ -34,16 +39,26 @@ struct WorkspaceView: View {
             }
         }
         .photosPicker(
-            isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: 20,
+            isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: pickPurpose == .clips ? 20 : 1,
             matching: .videos, preferredItemEncoding: .current
         )
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             photoItems = []
-            Task { await model.importPhotos(items) }
+            switch pickPurpose {
+            case .clips: Task { await model.importPhotos(items) }
+            case .music: if let item = items.first { Task { await model.importMusic(fromVideo: item) } }
+            }
         }
-        .fileImporter(isPresented: $showFiles, allowedContentTypes: [.movie], allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { Task { await model.importFiles(urls) } }
+        .fileImporter(
+            isPresented: $showFiles, allowedContentTypes: pickPurpose == .clips ? [.movie] : [.audio],
+            allowsMultipleSelection: pickPurpose == .clips
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            switch pickPurpose {
+            case .clips: Task { await model.importFiles(urls) }
+            case .music: if let url = urls.first { Task { await model.importMusicFile(url) } }
+            }
         }
         .sheet(isPresented: $showExport) {
             ExportSheet(model: model)
@@ -122,7 +137,7 @@ struct WorkspaceView: View {
                     GlassChip {
                         HStack(spacing: 6) {
                             LED(isOn: model.engine.isPlaying)
-                            Text(model.mode == .arrange ? "ARRANGE" : "EXPLORE")
+                            Text(model.mode.rawValue.uppercased())
                                 .font(Theme.caption)
                                 .foregroundStyle(Theme.label)
                         }
@@ -173,8 +188,8 @@ struct WorkspaceView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 280)
             HStack(spacing: 10) {
-                Button("Photos") { showPhotos = true }.buttonStyle(.instrument(.prominent))
-                Button("Files") { showFiles = true }.buttonStyle(.instrument(.dark))
+                Button("Photos") { pick(.clips, photos: true) }.buttonStyle(.instrument(.prominent))
+                Button("Files") { pick(.clips, photos: false) }.buttonStyle(.instrument(.dark))
             }
             Button("Demo clips") { Task { await model.addDemoClips() } }
                 .buttonStyle(.instrument(.dark))
@@ -185,19 +200,34 @@ struct WorkspaceView: View {
 
     // MARK: Deck
 
+    private func pick(_ purpose: PickPurpose, photos: Bool) {
+        pickPurpose = purpose
+        if photos { showPhotos = true } else { showFiles = true }
+    }
+
     private var deck: some View {
         VStack(spacing: 12) {
+            if !model.project.clips.isEmpty {
+                StateSwitcher(model: model)
+            }
             switch model.mode {
             case .arrange:
                 ArrangeDeck(
                     model: model,
-                    onAddPhotos: { showPhotos = true },
-                    onAddFiles: { showFiles = true }
+                    onAddPhotos: { pick(.clips, photos: true) },
+                    onAddFiles: { pick(.clips, photos: false) }
                 )
                 .transition(.opacity)
             case .explore:
                 ExploreDeck(model: model)
                     .transition(.opacity)
+            case .mix:
+                MixDeck(
+                    model: model,
+                    onAddMusicFile: { pick(.music, photos: false) },
+                    onAddMusicFromVideo: { pick(.music, photos: true) }
+                )
+                .transition(.opacity)
             }
         }
         .padding(.horizontal, 12)
@@ -253,18 +283,48 @@ struct TransportRow<Leading: View, Trailing: View>: View {
     }
 }
 
+/// Explore loops the clip's in/out; Arrange and Mix loop the bracketed region of the sequence.
 struct LoopButton: View {
     var model: WorkspaceModel
+
+    private var isExplore: Bool { model.mode == .explore }
+    private var isOn: Bool { isExplore ? model.loopSelection : model.activeLoop != nil }
+
     var body: some View {
         Button {
-            model.loopSelection.toggle()
-            Haptics.tap()
+            if isExplore {
+                model.loopSelection.toggle()
+                Haptics.tap()
+            } else {
+                model.toggleLoop()
+            }
         } label: {
             Image(systemName: "repeat")
         }
-        .buttonStyle(.instrument(.dark, active: model.loopSelection))
-        .disabled(model.selectedClip == nil)
-        .accessibilityLabel("Loop selection")
-        .accessibilityValue(model.loopSelection ? "On" : "Off")
+        .buttonStyle(.instrument(.dark, active: isOn))
+        .disabled(isExplore ? model.selectedClip == nil : model.project.clips.isEmpty)
+        .accessibilityLabel(isExplore ? "Loop in to out" : "Loop region")
+        .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+/// Switches among the workspace's contextual states. Preview and transport stay put.
+struct StateSwitcher: View {
+    var model: WorkspaceModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(WorkspaceModel.Mode.allCases, id: \.self) { mode in
+                let isCurrent = model.mode == mode
+                Button {
+                    model.setMode(mode)
+                } label: {
+                    Text(mode.rawValue).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.instrument(.dark, active: isCurrent))
+                .disabled(mode == .explore && model.selectedClip == nil)
+                .accessibilityAddTraits(isCurrent ? .isSelected : [])
+            }
+        }
     }
 }

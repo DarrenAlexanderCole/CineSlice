@@ -9,6 +9,9 @@ struct BuiltComposition {
     let videoComposition: AVVideoComposition
     let audioMix: AVAudioMix?
     let duration: CMTime
+    /// Track IDs for re-mixing levels on the live player item without a rebuild.
+    let clipAudioTrackID: CMPersistentTrackID?
+    let musicTrackID: CMPersistentTrackID?
 }
 
 enum CompositionError: LocalizedError {
@@ -26,13 +29,16 @@ enum CompositionError: LocalizedError {
 enum CompositionBuilder {
     /// - Parameters:
     ///   - mediaURL: resolves a source to its file; return nil when the file is missing.
-    ///   - includeClipAudio: false produces a silent composition.
+    ///   - includeClipAudio / includeMusic: both false produces a silent composition.
+    ///   - musicURL: the reference music file, or nil when there's none or it's missing.
     static func build(
         project: Project,
         renderSize: CGSize,
         frameRate: Int32,
         includeClipAudio: Bool,
-        mediaURL: (SourceAsset) -> URL?
+        includeMusic: Bool,
+        mediaURL: (SourceAsset) -> URL?,
+        musicURL: URL?
     ) async throws -> BuiltComposition {
         guard !project.clips.isEmpty else { throw CompositionError.empty }
 
@@ -113,6 +119,13 @@ enum CompositionBuilder {
         }
 
         if let audioTrack, !insertedAudio { composition.removeTrack(audioTrack) }
+        let clipAudioTrackID = insertedAudio ? audioTrack?.trackID : nil
+
+        var musicTrackID: CMPersistentTrackID?
+        if includeMusic, let music = project.referenceAudio, let musicURL {
+            musicTrackID = try await insertMusic(
+                music, url: musicURL, sequenceDuration: MediaTime(cursor), into: composition)
+        }
 
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: cursor)
@@ -123,18 +136,53 @@ enum CompositionBuilder {
         videoComposition.frameDuration = CMTime(value: 1, timescale: frameRate)
         videoComposition.instructions = [instruction]
 
-        var audioMix: AVAudioMix?
-        if let audioTrack, insertedAudio, project.clipAudioVolume != 1 {
-            let params = AVMutableAudioMixInputParameters(track: audioTrack)
-            params.setVolume(project.clipAudioVolume, at: .zero)
-            let mix = AVMutableAudioMix()
-            mix.inputParameters = [params]
-            audioMix = mix
-        }
-
         return BuiltComposition(
             composition: composition, videoComposition: videoComposition,
-            audioMix: audioMix, duration: cursor)
+            audioMix: audioMix(
+                clipAudioTrackID: clipAudioTrackID, clipVolume: project.clipAudioVolume,
+                musicTrackID: musicTrackID, musicVolume: project.referenceAudio?.volume ?? 1),
+            duration: cursor, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID)
+    }
+
+    /// Places the music per `MusicPlacement`, trimmed to the sequence. Returns its track ID, or nil if nothing overlaps.
+    private static func insertMusic(
+        _ music: AudioTrack, url: URL, sequenceDuration: MediaTime, into composition: AVMutableComposition
+    ) async throws -> CMPersistentTrackID? {
+        guard let placement = MusicPlacement(track: music, sequenceDuration: sequenceDuration) else { return nil }
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        guard let source = try await asset.loadTracks(withMediaType: .audio).first,
+            let track = composition.addMutableTrack(
+                withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+        else { return nil }
+        let wanted = CMTimeRange(
+            start: placement.audioStart.cmTime, duration: placement.compositionRange.duration.cmTime)
+        let usable = wanted.intersection(try await source.load(.timeRange))
+        guard usable.isValid, !usable.isEmpty else {
+            composition.removeTrack(track)
+            return nil
+        }
+        let at = placement.compositionRange.start.cmTime + (usable.start - wanted.start)
+        try track.insertTimeRange(usable, of: source, at: at)
+        return track.trackID
+    }
+
+    /// Volume for each audio track. Cheap, so the player's mix can be swapped while a fader moves.
+    static func audioMix(
+        clipAudioTrackID: CMPersistentTrackID?, clipVolume: Float,
+        musicTrackID: CMPersistentTrackID?, musicVolume: Float
+    ) -> AVAudioMix? {
+        let levels = [(clipAudioTrackID, clipVolume), (musicTrackID, musicVolume)]
+        let params: [AVAudioMixInputParameters] = levels.compactMap { id, volume in
+            guard let id else { return nil }
+            let p = AVMutableAudioMixInputParameters()
+            p.trackID = id
+            p.setVolume(volume, at: .zero)
+            return p
+        }
+        guard !params.isEmpty else { return nil }
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = params
+        return mix
     }
 
     /// Orients the source with its preferred transform, then scales it to fill

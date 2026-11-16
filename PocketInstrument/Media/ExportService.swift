@@ -37,10 +37,12 @@ enum ExportService {
             renderSize: CGSize(width: settings.width, height: settings.height),
             frameRate: Int32(settings.frameRate),
             includeClipAudio: settings.includeClipAudio,
+            includeMusic: settings.includeMusic,
             mediaURL: { source in
                 store.isMissing(source, projectID: project.id)
                     ? nil : store.mediaURL(for: source, projectID: project.id)
-            })
+            },
+            musicURL: project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) })
 
         guard
             let session = AVAssetExportSession(
@@ -75,6 +77,18 @@ enum ExportService {
         }
         defer { poller.cancel() }
 
+        try await run(session)
+
+        // Only report success if the file really exists and is non-empty.
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        guard size > 0 else { throw ExportError.failed("No output file was written.") }
+        await progress(1)
+        return url
+    }
+
+    /// Runs a configured session to completion; cancelling the calling task cancels the export.
+    static func run(_ session: AVAssetExportSession) async throws {
+        let box = ExportSessionBox(session: session)
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 box.session.exportAsynchronously {
@@ -93,12 +107,6 @@ enum ExportService {
         } onCancel: {
             box.session.cancelExport()
         }
-
-        // Only report success if the file really exists and is non-empty.
-        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
-        guard size > 0 else { throw ExportError.failed("No output file was written.") }
-        await progress(1)
-        return url
     }
 
     static func saveToPhotos(_ url: URL) async throws {

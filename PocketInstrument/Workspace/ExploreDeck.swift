@@ -23,12 +23,6 @@ struct ExploreDeck: View {
                     .accessibilityLabel("Mark out at playhead")
             }
             HStack(spacing: 8) {
-                Button {
-                    model.returnToArrange()
-                } label: {
-                    Label("Arrange", systemImage: "rectangle.split.3x1")
-                }
-                .buttonStyle(.instrument())
                 Spacer()
                 LoopButton(model: model)
             }

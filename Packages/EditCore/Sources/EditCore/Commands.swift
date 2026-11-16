@@ -145,3 +145,51 @@ public struct SetExportSettingsCommand: EditingCommand {
     public var actionName: String { "Export Settings" }
     public func apply(to project: inout Project) throws { project.exportSettings = settings }
 }
+
+// MARK: - Music and levels
+
+/// Adds, replaces or (with nil) removes the reference music.
+public struct SetReferenceAudioCommand: EditingCommand {
+    public let track: AudioTrack?
+    public init(track: AudioTrack?) { self.track = track }
+    public var actionName: String { track == nil ? "Remove Music" : "Set Music" }
+    public func apply(to project: inout Project) throws { project.referenceAudio = track }
+}
+
+public struct SetMusicOffsetCommand: EditingCommand {
+    public let offset: MediaTime
+    public init(offset: MediaTime) { self.offset = offset }
+    public var actionName: String { "Move Music" }
+    public func apply(to project: inout Project) throws {
+        guard var track = project.referenceAudio else { throw EditError.sourceNotFound }
+        track.offset = track.clampedOffset(offset, sequenceDuration: project.duration)
+        project.referenceAudio = track
+    }
+}
+
+public struct SetClipAudioVolumeCommand: EditingCommand {
+    public let volume: Float
+    public init(volume: Float) { self.volume = volume }
+    public var actionName: String { "Clip Level" }
+    public func apply(to project: inout Project) throws { project.clipAudioVolume = min(max(volume, 0), 1) }
+}
+
+public struct SetMusicVolumeCommand: EditingCommand {
+    public let volume: Float
+    public init(volume: Float) { self.volume = volume }
+    public var actionName: String { "Music Level" }
+    public func apply(to project: inout Project) throws {
+        guard project.referenceAudio != nil else { throw EditError.sourceNotFound }
+        project.referenceAudio?.volume = min(max(volume, 0), 1)
+    }
+}
+
+/// Sets (or clears) the loop region in composition time, fitted to the sequence.
+public struct SetLoopCommand: EditingCommand {
+    public let loop: LoopRange?
+    public init(loop: LoopRange?) { self.loop = loop }
+    public var actionName: String { "Loop Region" }
+    public func apply(to project: inout Project) throws {
+        project.loop = loop?.clamped(toSequence: project.duration)
+    }
+}
