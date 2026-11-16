@@ -1,0 +1,68 @@
+# XcodeGen spec. Generate the Xcode project with:
+#   brew install xcodegen
+#   xcodegen generate
+#   open PocketInstrument.xcodeproj
+name: PocketInstrument
+options:
+  bundleIdPrefix: com.studio4
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+packages:
+  EditCore:
+    path: Packages/EditCore
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  PocketInstrument:
+    type: application
+    platform: iOS
+    sources:
+      - path: PocketInstrument
+    dependencies:
+      - package: EditCore
+    preBuildScripts:
+      # Reports swift-format issues as Xcode warnings; never fails the build.
+      # Rules live in .swift-format at the repo root.
+      - name: swift-format lint
+        basedOnDependencyAnalysis: false
+        script: |
+          if xcrun --find swift-format >/dev/null 2>&1; then
+            # swift-format prints cwd-relative paths; make them absolute so Xcode can jump to them.
+            cd "$SRCROOT"
+            xcrun swift-format lint -r PocketInstrument Packages 2>&1 \
+              | sed -E "s|^([^/][^:]*\.swift:)|$SRCROOT/\1|"
+          else
+            echo "warning: swift-format not found; install Xcode 16 or later to lint."
+          fi
+    info:
+      path: PocketInstrument/Info.plist
+      properties:
+        CFBundleDisplayName: Pocket Instrument
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIRequiresFullScreen: true
+        UIUserInterfaceStyle: Dark
+        NSPhotoLibraryAddUsageDescription: Pocket Instrument saves your finished exports to Photos.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.pocketinstrument
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        # The lint script reads the whole source tree, which the script sandbox would block.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # Set your team in Xcode (Signing & Capabilities) or here:
+        # DEVELOPMENT_TEAM: XXXXXXXXXX
+
+# Core logic tests run without Xcode: cd Packages/EditCore && swift test
