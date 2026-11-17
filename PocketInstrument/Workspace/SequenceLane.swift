@@ -421,7 +421,7 @@ private struct AutomationCurves: View {
     var window: (start: Double, span: Double)
 
     var body: some View {
-        let project = model.project
+        let project = model.mixProject
         let recording = model.recording
         Canvas { context, size in
             guard window.span > 0 else { return }

@@ -25,7 +25,10 @@ final class WorkspaceModel {
 
     private(set) var project: Project
     private(set) var mode: Mode = .arrange
-    var selectedClipID: UUID?
+    var selectedClipID: UUID? {
+        // The CLIP fader resets on a new clip without a release, so a trim in progress ends here.
+        didSet { if curveTrim?.target == .clipAudio { curveTrim = nil } }
+    }
     /// Explore only: loops the clip's in/out range. Arrange and Mix use the project's loop region.
     var loopSelection = false { didSet { updateLoopRange() } }
 
@@ -249,7 +252,7 @@ final class WorkspaceModel {
     func applyLevels(clip: Float? = nil, music: Float? = nil) {
         guard mode != .explore, let item = engine.player.currentItem else { return }
         item.audioMix = CompositionBuilder.audioMix(
-            project: project, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
+            project: mixProject, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
             clipLevel: clip.flatMap { level in selectedClipID.map { (id: $0, volume: level) } }, musicLevel: music,
             writing: recording.map { ($0.target, recordLevel) })
     }
@@ -400,6 +403,31 @@ final class WorkspaceModel {
     }
     /// The pass in progress, drawn live in the lane.
     private(set) var recording: Pass?
+
+    /// A fader dragged (Write off) while the playhead is inside a recorded pass moves that whole
+    /// pass by `delta`, heard and drawn live, and committed on release as one undo step.
+    struct CurveTrim {
+        let target: AutomationTarget
+        let clipID: UUID?
+        /// The pass's key, in its curve's own time (see `TrimAutomationCommand`).
+        let time: MediaTime
+        /// The curve's level under the playhead when the drag began.
+        let start: Float
+        var delta: Float = 0
+
+        var command: TrimAutomationCommand {
+            TrimAutomationCommand(target: target, clipID: clipID, time: time, delta: delta)
+        }
+    }
+    private(set) var curveTrim: CurveTrim?
+
+    /// The project as heard and drawn right now: with a curve trim in progress applied.
+    var mixProject: Project {
+        guard let curveTrim, curveTrim.delta != 0 else { return project }
+        var trimmed = project
+        try? curveTrim.command.apply(to: &trimmed)
+        return trimmed
+    }
     @ObservationIgnored private var recordLevel: Float = 0
     @ObservationIgnored private var recordTask: Task<Void, Never>?
 
@@ -432,7 +460,7 @@ final class WorkspaceModel {
     var recordingClipID: UUID? { recording?.target == .clipAudio ? clipUnderPlayhead : nil }
 
     /// A fader moved (or was touched). Records when Write is on and the sequence is playing;
-    /// otherwise previews the static level.
+    /// inside a recorded pass, trims that pass; otherwise previews the static level.
     func faderMoved(_ target: AutomationTarget, to level: Float) {
         if let recording {
             guard recording.target == target else { return }
@@ -440,6 +468,9 @@ final class WorkspaceModel {
             applyLevels()
         } else if isWriting, mode == .mix, engine.isPlaying {
             startPass(target, at: level)
+        } else if curveTrim?.target == target || beginCurveTrim(target), let start = curveTrim?.start {
+            curveTrim?.delta = level - start
+            applyLevels()
         } else {
             switch target {
             case .clipAudio: applyLevels(clip: level)
@@ -448,11 +479,52 @@ final class WorkspaceModel {
         }
     }
 
-    /// A fader was let go. Returns true when that ended a recorded pass, so the static level is left alone.
-    func faderReleased(_ target: AutomationTarget) -> Bool {
-        guard recording?.target == target else { return false }
-        finishPass()
+    /// A fader was let go at `level`. Returns true when that ended a recorded pass or a curve
+    /// trim, so the static level is left alone.
+    func faderReleased(_ target: AutomationTarget, at level: Float) -> Bool {
+        if recording?.target == target {
+            finishPass()
+            return true
+        }
+        guard var trim = curveTrim, trim.target == target else { return false }
+        curveTrim = nil
+        trim.delta = level - trim.start
+        if trim.delta != 0 { perform(trim.command) }
+        applyLevels()
         return true
+    }
+
+    /// A fader set without a drag (VoiceOver adjust): trims the pass under the playhead, or sets the static level.
+    func faderSet(_ target: AutomationTarget, to level: Float) {
+        if let current = curveLevel(target), let pass = passKey(target) {
+            perform(
+                TrimAutomationCommand(
+                    target: target, clipID: pass.clipID, time: pass.time, delta: level - current))
+            return
+        }
+        switch target {
+        case .clipAudio: setClipVolume(level)
+        case .music: setMusicVolume(level)
+        }
+    }
+
+    private func beginCurveTrim(_ target: AutomationTarget) -> Bool {
+        guard let start = curveLevel(target), let pass = passKey(target) else { return false }
+        curveTrim = CurveTrim(target: target, clipID: pass.clipID, time: pass.time, start: start)
+        return true
+    }
+
+    /// The recorded pass under the playhead, named in its curve's own time.
+    private func passKey(_ target: AutomationTarget) -> (clipID: UUID?, time: MediaTime)? {
+        switch target {
+        case .music:
+            return (nil, currentTime)
+        case .clipAudio:
+            guard let hit = sequenceMap.sourceTime(atComposition: currentTime), hit.clipID == selectedClipID else {
+                return nil
+            }
+            return (hit.clipID, hit.sourceTime)
+        }
     }
 
     /// Clears the music curve, or one clip's curve (every clip's when `clipID` is nil).

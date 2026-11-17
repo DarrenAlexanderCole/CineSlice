@@ -87,6 +87,16 @@ public struct AutomationLane: Codable, Hashable, Sendable {
         kept.append(pass)
         segments = kept.sorted { $0.start < $1.start }
     }
+
+    /// Raises or lowers the pass covering `t` by `delta`, keeping its shape; levels clamp to 0…1.
+    /// False when no pass covers `t`.
+    mutating func shiftPass(containing t: MediaTime, by delta: Float) -> Bool {
+        guard let i = segments.firstIndex(where: { $0.start <= t && t <= $0.end }) else { return false }
+        for j in segments[i].points.indices {
+            segments[i].points[j].value = min(max(segments[i].points[j].value + delta, 0), 1)
+        }
+        return true
+    }
 }
 
 /// The project-wide curves. Clip curves live on the clips.

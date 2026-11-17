@@ -6,7 +6,8 @@ import SwiftUI
 /// Dragging the waveform slides the music; the clip band above it scrubs.
 /// Each clip has its own level: pick one in the clip row and the CLIP fader follows it.
 /// With Write on, riding a fader during playback records it as a curve (drawn in the lane);
-/// inside a recorded pass the fader follows the curve and reads AUTO. A CLIP ride writes onto
+/// inside a recorded pass the fader follows the curve and reads AUTO, and with Write off, moving
+/// it there raises or lowers that whole pass (shape kept). A CLIP ride writes onto
 /// each clip it plays over, and the fader names the clip under the playhead while it records.
 struct MixDeck: View {
     var model: WorkspaceModel
@@ -28,16 +29,16 @@ struct MixDeck: View {
                 Fader(
                     title: faderTitle(clipFaderTitle, .clipAudio), value: model.faderLevel(.clipAudio),
                     onChange: { model.faderMoved(.clipAudio, to: $0) },
-                    onRelease: { _ in model.faderReleased(.clipAudio) },
-                    onCommit: { model.setClipVolume($0) }
+                    onRelease: { model.faderReleased(.clipAudio, at: $0) },
+                    onCommit: { model.faderSet(.clipAudio, to: $0) }
                 )
                 .id(model.selectedClipID)  // a new clip starts a fresh drag, never inherits another's draft
                 .disabled(model.selectedClip == nil)
                 Fader(
                     title: faderTitle("MUSIC", .music), value: model.faderLevel(.music),
                     onChange: { model.faderMoved(.music, to: $0) },
-                    onRelease: { _ in model.faderReleased(.music) },
-                    onCommit: { model.setMusicVolume($0) }
+                    onRelease: { model.faderReleased(.music, at: $0) },
+                    onCommit: { model.faderSet(.music, to: $0) }
                 )
                 .disabled(model.project.referenceAudio == nil)
             }

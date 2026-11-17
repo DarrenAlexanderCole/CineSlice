@@ -223,6 +223,33 @@ public struct WriteAutomationCommand: EditingCommand {
     }
 }
 
+/// Moves one recorded pass up or down as a whole (a static fader move inside it). `time` is in
+/// the curve's own time: composition time for the music, the clip's source time for a clip.
+public struct TrimAutomationCommand: EditingCommand {
+    public let target: AutomationTarget
+    public let clipID: UUID?
+    public let time: MediaTime
+    public let delta: Float
+    public init(target: AutomationTarget, clipID: UUID? = nil, time: MediaTime, delta: Float) {
+        self.target = target
+        self.clipID = clipID
+        self.time = time
+        self.delta = delta
+    }
+    public var actionName: String { target == .music ? "Trim Music Curve" : "Trim Clip Curve" }
+    public func apply(to project: inout Project) throws {
+        let shifted: Bool
+        switch target {
+        case .music:
+            shifted = project.automation.music.shiftPass(containing: time, by: delta)
+        case .clipAudio:
+            guard let clipID, let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
+            shifted = project.clips[i].levelCurve.shiftPass(containing: time, by: delta)
+        }
+        guard shifted else { throw EditError.invalidRange }
+    }
+}
+
 /// Clears the music curve, or one clip's curve (every clip's when `clipID` is nil).
 public struct ClearAutomationCommand: EditingCommand {
     public let target: AutomationTarget

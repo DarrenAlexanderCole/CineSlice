@@ -237,6 +237,47 @@ final class MusicPipelineTests: XCTestCase {
         return a.value + (b.value - a.value) * Float((t - a.time).seconds / (b.time - a.time).seconds)
     }
 
+    // MARK: Curve trim
+
+    /// With Write off, a fader moved inside a recorded pass moves that pass (heard live, one undo
+    /// step on release); outside any pass it still sets the static level.
+    func testFaderInsideARecordedPassTrimsIt() async throws {
+        var project = try await makeProject()
+        try WriteAutomationCommand(
+            target: .music,
+            samples: [
+                AutomationPoint(time: MediaTime(seconds: 2), value: 0.3),
+                AutomationPoint(time: MediaTime(seconds: 4), value: 0.7),
+            ]
+        ).apply(to: &project)
+        try store.save(project)
+        let model = WorkspaceModel(project: project, store: store)
+        model.open()
+        defer { model.close() }
+        model.setMode(.mix)
+        for _ in 0..<100 where model.engine.duration == .zero {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        model.scrub(to: MediaTime(seconds: 3), precise: true)
+        XCTAssertEqual(model.faderLevel(.music), 0.5, accuracy: 1e-3)
+
+        model.faderMoved(.music, to: 0.5)
+        model.faderMoved(.music, to: 0.7)
+        XCTAssertEqual(envelopeLevel(model.mixProject, .music, at: 3), 0.7, accuracy: 1e-3, "heard while dragging")
+        XCTAssertEqual(envelopeLevel(model.project, .music, at: 3), 0.5, accuracy: 1e-3, "not committed yet")
+        XCTAssertTrue(model.faderReleased(.music, at: 0.7))
+        XCTAssertEqual(model.undoName, "Trim Music Curve")
+        XCTAssertEqual(model.faderLevel(.music), 0.7, accuracy: 1e-3)
+        XCTAssertEqual(envelopeLevel(model.project, .music, at: 2), 0.5, accuracy: 1e-3, "shape kept")
+
+        model.scrub(to: MediaTime(seconds: 8), precise: true)
+        model.faderMoved(.music, to: 0.2)
+        XCTAssertFalse(model.faderReleased(.music, at: 0.2))
+        model.faderSet(.music, to: 0.2)
+        XCTAssertEqual(model.undoName, "Music Level")
+        XCTAssertEqual(model.project.referenceAudio?.volume, 0.2)
+    }
+
     // MARK: Photos
 
     /// A rotated photo becomes an upright, silent 10 s movie at 30 fps that starts as a 3 s clip

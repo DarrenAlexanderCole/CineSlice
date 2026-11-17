@@ -117,6 +117,28 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(p.automation.music.segments.count, 1)
     }
 
+    func testTrimMovesOnePassAndKeepsItsShape() throws {
+        var p = project()
+        var undo = UndoStack()
+        try write(.music, [point(1, 0.2), point(2, 0.6), point(3, 0.9)], to: &p)
+        try write(.music, [point(5, 0.5), point(6, 0.5)], to: &p)
+        try undo.perform(TrimAutomationCommand(target: .music, time: t(2.5), delta: 0.2), on: &p)
+        let trimmed = p.automation.music.segments
+        XCTAssertEqual(trimmed[0].points.map(\.value), [0.4, 0.8, 1], "shape kept, clamped at full")
+        XCTAssertEqual(trimmed[1].points.map(\.value), [0.5, 0.5], "other passes untouched")
+        XCTAssertEqual(undo.undo(&p), "Trim Music Curve")
+        XCTAssertEqual(p.automation.music.segments[0].points.map(\.value), [0.2, 0.6, 0.9])
+        XCTAssertThrowsError(try TrimAutomationCommand(target: .music, time: t(4), delta: 0.1).apply(to: &p))
+    }
+
+    func testTrimAClipPassInItsSourceTime() throws {
+        var p = project(clips: [(4, 1), (6, 0.5)])
+        try write(.clipAudio, [point(5, 0.4), point(7, 0.4)], to: &p)
+        // Composition 6 s is 2 s into the second clip.
+        try TrimAutomationCommand(target: .clipAudio, clipID: p.clips[1].id, time: t(2), delta: -0.3).apply(to: &p)
+        XCTAssertEqual(level(p.levelEnvelope(for: .clipAudio), at: 6), 0.1, accuracy: 1e-6)
+    }
+
     // MARK: Envelope
 
     func testWithoutAutomationTheEnvelopeIsTheStaticLevels() {
