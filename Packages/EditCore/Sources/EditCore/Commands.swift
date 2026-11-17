@@ -200,3 +200,30 @@ public struct SetLoopCommand: EditingCommand {
         project.loop = loop?.clamped(toSequence: project.duration)
     }
 }
+
+/// Records one fader pass into a curve, replacing whatever it overlaps (one undo step).
+public struct WriteAutomationCommand: EditingCommand {
+    public let target: AutomationTarget
+    public let samples: [AutomationPoint]
+    public init(target: AutomationTarget, samples: [AutomationPoint]) {
+        self.target = target
+        self.samples = samples
+    }
+    public var actionName: String { target == .music ? "Record Music Level" : "Record Clip Level" }
+    public func apply(to project: inout Project) throws {
+        if target == .music, project.referenceAudio == nil { throw EditError.sourceNotFound }
+        guard let pass = AutomationSegment(recorded: samples, sequenceDuration: project.duration) else {
+            throw EditError.invalidRange
+        }
+        project.automation[target].write(pass)
+    }
+}
+
+public struct ClearAutomationCommand: EditingCommand {
+    public let target: AutomationTarget
+    public init(target: AutomationTarget) { self.target = target }
+    public var actionName: String { target == .music ? "Clear Music Curve" : "Clear Clip Curve" }
+    public func apply(to project: inout Project) throws {
+        project.automation[target] = AutomationLane()
+    }
+}

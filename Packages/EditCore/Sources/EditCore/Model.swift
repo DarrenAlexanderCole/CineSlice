@@ -126,15 +126,6 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-public struct AutomationPoint: Codable, Hashable, Sendable {
-    public var time: MediaTime
-    public var value: Float
-    public init(time: MediaTime, value: Float) {
-        self.time = time
-        self.value = value
-    }
-}
-
 public struct LoopRange: Codable, Hashable, Sendable {
     public var range: MediaTimeRange
     public var isEnabled: Bool
@@ -223,7 +214,8 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     public var sources: [SourceAsset]
     public var clips: [TimelineClip]
     public var referenceAudio: AudioTrack?
-    public var volumeAutomation: [AutomationPoint]
+    /// Recorded level curves (Phase 3), in composition time.
+    public var automation: Automation
     public var loop: LoopRange?
     public var exportSettings: ExportSettings
 
@@ -236,7 +228,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         self.sources = []
         self.clips = []
         self.referenceAudio = nil
-        self.volumeAutomation = []
+        self.automation = Automation()
         self.loop = nil
         self.exportSettings = .vertical1080
     }
@@ -244,7 +236,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     // Tolerant decoding: new optional fields can be added without breaking old files.
     enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, createdAt, modifiedAt, sources, clips
-        case referenceAudio, volumeAutomation, loop, exportSettings
+        case referenceAudio, automation, loop, exportSettings
     }
 
     /// Keys older files wrote that are no longer stored.
@@ -269,7 +261,8 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
             for i in clips.indices { clips[i].volume = min(max(clips[i].volume * level, 0), 1) }
         }
         referenceAudio = try c.decodeIfPresent(AudioTrack.self, forKey: .referenceAudio)
-        volumeAutomation = try c.decodeIfPresent([AutomationPoint].self, forKey: .volumeAutomation) ?? []
+        // Older files wrote an always-empty `volumeAutomation` array; it is ignored.
+        automation = try c.decodeIfPresent(Automation.self, forKey: .automation) ?? Automation()
         loop = try c.decodeIfPresent(LoopRange.self, forKey: .loop)
         exportSettings = try c.decodeIfPresent(ExportSettings.self, forKey: .exportSettings) ?? .vertical1080
     }
