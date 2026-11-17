@@ -158,7 +158,84 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertEqual(level(live.inputParameters[0], at: 10), 0.5)
     }
 
+    /// Preview and export share one mix, and it plays the project's level envelopes.
+    func testMixFollowsRecordedCurves() async throws {
+        var project = try await makeProject()
+        try SetClipVolumeCommand(clipID: project.clips[2].id, volume: 0.5).apply(to: &project)
+        let s = { (seconds: Double, value: Float) in AutomationPoint(time: MediaTime(seconds: seconds), value: value) }
+        try WriteAutomationCommand(target: .music, samples: [s(2, 1), s(3, 0.2), s(5, 0.2), s(6, 0.6)])
+            .apply(to: &project)
+        try WriteAutomationCommand(target: .clipAudio, samples: [s(8, 0.3), s(10, 0.9)]).apply(to: &project)
+
+        let mix = try XCTUnwrap(
+            CompositionBuilder.audioMix(project: project, clipAudioTrackID: 1, musicTrackID: 2) as? AVMutableAudioMix)
+        let clips = try XCTUnwrap(mix.inputParameters.first { $0.trackID == 1 })
+        let music = try XCTUnwrap(mix.inputParameters.first { $0.trackID == 2 })
+        for tenth in 0..<130 {
+            let seconds = Double(tenth) / 10
+            XCTAssertEqual(
+                level(music, at: seconds), envelopeLevel(project, .music, at: seconds), accuracy: 1e-4,
+                "music \(seconds)")
+            XCTAssertEqual(
+                level(clips, at: seconds), envelopeLevel(project, .clipAudio, at: seconds), accuracy: 1e-4,
+                "clip \(seconds)")
+        }
+        XCTAssertEqual(level(music, at: 4), 0.2, accuracy: 1e-4)
+        XCTAssertEqual(level(clips, at: 9), 0.6, accuracy: 1e-4)
+        XCTAssertEqual(level(clips, at: 12), 0.5, accuracy: 1e-4)
+
+        // A live music fader drag changes the static level but not the recorded pass.
+        let live = try XCTUnwrap(
+            CompositionBuilder.audioMix(project: project, clipAudioTrackID: nil, musicTrackID: 2, musicLevel: 0.4)
+                as? AVMutableAudioMix)
+        XCTAssertEqual(level(live.inputParameters[0], at: 1), 0.4, accuracy: 1e-4)
+        XCTAssertEqual(level(live.inputParameters[0], at: 4), 0.2, accuracy: 1e-4)
+        XCTAssertEqual(level(live.inputParameters[0], at: 10), 0.4, accuracy: 1e-4)
+    }
+
+    /// The exported file's loudness follows a recorded music curve: each click's peak, relative
+    /// to the same click in an export without the curve, matches the curve at that moment.
+    /// (The click track accents every fourth click, so clicks are compared one to one.)
+    func testExportedMusicFollowsTheCurve() async throws {
+        var project = try await makeProject()
+        project.exportSettings.soundPolicy = .clipsAndMusic
+        let reference = try await ExportService.export(project: project, store: store) { _ in }
+        let flat = try await clickPeaks(in: AVURLAsset(url: reference.videoURL))
+
+        let s = { (seconds: Double, value: Float) in AutomationPoint(time: MediaTime(seconds: seconds), value: value) }
+        // Full level, a 2 s fade to 25% from 5 s, held to 9 s, then the glide back to full.
+        try WriteAutomationCommand(target: .music, samples: [s(5, 1), s(7, 0.25), s(9, 0.25)]).apply(to: &project)
+        let result = try await ExportService.export(project: project, store: store) { _ in }
+        let peaks = try await clickPeaks(in: AVURLAsset(url: result.videoURL))
+        XCTAssertEqual(peaks.count, 26, "\(peaks.map(\.time))")
+        XCTAssertEqual(peaks.count, flat.count)
+
+        var gains: [Double: Float] = [:]
+        for (click, unchanged) in zip(peaks, flat) {
+            XCTAssertEqual(click.time, unchanged.time, accuracy: 0.002)
+            let gain = click.peak / unchanged.peak
+            gains[(click.time * 2).rounded() / 2] = gain
+            XCTAssertEqual(
+                gain, envelopeLevel(project, .music, at: click.time), accuracy: 0.03, "click at \(click.time)")
+        }
+        XCTAssertEqual(try XCTUnwrap(gains[3]), 1, accuracy: 0.03)
+        XCTAssertEqual(try XCTUnwrap(gains[6]), 0.625, accuracy: 0.03)
+        XCTAssertEqual(try XCTUnwrap(gains[8]), 0.25, accuracy: 0.03)
+        XCTAssertEqual(try XCTUnwrap(gains[10]), 1, accuracy: 0.03)
+    }
+
     // MARK: Helpers
+
+    /// What the project's envelope plays at `seconds`, ramping linearly between breakpoints.
+    private func envelopeLevel(_ project: Project, _ target: AutomationTarget, at seconds: Double) -> Float {
+        let envelope = project.levelEnvelope(for: target)
+        let t = MediaTime(seconds: seconds)
+        guard let i = envelope.lastIndex(where: { $0.time <= t }) else { return envelope.first?.value ?? 1 }
+        guard i + 1 < envelope.count, envelope[i + 1].time > envelope[i].time else { return envelope[i].value }
+        let a = envelope[i]
+        let b = envelope[i + 1]
+        return a.value + (b.value - a.value) * Float((t - a.time).seconds / (b.time - a.time).seconds)
+    }
 
     private func build(_ project: Project, clipAudio: Bool, music: Bool) async throws -> BuiltComposition {
         let store = self.store!
@@ -169,15 +246,15 @@ final class MusicPipelineTests: XCTestCase {
             musicURL: project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) })
     }
 
-    /// The volume a mix input plays at `seconds`.
+    /// The volume a mix input plays at `seconds`, interpolating inside ramps.
     private func level(_ params: AVAudioMixInputParameters, at seconds: Double) -> Float {
         var start: Float = -1
         var end: Float = -1
         var range = CMTimeRange()
-        _ = params.getVolumeRamp(
-            for: CMTime(seconds: seconds, preferredTimescale: 600), startVolume: &start, endVolume: &end,
-            timeRange: &range)
-        return start
+        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        _ = params.getVolumeRamp(for: time, startVolume: &start, endVolume: &end, timeRange: &range)
+        guard range.duration.isNumeric, range.duration.seconds > 0, start != end else { return start }
+        return start + (end - start) * Float((time - range.start).seconds / range.duration.seconds)
     }
 
     private func assertVideo(_ asset: AVURLAsset, seconds: Double) async throws {
@@ -191,10 +268,29 @@ final class MusicPipelineTests: XCTestCase {
 
     /// Start times of clicks: the first loud sample after at least 0.2 s of quiet.
     private func clickOnsets(in asset: AVURLAsset) async throws -> [Double] {
+        try await clickPeaks(in: asset).map(\.time)
+    }
+
+    /// Each click's start time and its loudest sample within 0.1 s.
+    private func clickPeaks(in asset: AVURLAsset) async throws -> [(time: Double, peak: Float)] {
+        let rate = 44_100.0
+        let samples = try await monoSamples(in: asset, rate: rate)
+        var clicks: [(time: Double, peak: Float)] = []
+        var lastLoud = -Int(rate)
+        for (index, s) in samples.enumerated() where abs(s) > 0.02 {
+            if index - lastLoud > Int(rate * 0.2) {
+                let window = samples[index..<min(samples.count, index + Int(rate * 0.1))]
+                clicks.append((Double(index) / rate, window.map(abs).max() ?? 0))
+            }
+            lastLoud = index
+        }
+        return clicks
+    }
+
+    private func monoSamples(in asset: AVURLAsset, rate: Double) async throws -> [Float] {
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         let track = try XCTUnwrap(audioTracks.first)
         let reader = try AVAssetReader(asset: asset)
-        let rate = 44_100.0
         let output = AVAssetReaderTrackOutput(
             track: track,
             outputSettings: [
@@ -204,23 +300,15 @@ final class MusicPipelineTests: XCTestCase {
             ])
         reader.add(output)
         XCTAssertTrue(reader.startReading())
-        var onsets: [Double] = []
-        var index = 0
-        var lastLoud = -Int(rate)
+        var all: [Float] = []
         while let buffer = output.copyNextSampleBuffer() {
             guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
             var samples = [Float](repeating: 0, count: CMBlockBufferGetDataLength(block) / 4)
             samples.withUnsafeMutableBytes {
                 _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!)
             }
-            for s in samples {
-                if abs(s) > 0.1 {
-                    if index - lastLoud > Int(rate * 0.2) { onsets.append(Double(index) / rate) }
-                    lastLoud = index
-                }
-                index += 1
-            }
+            all += samples
         }
-        return onsets
+        return all
     }
 }

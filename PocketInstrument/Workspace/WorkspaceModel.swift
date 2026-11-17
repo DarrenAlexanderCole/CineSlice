@@ -149,6 +149,7 @@ final class WorkspaceModel {
         shape.name = ""
         for i in shape.clips.indices { shape.clips[i].volume = 1 }
         shape.referenceAudio?.volume = 1
+        shape.automation = Automation()
         shape.loop = nil
         shape.exportSettings = .vertical1080  // preview always plays the full mix; the policy is export-only
         return shape

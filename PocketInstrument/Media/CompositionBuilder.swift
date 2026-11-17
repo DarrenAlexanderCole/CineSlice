@@ -164,29 +164,37 @@ enum CompositionBuilder {
         return track.trackID
     }
 
-    /// Levels for each audio track; each clip's level takes over at its first composition frame.
-    /// Cheap, so the player's mix can be swapped while a fader moves: `clipLevel`/`musicLevel`
-    /// override the project's for live fader previews.
+    /// Levels for each audio track: the project's level envelopes (static levels, each clip's
+    /// own level from its first frame, and recorded automation) as volume ramps. Shared by
+    /// preview and export. Cheap, so the player's mix can be swapped while a fader moves:
+    /// `clipLevel`/`musicLevel` replace the static levels for live fader previews; recorded
+    /// automation still wins where it exists.
     static func audioMix(
         project: Project, clipAudioTrackID: CMPersistentTrackID?, musicTrackID: CMPersistentTrackID?,
         clipLevel: (id: UUID, volume: Float)? = nil, musicLevel: Float? = nil
     ) -> AVAudioMix? {
-        var params: [AVAudioMixInputParameters] = []
-        if let clipAudioTrackID {
+        var mixed = project
+        if let clipLevel, let i = mixed.index(ofClip: clipLevel.id) { mixed.clips[i].volume = clipLevel.volume }
+        if let musicLevel { mixed.referenceAudio?.volume = musicLevel }
+
+        let tracks: [(CMPersistentTrackID?, AutomationTarget)] = [
+            (clipAudioTrackID, .clipAudio), (musicTrackID, .music),
+        ]
+        let params: [AVAudioMixInputParameters] = tracks.compactMap { trackID, target in
+            guard let trackID else { return nil }
             let p = AVMutableAudioMixInputParameters()
-            p.trackID = clipAudioTrackID
-            for entry in SequenceMap(project: project).entries {
-                guard let clip = project.clip(id: entry.clipID) else { continue }
-                let volume = clipLevel.flatMap { $0.id == clip.id ? $0.volume : nil } ?? clip.volume
-                p.setVolume(volume, at: entry.compositionRange.start.cmTime)
+            p.trackID = trackID
+            let envelope = mixed.levelEnvelope(for: target)
+            for (a, b) in zip(envelope, envelope.dropFirst()) where b.time > a.time {
+                if a.value == b.value {
+                    p.setVolume(a.value, at: a.time.cmTime)
+                } else {
+                    p.setVolumeRamp(
+                        fromStartVolume: a.value, toEndVolume: b.value,
+                        timeRange: CMTimeRange(start: a.time.cmTime, end: b.time.cmTime))
+                }
             }
-            params.append(p)
-        }
-        if let musicTrackID {
-            let p = AVMutableAudioMixInputParameters()
-            p.trackID = musicTrackID
-            p.setVolume(musicLevel ?? project.referenceAudio?.volume ?? 1, at: .zero)
-            params.append(p)
+            return p
         }
         guard !params.isEmpty else { return nil }
         let mix = AVMutableAudioMix()
