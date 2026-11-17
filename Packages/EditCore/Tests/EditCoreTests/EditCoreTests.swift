@@ -206,12 +206,32 @@ final class MusicTests: XCTestCase {
 
     func testVolumesClampAndMusicVolumeNeedsMusic() throws {
         var p = project(seconds: 10)
-        try SetClipAudioVolumeCommand(volume: 1.7).apply(to: &p)
-        XCTAssertEqual(p.clipAudioVolume, 1)
+        try SetClipVolumeCommand(clipID: p.clips[0].id, volume: 1.7).apply(to: &p)
+        XCTAssertEqual(p.clips[0].volume, 1)
+        XCTAssertThrowsError(try SetClipVolumeCommand(clipID: UUID(), volume: 0.5).apply(to: &p))
         XCTAssertThrowsError(try SetMusicVolumeCommand(volume: 0.5).apply(to: &p))
         try SetReferenceAudioCommand(track: track(seconds: 30)).apply(to: &p)
         try SetMusicVolumeCommand(volume: -1).apply(to: &p)
         XCTAssertEqual(p.referenceAudio?.volume, 0)
+    }
+
+    func testEachClipKeepsItsOwnLevel() throws {
+        var p = Project(name: "Levels")
+        let sources = (0..<3).map { _ in
+            SourceAsset(fileName: "a.mov", duration: MediaTime(seconds: 2), width: 1080, height: 1920)
+        }
+        try AddClipsCommand(sources: sources).apply(to: &p)
+        var undo = UndoStack()
+        try undo.perform(SetClipVolumeCommand(clipID: p.clips[1].id, volume: 0.25), on: &p)
+        XCTAssertEqual(p.clips.map(\.volume), [1, 0.25, 1])
+        // The level travels with the clip when it moves, and survives saving.
+        try undo.perform(MoveClipCommand(clipID: p.clips[1].id, toIndex: 0), on: &p)
+        XCTAssertEqual(p.clips.map(\.volume), [0.25, 1, 1])
+        let decoded = try ProjectStore.decoder.decode(Project.self, from: ProjectStore.encoder.encode(p))
+        XCTAssertEqual(decoded.clips.map(\.volume), [0.25, 1, 1])
+        undo.undo(&p)
+        undo.undo(&p)
+        XCTAssertEqual(p.clips.map(\.volume), [1, 1, 1])
     }
 
     func testLoopIsFittedToSequence() throws {
@@ -369,10 +389,10 @@ final class MusicTests: XCTestCase {
     // MARK: Older project files
 
     /// A project.json exactly as Phase 1 wrote it (no music, no loop, includeClipAudio flag).
-    private func phase1JSON(includeClipAudio: Bool) -> String {
+    private func phase1JSON(includeClipAudio: Bool, clipAudioVolume: Float = 1) -> String {
         """
         {
-          "clipAudioVolume" : 1,
+          "clipAudioVolume" : \(clipAudioVolume),
           "clips" : [
             {
               "framing" : "fill",
@@ -428,6 +448,15 @@ final class MusicTests: XCTestCase {
         let silent = try ProjectStore.decoder.decode(
             Project.self, from: Data(phase1JSON(includeClipAudio: false).utf8))
         XCTAssertEqual(silent.exportSettings.soundPolicy, .silent)
+        XCTAssertEqual(silent.clips[0].volume, 1)
+
+        // The old single clip level becomes each clip's own level, and isn't written back.
+        let quiet = try ProjectStore.decoder.decode(
+            Project.self, from: Data(phase1JSON(includeClipAudio: true, clipAudioVolume: 0.4).utf8))
+        XCTAssertEqual(quiet.clips[0].volume, 0.4)
+        let rewritten = String(decoding: try ProjectStore.encoder.encode(quiet), as: UTF8.self)
+        XCTAssertFalse(rewritten.contains("clipAudioVolume"))
+        XCTAssertEqual(try ProjectStore.decoder.decode(Project.self, from: Data(rewritten.utf8)).clips[0].volume, 0.4)
 
         // Saving rewrites it in the current format, and it still reads back the same.
         let again = try ProjectStore.decoder.decode(Project.self, from: ProjectStore.encoder.encode(silent))

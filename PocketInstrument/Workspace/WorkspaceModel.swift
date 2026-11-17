@@ -147,7 +147,7 @@ final class WorkspaceModel {
         var shape = p
         shape.modifiedAt = .distantPast
         shape.name = ""
-        shape.clipAudioVolume = 1
+        for i in shape.clips.indices { shape.clips[i].volume = 1 }
         shape.referenceAudio?.volume = 1
         shape.loop = nil
         shape.exportSettings = .vertical1080  // preview always plays the full mix; the policy is export-only
@@ -235,12 +235,13 @@ final class WorkspaceModel {
         }
     }
 
-    /// Sets the player's levels; `clip`/`music` override the project's for live fader previews.
+    /// Sets the player's levels; `clip` (for the selected clip) and `music` override the project's
+    /// for live fader previews.
     func applyLevels(clip: Float? = nil, music: Float? = nil) {
         guard mode != .explore, let item = engine.player.currentItem else { return }
         item.audioMix = CompositionBuilder.audioMix(
-            clipAudioTrackID: loadedTrackIDs.clip, clipVolume: clip ?? project.clipAudioVolume,
-            musicTrackID: loadedTrackIDs.music, musicVolume: music ?? project.referenceAudio?.volume ?? 1)
+            project: project, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
+            clipLevel: clip.flatMap { level in selectedClipID.map { (id: $0, volume: level) } }, musicLevel: music)
     }
 
     // MARK: Selection & modes
@@ -248,7 +249,7 @@ final class WorkspaceModel {
     func select(_ clipID: UUID) {
         selectedClipID = clipID
         Haptics.detent()
-        if mode == .arrange, let start = sequenceMap.compositionStart(of: clipID) {
+        if mode != .explore, let start = sequenceMap.compositionStart(of: clipID) {
             engine.seek(to: start.cmTime, precise: true)
         }
         updateLoopRange()
@@ -369,7 +370,10 @@ final class WorkspaceModel {
 
     // MARK: Mix edits
 
-    func setClipVolume(_ volume: Float) { perform(SetClipAudioVolumeCommand(volume: volume)) }
+    func setClipVolume(_ volume: Float) {
+        guard let id = selectedClipID else { return }
+        perform(SetClipVolumeCommand(clipID: id, volume: volume))
+    }
     func setMusicVolume(_ volume: Float) { perform(SetMusicVolumeCommand(volume: volume)) }
     func setMusicOffset(_ offset: MediaTime) { perform(SetMusicOffsetCommand(offset: offset)) }
 

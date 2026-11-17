@@ -167,11 +167,18 @@ public struct SetMusicOffsetCommand: EditingCommand {
     }
 }
 
-public struct SetClipAudioVolumeCommand: EditingCommand {
+public struct SetClipVolumeCommand: EditingCommand {
+    public let clipID: UUID
     public let volume: Float
-    public init(volume: Float) { self.volume = volume }
+    public init(clipID: UUID, volume: Float) {
+        self.clipID = clipID
+        self.volume = volume
+    }
     public var actionName: String { "Clip Level" }
-    public func apply(to project: inout Project) throws { project.clipAudioVolume = min(max(volume, 0), 1) }
+    public func apply(to project: inout Project) throws {
+        guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
+        project.clips[i].volume = min(max(volume, 0), 1)
+    }
 }
 
 public struct SetMusicVolumeCommand: EditingCommand {

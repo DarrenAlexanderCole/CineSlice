@@ -138,9 +138,7 @@ enum CompositionBuilder {
 
         return BuiltComposition(
             composition: composition, videoComposition: videoComposition,
-            audioMix: audioMix(
-                clipAudioTrackID: clipAudioTrackID, clipVolume: project.clipAudioVolume,
-                musicTrackID: musicTrackID, musicVolume: project.referenceAudio?.volume ?? 1),
+            audioMix: audioMix(project: project, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID),
             duration: cursor, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID)
     }
 
@@ -166,18 +164,29 @@ enum CompositionBuilder {
         return track.trackID
     }
 
-    /// Volume for each audio track. Cheap, so the player's mix can be swapped while a fader moves.
+    /// Levels for each audio track; each clip's level takes over at its first composition frame.
+    /// Cheap, so the player's mix can be swapped while a fader moves: `clipLevel`/`musicLevel`
+    /// override the project's for live fader previews.
     static func audioMix(
-        clipAudioTrackID: CMPersistentTrackID?, clipVolume: Float,
-        musicTrackID: CMPersistentTrackID?, musicVolume: Float
+        project: Project, clipAudioTrackID: CMPersistentTrackID?, musicTrackID: CMPersistentTrackID?,
+        clipLevel: (id: UUID, volume: Float)? = nil, musicLevel: Float? = nil
     ) -> AVAudioMix? {
-        let levels = [(clipAudioTrackID, clipVolume), (musicTrackID, musicVolume)]
-        let params: [AVAudioMixInputParameters] = levels.compactMap { id, volume in
-            guard let id else { return nil }
+        var params: [AVAudioMixInputParameters] = []
+        if let clipAudioTrackID {
             let p = AVMutableAudioMixInputParameters()
-            p.trackID = id
-            p.setVolume(volume, at: .zero)
-            return p
+            p.trackID = clipAudioTrackID
+            for entry in SequenceMap(project: project).entries {
+                guard let clip = project.clip(id: entry.clipID) else { continue }
+                let volume = clipLevel.flatMap { $0.id == clip.id ? $0.volume : nil } ?? clip.volume
+                p.setVolume(volume, at: entry.compositionRange.start.cmTime)
+            }
+            params.append(p)
+        }
+        if let musicTrackID {
+            let p = AVMutableAudioMixInputParameters()
+            p.trackID = musicTrackID
+            p.setVolume(musicLevel ?? project.referenceAudio?.volume ?? 1, at: .zero)
+            params.append(p)
         }
         guard !params.isEmpty else { return nil }
         let mix = AVMutableAudioMix()

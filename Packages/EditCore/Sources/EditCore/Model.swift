@@ -65,16 +65,33 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     /// Playback speed. 1 = normal. Stored now; exposed in a later phase.
     public var speed: Double
     public var framing: Framing
+    /// This clip's own sound level, 0…1.
+    public var volume: Float
 
     public init(
         id: UUID = UUID(), sourceID: UUID, sourceRange: MediaTimeRange,
-        speed: Double = 1, framing: Framing = .fill
+        speed: Double = 1, framing: Framing = .fill, volume: Float = 1
     ) {
         self.id = id
         self.sourceID = sourceID
         self.sourceRange = sourceRange
         self.speed = speed
         self.framing = framing
+        self.volume = volume
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, sourceID, sourceRange, speed, framing, volume
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        sourceID = try c.decode(UUID.self, forKey: .sourceID)
+        sourceRange = try c.decode(MediaTimeRange.self, forKey: .sourceRange)
+        speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 1
+        framing = try c.decodeIfPresent(Framing.self, forKey: .framing) ?? .fill
+        volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
     }
 
     /// Length of this clip on the composition timeline.
@@ -205,7 +222,6 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     public var modifiedAt: Date
     public var sources: [SourceAsset]
     public var clips: [TimelineClip]
-    public var clipAudioVolume: Float
     public var referenceAudio: AudioTrack?
     public var volumeAutomation: [AutomationPoint]
     public var loop: LoopRange?
@@ -219,7 +235,6 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         self.modifiedAt = createdAt
         self.sources = []
         self.clips = []
-        self.clipAudioVolume = 1
         self.referenceAudio = nil
         self.volumeAutomation = []
         self.loop = nil
@@ -229,7 +244,13 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     // Tolerant decoding: new optional fields can be added without breaking old files.
     enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, createdAt, modifiedAt, sources, clips
-        case clipAudioVolume, referenceAudio, volumeAutomation, loop, exportSettings
+        case referenceAudio, volumeAutomation, loop, exportSettings
+    }
+
+    /// Keys older files wrote that are no longer stored.
+    private enum LegacyKeys: String, CodingKey {
+        /// Before Phase 2.1 one level applied to every clip; it now seeds each clip's own level.
+        case clipAudioVolume
     }
 
     public init(from decoder: Decoder) throws {
@@ -243,7 +264,10 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         modifiedAt = try c.decodeIfPresent(Date.self, forKey: .modifiedAt) ?? createdAt
         sources = try c.decodeIfPresent([SourceAsset].self, forKey: .sources) ?? []
         clips = try c.decodeIfPresent([TimelineClip].self, forKey: .clips) ?? []
-        clipAudioVolume = try c.decodeIfPresent(Float.self, forKey: .clipAudioVolume) ?? 1
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        if let level = try legacy.decodeIfPresent(Float.self, forKey: .clipAudioVolume), level != 1 {
+            for i in clips.indices { clips[i].volume = min(max(clips[i].volume * level, 0), 1) }
+        }
         referenceAudio = try c.decodeIfPresent(AudioTrack.self, forKey: .referenceAudio)
         volumeAutomation = try c.decodeIfPresent([AutomationPoint].self, forKey: .volumeAutomation) ?? []
         loop = try c.decodeIfPresent(LoopRange.self, forKey: .loop)

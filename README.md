@@ -92,7 +92,7 @@ Status is *Implemented* where the code exists and works in the simulator. Device
 | Music under the Trim filmstrip (what plays under each source frame; slides with the In point) | Implemented |
 | Sync: drag the waveform in Mix (one undo step), ±1 frame and ±10 ms nudges, m:ss.cc offset readout | Implemented |
 | Loop region: tap the loop key to toggle; hold it for Loop In / Loop Out at the playhead, loop selected clip, loop all; drag the bracket handles (snap to cuts); persisted, undoable | Implemented |
-| Clip and music faders (live while playing via AVAudioMix, one undo step per move) | Implemented |
+| Clip and music faders (live while playing via AVAudioMix, one undo step per move). Each clip has its own level: pick it in Mix's clip row (or anywhere else) and the CLIP fader sets that clip. Older projects' single clip level becomes every clip's level. | Implemented |
 | Release sound policy: Silent (default with music) · Clip audio only · Clip + music (private drafts); `<video>.sync.json` sidecar and "In Instagram, start the song at m:ss.cc" with Copy | Implemented |
 | Volume automation, dial, motion | Not started (later phases, by design) |
 
@@ -117,6 +117,7 @@ Status is *Implemented* where the code exists and works in the simulator. Device
 7. On device: import a real song from Files and a song from a video; check the sync note against Instagram's music picker.
 
 ## Preview vs export
+- The app plays sound even with the ring/silent switch on (audio session `.playback`), like other video apps.
 - Preview always plays clips + music at the Mix levels. The Release sound policy only changes the exported file.
 - A Silent export has no audio track at all, not a silent one. Clip audio only with clips that have no sound is also trackless.
 - Music is trimmed to the sequence. It never plays before the first frame or after the last.

@@ -134,6 +134,30 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertTrue(tracks.isEmpty)
     }
 
+    func testEachClipsLevelStartsAtItsCut() async throws {
+        var project = try await makeProject()
+        try SetClipVolumeCommand(clipID: project.clips[1].id, volume: 0).apply(to: &project)
+        try SetClipVolumeCommand(clipID: project.clips[2].id, volume: 0.5).apply(to: &project)
+        // The demo clips are silent, so check the mix itself against a stand-in clip audio track.
+        let mix = try XCTUnwrap(
+            CompositionBuilder.audioMix(project: project, clipAudioTrackID: 1, musicTrackID: 2) as? AVMutableAudioMix)
+        let clips = try XCTUnwrap(mix.inputParameters.first { $0.trackID == 1 })
+        // Cuts at 4 s and 9 s.
+        XCTAssertEqual(level(clips, at: 3.9), 1)
+        XCTAssertEqual(level(clips, at: 4.0), 0)
+        XCTAssertEqual(level(clips, at: 8.9), 0)
+        XCTAssertEqual(level(clips, at: 9.0), 0.5)
+
+        // A live fader drag on the selected clip overrides only that clip.
+        let live = try XCTUnwrap(
+            CompositionBuilder.audioMix(
+                project: project, clipAudioTrackID: 1, musicTrackID: nil,
+                clipLevel: (id: project.clips[1].id, volume: 0.8)) as? AVMutableAudioMix)
+        XCTAssertEqual(live.inputParameters.count, 1)
+        XCTAssertEqual(level(live.inputParameters[0], at: 5), 0.8)
+        XCTAssertEqual(level(live.inputParameters[0], at: 10), 0.5)
+    }
+
     // MARK: Helpers
 
     private func build(_ project: Project, clipAudio: Bool, music: Bool) async throws -> BuiltComposition {
@@ -143,6 +167,17 @@ final class MusicPipelineTests: XCTestCase {
             includeClipAudio: clipAudio, includeMusic: music,
             mediaURL: { store.mediaURL(for: $0, projectID: project.id) },
             musicURL: project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) })
+    }
+
+    /// The volume a mix input plays at `seconds`.
+    private func level(_ params: AVAudioMixInputParameters, at seconds: Double) -> Float {
+        var start: Float = -1
+        var end: Float = -1
+        var range = CMTimeRange()
+        _ = params.getVolumeRamp(
+            for: CMTime(seconds: seconds, preferredTimescale: 600), startVolume: &start, endVolume: &end,
+            timeRange: &range)
+        return start
     }
 
     private func assertVideo(_ asset: AVURLAsset, seconds: Double) async throws {

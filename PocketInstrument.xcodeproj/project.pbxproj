@@ -53,11 +53,11 @@
 /* Begin PBXFileReference section */
 		00BC1811B0F9CE64F2BBD505 /* PocketInstrumentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketInstrumentApp.swift; sourceTree = "<group>"; };
 		00DF8AE6F304D0E552467BBF /* MixDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixDeck.swift; sourceTree = "<group>"; };
-		042783780F4DFA12BA32F2BC /* PocketInstrumentTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		042783780F4DFA12BA32F2BC /* PocketInstrumentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PocketInstrumentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0CE8CE8ECB7F6B0E87452B91 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		0EA6B02B6AFBAA3969D56E58 /* DemoMediaGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoMediaGenerator.swift; sourceTree = "<group>"; };
 		14C7FB958DDC81A57CE3883A /* ExportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSheet.swift; sourceTree = "<group>"; };
-		21D8DA783D9BCFAC63BA389C /* PocketInstrumentUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		21D8DA783D9BCFAC63BA389C /* PocketInstrumentUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PocketInstrumentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
 		2599198CE9D4302B2AECE3FD /* SequenceLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceLane.swift; sourceTree = "<group>"; };
 		48E6F5D7028543BECDE616A1 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
@@ -74,7 +74,7 @@
 		8E6B70F463559A3468CDEE1E /* EditCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = EditCore; path = Packages/EditCore; sourceTree = SOURCE_ROOT; };
 		98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreDeck.swift; sourceTree = "<group>"; };
 		AF21A29882624124DD5AC043 /* CompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionBuilder.swift; sourceTree = "<group>"; };
-		BB503F9E82671553893CF232 /* PocketInstrument.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PocketInstrument.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB503F9E82671553893CF232 /* PocketInstrument.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketInstrument.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		DF56D275663E66C21D0907C4 /* CMTime+MediaTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMTime+MediaTime.swift"; sourceTree = "<group>"; };
 		EE4CB30A85115C146D89F422 /* WorkspaceTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTourTests.swift; sourceTree = "<group>"; };
@@ -273,7 +273,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					362282ED04872AF50C1BE18F = {
 						TestTargetID = BFE762072E0C44F117DBE645;
@@ -396,6 +396,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HF6H3Q6CJ2;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = PocketInstrument/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -494,6 +495,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -559,6 +561,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -588,6 +591,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = HF6H3Q6CJ2;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = PocketInstrument/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
