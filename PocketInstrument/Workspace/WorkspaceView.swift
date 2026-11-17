@@ -40,7 +40,7 @@ struct WorkspaceView: View {
         }
         .photosPicker(
             isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: pickPurpose == .clips ? 20 : 1,
-            matching: .videos, preferredItemEncoding: .current
+            matching: pickPurpose == .clips ? .any(of: [.videos, .images]) : .videos, preferredItemEncoding: .current
         )
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
@@ -51,7 +51,7 @@ struct WorkspaceView: View {
             }
         }
         .fileImporter(
-            isPresented: $showFiles, allowedContentTypes: pickPurpose == .clips ? [.movie] : [.audio],
+            isPresented: $showFiles, allowedContentTypes: pickPurpose == .clips ? [.movie, .image] : [.audio],
             allowsMultipleSelection: pickPurpose == .clips
         ) { result in
             guard case .success(let urls) = result else { return }

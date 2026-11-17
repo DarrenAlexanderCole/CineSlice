@@ -6,7 +6,8 @@ import SwiftUI
 /// Dragging the waveform slides the music; the clip band above it scrubs.
 /// Each clip has its own level: pick one in the clip row and the CLIP fader follows it.
 /// With Write on, riding a fader during playback records it as a curve (drawn in the lane);
-/// inside a recorded pass the fader follows the curve and reads AUTO.
+/// inside a recorded pass the fader follows the curve and reads AUTO. A CLIP ride writes onto
+/// each clip it plays over, and the fader names the clip under the playhead while it records.
 struct MixDeck: View {
     var model: WorkspaceModel
     var onAddMusicFile: () -> Void
@@ -21,8 +22,9 @@ struct MixDeck: View {
                 emptyMusic
             }
             MixClipPicker(model: model)
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 WriteKey(model: model)
+                ClearKey(model: model)
                 Fader(
                     title: faderTitle(clipFaderTitle, .clipAudio), value: model.faderLevel(.clipAudio),
                     onChange: { model.faderMoved(.clipAudio, to: $0) },
@@ -52,7 +54,8 @@ struct MixDeck: View {
     }
 
     private var clipFaderTitle: String {
-        guard let id = model.selectedClipID, let index = model.project.index(ofClip: id) else { return "CLIP" }
+        guard let id = model.recordingClipID ?? model.selectedClipID, let index = model.project.index(ofClip: id)
+        else { return "CLIP" }
         return String(format: "CLIP %02d", index + 1)
     }
 
@@ -148,49 +151,90 @@ struct MixDeck: View {
     }
 }
 
-/// Arms recording. Tap toggles Write; hold for clearing either curve.
+/// Arms recording: while on, touching a fader during playback records it.
 private struct WriteKey: View {
     var model: WorkspaceModel
 
     var body: some View {
         let isOn = model.isWriting
         let isRecording = model.recording != nil
+        Button {
+            model.isWriting.toggle()
+            Haptics.tap()
+        } label: {
+            KeyFace(systemImage: isRecording ? "record.circle.fill" : "record.circle", isLit: isOn)
+                .shadow(color: isOn ? Theme.signal.opacity(isRecording ? 0.9 : 0.5) : .clear, radius: 6)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Write automation")
+        .accessibilityValue(isRecording ? "Recording" : isOn ? "On" : "Off")
+        .accessibilityHint("When on, moving a fader during playback records it.")
+    }
+}
+
+/// Clears recorded curves: the selected clip's, every clip's, or the music's. Each is one undo step.
+private struct ClearKey: View {
+    var model: WorkspaceModel
+
+    var body: some View {
+        let selected = model.selectedClip
+        let clipCurves = !model.project.lane(for: .clipAudio).isEmpty
+        let musicCurve = !model.project.automation.music.isEmpty
         Menu {
+            Button(role: .destructive) {
+                model.clearAutomation(.clipAudio, clipID: selected?.id)
+            } label: {
+                Label(selectedClipCurveTitle, systemImage: "film")
+            }
+            .disabled(selected?.levelCurve.isEmpty ?? true)
             Button(role: .destructive) {
                 model.clearAutomation(.clipAudio)
             } label: {
-                Label("Clear clip curve", systemImage: "film")
+                Label("Clear all clip curves", systemImage: "film.stack")
             }
-            .disabled(model.project.automation.clipAudio.isEmpty)
+            .disabled(!clipCurves)
             Button(role: .destructive) {
                 model.clearAutomation(.music)
             } label: {
                 Label("Clear music curve", systemImage: "music.note")
             }
-            .disabled(model.project.automation.music.isEmpty)
+            .disabled(!musicCurve)
         } label: {
-            Image(systemName: isRecording ? "record.circle.fill" : "record.circle")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(isOn ? Theme.signal : Theme.ivory)
-                .frame(width: Theme.minTouch, height: Theme.minTouch)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Theme.instrument, Theme.obsidian], startPoint: .top, endPoint: .bottom))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                        .strokeBorder(isOn ? Theme.signal : Theme.hairline, lineWidth: isOn ? 1.5 : 1)
-                        .shadow(color: isOn ? Theme.signal.opacity(isRecording ? 0.9 : 0.5) : .clear, radius: 6)
-                )
-        } primaryAction: {
-            model.isWriting.toggle()
-            Haptics.tap()
+            KeyFace(systemImage: "eraser", isLit: false)
         }
-        .accessibilityLabel("Write automation")
-        .accessibilityValue(isRecording ? "Recording" : isOn ? "On" : "Off")
-        .accessibilityHint("When on, moving a fader during playback records it. Hold to clear a curve.")
+        .disabled(!clipCurves && !musicCurve)
+        .opacity(clipCurves || musicCurve ? 1 : 0.4)
+        .accessibilityLabel("Clear automation")
+    }
+
+    private var selectedClipCurveTitle: String {
+        guard let id = model.selectedClipID, let index = model.project.index(ofClip: id) else {
+            return "Clear clip curve"
+        }
+        return String(format: "Clear clip %02d curve", index + 1)
+    }
+}
+
+/// A square dark key with an icon, lit in Signal when on.
+private struct KeyFace: View {
+    var systemImage: String
+    var isLit: Bool
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(isLit ? Theme.signal : Theme.ivory)
+            .frame(width: Theme.minTouch, height: Theme.minTouch)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Theme.instrument, Theme.obsidian], startPoint: .top, endPoint: .bottom))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                    .strokeBorder(isLit ? Theme.signal : Theme.hairline, lineWidth: isLit ? 1.5 : 1)
+            )
     }
 }
 

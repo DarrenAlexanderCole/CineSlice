@@ -237,6 +237,37 @@ final class MusicPipelineTests: XCTestCase {
         return a.value + (b.value - a.value) * Float((t - a.time).seconds / (b.time - a.time).seconds)
     }
 
+    // MARK: Photos
+
+    /// A rotated photo becomes an upright, silent 10 s movie at 30 fps that starts as a 3 s clip
+    /// and builds into the sequence like any video.
+    func testPhotoBecomesAStillClip() async throws {
+        let landscape = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 300)).image { ctx in
+            UIColor.orange.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        }
+        // Stored sideways with an "upright is portrait" tag, like a phone photo taken in portrait.
+        let tagged = UIImage(cgImage: landscape.cgImage!, scale: 1, orientation: .right)
+        let data = try XCTUnwrap(tagged.jpegData(compressionQuality: 0.9))
+        var project = try store.create(name: "Photo")
+        let source = try await MediaImporter.adoptStill(
+            imageData: data, originalName: "Photo", label: "Photo", store: store, projectID: project.id)
+        XCTAssertTrue(source.isStill)
+        XCTAssertFalse(source.hasAudio)
+        XCTAssertEqual(source.duration.seconds, StillVideoWriter.duration.seconds, accuracy: 0.05)
+        XCTAssertEqual(source.frameRate, 30, accuracy: 0.5)
+        // Turned upright: the stored landscape pixels play as portrait.
+        let pixels = landscape.cgImage!
+        XCTAssertEqual(source.width, pixels.height)
+        XCTAssertEqual(source.height, pixels.width)
+
+        try AddClipsCommand(sources: [source]).apply(to: &project)
+        XCTAssertEqual(project.duration, SourceAsset.stillClipDuration)
+        let built = try await build(project, clipAudio: true, music: false)
+        XCTAssertEqual(built.duration.seconds, 3, accuracy: 0.01)
+        XCTAssertNil(built.clipAudioTrackID)
+    }
+
     private func build(_ project: Project, clipAudio: Bool, music: Bool) async throws -> BuiltComposition {
         let store = self.store!
         return try await CompositionBuilder.build(

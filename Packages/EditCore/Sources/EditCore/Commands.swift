@@ -15,7 +15,8 @@ public protocol EditingCommand {
 /// Minimum clip length on the source timeline (about two frames at 30 fps).
 public let minimumClipDuration = MediaTime(value: 40, timescale: 600)
 
-/// Adds sources (if not already present) and appends one full-length clip per source.
+/// Adds sources (if not already present) and appends one clip per source: full length for
+/// video, `SourceAsset.stillClipDuration` for a photo.
 public struct AddClipsCommand: EditingCommand {
     public let sources: [SourceAsset]
     public let insertIndex: Int?
@@ -36,7 +37,7 @@ public struct AddClipsCommand: EditingCommand {
             newClips.append(
                 TimelineClip(
                     id: clipID, sourceID: source.id,
-                    sourceRange: MediaTimeRange(start: .zero, duration: source.duration)))
+                    sourceRange: source.defaultClipRange))
         }
         let at = min(max(insertIndex ?? project.clips.count, 0), project.clips.count)
         project.clips.insert(contentsOf: newClips, at: at)
@@ -215,15 +216,38 @@ public struct WriteAutomationCommand: EditingCommand {
         guard let pass = AutomationSegment(recorded: samples, sequenceDuration: project.duration) else {
             throw EditError.invalidRange
         }
-        project.automation[target].write(pass)
+        switch target {
+        case .music: project.automation.music.write(pass)
+        case .clipAudio: project.writeClipLevel(pass)
+        }
     }
 }
 
+/// Clears the music curve, or one clip's curve (every clip's when `clipID` is nil).
 public struct ClearAutomationCommand: EditingCommand {
     public let target: AutomationTarget
-    public init(target: AutomationTarget) { self.target = target }
-    public var actionName: String { target == .music ? "Clear Music Curve" : "Clear Clip Curve" }
+    public let clipID: UUID?
+    public init(target: AutomationTarget, clipID: UUID? = nil) {
+        self.target = target
+        self.clipID = clipID
+    }
+    public var actionName: String {
+        switch target {
+        case .music: "Clear Music Curve"
+        case .clipAudio: clipID == nil ? "Clear Clip Curves" : "Clear Clip Curve"
+        }
+    }
     public func apply(to project: inout Project) throws {
-        project.automation[target] = AutomationLane()
+        switch target {
+        case .music:
+            project.automation.music = AutomationLane()
+        case .clipAudio:
+            if let clipID {
+                guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
+                project.clips[i].levelCurve = AutomationLane()
+            } else {
+                for i in project.clips.indices { project.clips[i].levelCurve = AutomationLane() }
+            }
+        }
     }
 }

@@ -97,7 +97,7 @@ final class AutomationTests: XCTestCase {
         try write(.music, [point(6, 0.3), point(7, 0.3)], to: &p)
         try write(.music, [point(2, 0.9), point(5, 0.9)], to: &p)
         XCTAssertEqual(p.automation.music.segments.map(\.start), [t(2), t(6)])
-        XCTAssertTrue(p.automation.clipAudio.isEmpty)
+        XCTAssertTrue(p.lane(for: .clipAudio).isEmpty)
     }
 
     func testWriteAndClearAreUndoableAndNamed() throws {
@@ -108,7 +108,7 @@ final class AutomationTests: XCTestCase {
             WriteAutomationCommand(target: .clipAudio, samples: [point(1, 0.2), point(2, 0.4)]), on: &p)
         XCTAssertEqual(p.automation.music.segments.count, 1)
         XCTAssertEqual(undo.undo(&p), "Record Clip Level")
-        XCTAssertTrue(p.automation.clipAudio.isEmpty)
+        XCTAssertTrue(p.lane(for: .clipAudio).isEmpty)
         XCTAssertEqual(p.automation.music.segments.count, 1)
 
         try undo.perform(ClearAutomationCommand(target: .music), on: &p)
@@ -168,6 +168,86 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(level(envelope, at: 8), 0.5, accuracy: 1e-6)
     }
 
+    // MARK: Clip curves
+
+    func testClipPassIsSplitOntoTheClipsItPlaysOver() throws {
+        var p = project(clips: [(4, 1), (6, 0.5)])
+        try write(.clipAudio, [point(3, 0.1), point(5, 0.3)], to: &p)
+        // Each clip holds its part in its own source time.
+        let first = try XCTUnwrap(p.clips[0].levelCurve.segments.first)
+        let second = try XCTUnwrap(p.clips[1].levelCurve.segments.first)
+        XCTAssertEqual(p.clips.map(\.levelCurve.segments.count), [1, 1])
+        XCTAssertEqual(first.points.map(\.time), [t(3), t(4)])
+        XCTAssertEqual(second.points.map(\.time), [t(0), t(1)])
+        XCTAssertEqual(first.value(at: t(4)), 0.2, accuracy: 1e-6)
+        XCTAssertEqual(second.value(at: t(0)), 0.2, accuracy: 1e-6)
+        XCTAssertEqual(p.lane(for: .clipAudio).segments.map(\.start), [t(3), t(4)])
+    }
+
+    func testClipCurveTravelsWithItsClip() throws {
+        var p = project(clips: [(4, 1), (6, 0.5)])
+        try write(.clipAudio, [point(1, 0.1), point(2, 0.1)], to: &p)
+        try MoveClipCommand(clipID: p.clips[0].id, toIndex: 1).apply(to: &p)
+        // The first clip now starts at 6 s, and its dip went with it.
+        let envelope = p.levelEnvelope(for: .clipAudio)
+        XCTAssertEqual(level(envelope, at: 1.5), 0.5, accuracy: 1e-6)
+        XCTAssertEqual(level(envelope, at: 7.5), 0.1, accuracy: 1e-6)
+    }
+
+    func testClipCurveNeverGlidesIntoTheNextClip() throws {
+        var p = project(clips: [(4, 1), (6, 0.5)])
+        try write(.clipAudio, [point(3, 0.1), point(4, 0.1)], to: &p)
+        let envelope = p.levelEnvelope(for: .clipAudio)
+        // The next clip starts at its own level on its first frame.
+        XCTAssertTrue(envelope.contains(point(4, 0.1)))
+        XCTAssertTrue(envelope.contains(point(4, 0.5)))
+        XCTAssertEqual(level(envelope, at: 4.05), 0.5, accuracy: 1e-6)
+        // A pass just inside a clip eases back towards that clip's level and steps at the cut.
+        var q = project(clips: [(4, 1), (6, 0.5)])
+        try write(.clipAudio, [point(5, 0.1), point(5.95, 0.1)], to: &q)
+        let eased = q.levelEnvelope(for: .clipAudio)
+        XCTAssertEqual(level(eased, at: 4 - AutomationLane.glide.seconds), 1, accuracy: 1e-6)
+        XCTAssertEqual(level(eased, at: 4.01), 0.5, accuracy: 1e-6)
+        XCTAssertGreaterThan(level(eased, at: 6.05), 0.1)
+    }
+
+    func testTrimHidesAndRestoresTheClipCurve() throws {
+        var p = project(clips: [(10, 1)])
+        try write(.clipAudio, [point(6, 0.2), point(8, 0.2)], to: &p)
+        let id = p.clips[0].id
+        try TrimClipCommand(clipID: id, sourceRange: MediaTimeRange(start: t(4), duration: t(3))).apply(to: &p)
+        // Source 6–7 s now plays at 2–3 s; the rest of the pass is out of the clip.
+        XCTAssertEqual(p.lane(for: .clipAudio).segments.map(\.start), [t(2)])
+        XCTAssertEqual(p.lane(for: .clipAudio).segments.map(\.end), [t(3)])
+        try TrimClipCommand(clipID: id, sourceRange: MediaTimeRange(start: .zero, duration: t(10))).apply(to: &p)
+        XCTAssertEqual(p.lane(for: .clipAudio).segments.map(\.end), [t(8)])
+    }
+
+    func testClearingOneClipLeavesTheOthers() throws {
+        var p = project(clips: [(4, 1), (6, 0.5)])
+        var undo = UndoStack()
+        try write(.clipAudio, [point(3, 0.1), point(5, 0.3)], to: &p)
+        try undo.perform(ClearAutomationCommand(target: .clipAudio, clipID: p.clips[1].id), on: &p)
+        XCTAssertFalse(p.clips[0].levelCurve.isEmpty)
+        XCTAssertTrue(p.clips[1].levelCurve.isEmpty)
+        try undo.perform(ClearAutomationCommand(target: .clipAudio), on: &p)
+        XCTAssertTrue(p.lane(for: .clipAudio).isEmpty)
+        XCTAssertEqual(undo.undo(&p), "Clear Clip Curves")
+        XCTAssertFalse(p.clips[0].levelCurve.isEmpty)
+    }
+
+    func testOldProjectWideClipCurveMovesOntoTheClips() throws {
+        var p = project(clips: [(4, 1), (6, 0.5)])
+        var json = try JSONSerialization.jsonObject(with: ProjectStore.encoder.encode(p)) as! [String: Any]
+        let pass = AutomationLane(segments: [AutomationSegment(points: [point(3, 0.1), point(5, 0.3)])])
+        let old = try JSONSerialization.jsonObject(
+            with: ProjectStore.encoder.encode(["clipAudio": pass, "music": AutomationLane()]))
+        json["automation"] = old
+        p = try ProjectStore.decoder.decode(Project.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(p.lane(for: .clipAudio).segments.map(\.start), [t(3), t(4)])
+        XCTAssertEqual(p.clips[1].levelCurve.segments.first?.points.last, point(1, 0.3))
+    }
+
     func testPassesThatTouchStepFromOneToTheNext() throws {
         var p = project()
         try write(.music, [point(2, 0.2), point(4, 0.2)], to: &p)
@@ -198,6 +278,7 @@ final class AutomationTests: XCTestCase {
         let data = try ProjectStore.encoder.encode(p)
         let reopened = try ProjectStore.decoder.decode(Project.self, from: data)
         XCTAssertEqual(reopened.automation, p.automation)
+        XCTAssertEqual(reopened.clips, p.clips)
         XCTAssertEqual(reopened.levelEnvelope(for: .music), p.levelEnvelope(for: .music))
     }
 }

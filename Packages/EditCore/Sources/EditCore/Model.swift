@@ -15,12 +15,14 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
     public var height: Int
     public var nominalFrameRate: Double
     public var hasAudio: Bool
+    /// A photo, stored as a silent movie that holds the picture for `duration`.
+    public var isStill: Bool
     public var importedAt: Date
 
     public init(
         id: UUID = UUID(), fileName: String, originalFilename: String? = nil,
         duration: MediaTime, width: Int, height: Int,
-        nominalFrameRate: Double = 30, hasAudio: Bool = false, importedAt: Date = Date()
+        nominalFrameRate: Double = 30, hasAudio: Bool = false, isStill: Bool = false, importedAt: Date = Date()
     ) {
         self.id = id
         self.fileName = fileName
@@ -30,7 +32,35 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
         self.height = height
         self.nominalFrameRate = nominalFrameRate
         self.hasAudio = hasAudio
+        self.isStill = isStill
         self.importedAt = importedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, fileName, originalFilename, duration, width, height, nominalFrameRate, hasAudio, isStill
+        case importedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        fileName = try c.decode(String.self, forKey: .fileName)
+        originalFilename = try c.decodeIfPresent(String.self, forKey: .originalFilename)
+        duration = try c.decode(MediaTime.self, forKey: .duration)
+        width = try c.decode(Int.self, forKey: .width)
+        height = try c.decode(Int.self, forKey: .height)
+        nominalFrameRate = try c.decode(Double.self, forKey: .nominalFrameRate)
+        hasAudio = try c.decode(Bool.self, forKey: .hasAudio)
+        isStill = try c.decodeIfPresent(Bool.self, forKey: .isStill) ?? false
+        importedAt = try c.decode(Date.self, forKey: .importedAt)
+    }
+
+    /// How long a photo plays when first added; its source runs longer, so it can be stretched.
+    public static let stillClipDuration = MediaTime(seconds: 3)
+
+    /// The part used when the source is first added: all of a video, the opening seconds of a photo.
+    public var defaultClipRange: MediaTimeRange {
+        MediaTimeRange(start: .zero, duration: isStill ? min(duration, Self.stillClipDuration) : duration)
     }
 
     public var frameRate: Double { nominalFrameRate > 0 ? nominalFrameRate : 30 }
@@ -67,10 +97,13 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     public var framing: Framing
     /// This clip's own sound level, 0…1.
     public var volume: Float
+    /// Recorded level passes in source time, so the curve travels with the clip. Parts outside
+    /// `sourceRange` are kept (a trim can bring them back) but don't play.
+    public var levelCurve: AutomationLane
 
     public init(
         id: UUID = UUID(), sourceID: UUID, sourceRange: MediaTimeRange,
-        speed: Double = 1, framing: Framing = .fill, volume: Float = 1
+        speed: Double = 1, framing: Framing = .fill, volume: Float = 1, levelCurve: AutomationLane = .init()
     ) {
         self.id = id
         self.sourceID = sourceID
@@ -78,10 +111,11 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         self.speed = speed
         self.framing = framing
         self.volume = volume
+        self.levelCurve = levelCurve
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceID, sourceRange, speed, framing, volume
+        case id, sourceID, sourceRange, speed, framing, volume, levelCurve
     }
 
     public init(from decoder: Decoder) throws {
@@ -92,6 +126,7 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 1
         framing = try c.decodeIfPresent(Framing.self, forKey: .framing) ?? .fill
         volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
+        levelCurve = try c.decodeIfPresent(AutomationLane.self, forKey: .levelCurve) ?? AutomationLane()
     }
 
     /// Length of this clip on the composition timeline.
@@ -214,7 +249,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     public var sources: [SourceAsset]
     public var clips: [TimelineClip]
     public var referenceAudio: AudioTrack?
-    /// Recorded level curves (Phase 3), in composition time.
+    /// The recorded music curve (Phase 3), in composition time. Clip curves live on the clips.
     public var automation: Automation
     public var loop: LoopRange?
     public var exportSettings: ExportSettings
@@ -265,6 +300,14 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         automation = try c.decodeIfPresent(Automation.self, forKey: .automation) ?? Automation()
         loop = try c.decodeIfPresent(LoopRange.self, forKey: .loop)
         exportSettings = try c.decodeIfPresent(ExportSettings.self, forKey: .exportSettings) ?? .vertical1080
+        // Phase 3 builds kept the clip curve project-wide in composition time; hand it to the clips.
+        if let old = try c.decodeIfPresent(LegacyAutomation.self, forKey: .automation)?.clipAudio {
+            for pass in old.segments { writeClipLevel(pass) }
+        }
+    }
+
+    private struct LegacyAutomation: Decodable {
+        var clipAudio: AutomationLane?
     }
 
     public func source(id: UUID) -> SourceAsset? { sources.first { $0.id == id } }

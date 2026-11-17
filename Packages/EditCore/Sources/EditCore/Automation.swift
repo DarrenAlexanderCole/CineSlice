@@ -4,13 +4,14 @@ import Foundation
 
 /// Which level a curve drives.
 public enum AutomationTarget: String, Codable, CaseIterable, Sendable {
-    /// The clips' own sound. Overrides each clip's static level where recorded.
+    /// The clips' own sound. Each clip carries its own curve (`TimelineClip.levelCurve`), which
+    /// overrides that clip's static level where recorded.
     case clipAudio
     /// The reference music. Overrides the music fader where recorded.
     case music
 }
 
-/// A level (0…1) at a composition time.
+/// A level (0…1) at a time: composition time for the music, source time inside a clip's curve.
 public struct AutomationPoint: Codable, Hashable, Sendable {
     public var time: MediaTime
     public var value: Float
@@ -52,7 +53,8 @@ public struct AutomationSegment: Codable, Hashable, Sendable {
 
 /// One curve: recorded passes in time order, never overlapping. Between passes the
 /// static level applies; the edges of each pass ease to and from it over `glide`.
-/// Times are composition time, so a curve stays put when clips are reordered or trimmed.
+/// The music curve is in composition time, so it stays put when clips are reordered or trimmed;
+/// a clip's curve is in that clip's source time, so it travels with the clip.
 public struct AutomationLane: Codable, Hashable, Sendable {
     public var segments: [AutomationSegment]
 
@@ -87,23 +89,72 @@ public struct AutomationLane: Codable, Hashable, Sendable {
     }
 }
 
-/// Both curves of a project.
+/// The project-wide curves. Clip curves live on the clips.
 public struct Automation: Codable, Hashable, Sendable {
-    public var clipAudio: AutomationLane
     public var music: AutomationLane
 
-    public init(clipAudio: AutomationLane = .init(), music: AutomationLane = .init()) {
-        self.clipAudio = clipAudio
-        self.music = music
+    public init(music: AutomationLane = .init()) { self.music = music }
+
+    enum CodingKeys: String, CodingKey { case music }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        music = try c.decodeIfPresent(AutomationLane.self, forKey: .music) ?? AutomationLane()
+    }
+}
+
+// MARK: - Clip curves
+
+extension TimelineClip {
+    /// The used part of this clip's curve on the composition timeline, for a clip starting at `start`.
+    func compositionCurve(startingAt start: MediaTime) -> [AutomationSegment] {
+        levelCurve.segments.compactMap { segment in
+            segment.slice(from: sourceRange.start, to: sourceRange.end).map { used in
+                AutomationSegment(
+                    points: used.points.map { p in
+                        let local = p.time - sourceRange.start
+                        return AutomationPoint(
+                            time: start + (speed == 1 ? local : local.scaled(by: 1 / speed)), value: p.value)
+                    })
+            }
+        }
+    }
+}
+
+extension Project {
+    /// A target's recorded passes in composition time. For clip sound, each clip's curve placed
+    /// where the clip plays; passes never cross a cut.
+    public func lane(for target: AutomationTarget) -> AutomationLane {
+        switch target {
+        case .music:
+            return automation.music
+        case .clipAudio:
+            var segments: [AutomationSegment] = []
+            var cursor = MediaTime.zero
+            for clip in clips {
+                segments += clip.compositionCurve(startingAt: cursor)
+                cursor += clip.compositionDuration
+            }
+            return AutomationLane(segments: segments)
+        }
     }
 
-    public subscript(target: AutomationTarget) -> AutomationLane {
-        get { target == .clipAudio ? clipAudio : music }
-        set {
-            switch target {
-            case .clipAudio: clipAudio = newValue
-            case .music: music = newValue
+    /// Writes a composition-time pass into the curves of the clips it plays over, split at the cuts.
+    mutating func writeClipLevel(_ pass: AutomationSegment) {
+        var cursor = MediaTime.zero
+        for i in clips.indices {
+            let start = cursor
+            let clip = clips[i]
+            cursor += clip.compositionDuration
+            guard let part = pass.slice(from: start, to: cursor) else { continue }
+            let points = part.points.map { p in
+                let local = p.time - start
+                return AutomationPoint(
+                    time: clip.sourceRange.start + (clip.speed == 1 ? local : local.scaled(by: clip.speed)),
+                    value: p.value)
             }
+            guard let first = points.first, let last = points.last, last.time > first.time else { continue }
+            clips[i].levelCurve.write(AutomationSegment(points: points))
         }
     }
 }
@@ -175,9 +226,20 @@ extension Project {
     public func levelEnvelope(for target: AutomationTarget) -> [AutomationPoint] {
         let base = staticLevels(for: target)
         guard !base.isEmpty else { return [] }
-        let lane = automation[target]
+        let lane = lane(for: target)
         let end = duration
         let glide = AutomationLane.glide
+        let cuts = base.dropFirst().map(\.start)
+
+        // Glides stay inside a clip, so one clip's curve never eases into the next.
+        /// A cut between the end of a pass at `a` and the asked-for side of `t`.
+        func cutAfter(_ a: MediaTime, before t: MediaTime, fromLeft: Bool) -> Bool {
+            cuts.contains { a <= $0 && (fromLeft ? $0 < t : $0 <= t) }
+        }
+        /// A cut between the asked-for side of `t` and the start of a pass at `b`.
+        func cutBefore(_ b: MediaTime, after t: MediaTime, fromLeft: Bool) -> Bool {
+            cuts.contains { $0 <= b && (fromLeft ? t <= $0 : t < $0) }
+        }
 
         func baseLevel(at t: MediaTime, fromLeft: Bool) -> Float {
             let step = base.last { fromLeft ? $0.start < t : $0.start <= t } ?? base[0]
@@ -185,14 +247,18 @@ extension Project {
         }
 
         func level(at t: MediaTime, fromLeft: Bool) -> Float {
-            // A recorded pass, preferring the one on the asked-for side of a shared edge.
-            let covering = lane.segments.filter { $0.start <= t && t <= $0.end }
-            let segment =
-                covering.first { fromLeft ? $0.start < t : t < $0.end } ?? covering.first
+            // A recorded pass on the asked-for side of `t`.
+            let segment = lane.segments.first {
+                fromLeft ? $0.start < t && t <= $0.end : $0.start <= t && t < $0.end
+            }
             if let segment { return segment.value(at: t) }
-            // A glide into or out of the nearest pass.
-            let out = lane.segments.last { $0.end < t && t < $0.end + glide }
-            let into = lane.segments.first { $0.start - glide < t && t < $0.start }
+            // A glide into or out of the nearest pass, within the same clip.
+            let out = lane.segments.last {
+                $0.end <= t && t < $0.end + glide && !cutAfter($0.end, before: t, fromLeft: fromLeft)
+            }
+            let into = lane.segments.first {
+                $0.start - glide < t && t <= $0.start && !cutBefore($0.start, after: t, fromLeft: fromLeft)
+            }
             let useOut: Bool
             switch (out, into) {
             case (.some(let o), .some(let i)): useOut = (t - o.end) <= (i.start - t)
@@ -201,11 +267,11 @@ extension Project {
             case (nil, nil): return baseLevel(at: t, fromLeft: fromLeft)
             }
             if useOut, let o = out {
-                let to = AutomationPoint(time: o.end + glide, value: baseLevel(at: o.end + glide, fromLeft: true))
+                let to = AutomationPoint(time: o.end + glide, value: baseLevel(at: o.end, fromLeft: true))
                 return lerp(o.points[o.points.count - 1], to, at: t)
             } else if let i = into {
                 let from = AutomationPoint(
-                    time: i.start - glide, value: baseLevel(at: i.start - glide, fromLeft: false))
+                    time: i.start - glide, value: baseLevel(at: i.start, fromLeft: false))
                 return lerp(from, i.points[0], at: t)
             }
             return baseLevel(at: t, fromLeft: fromLeft)

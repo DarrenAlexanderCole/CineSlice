@@ -35,6 +35,11 @@ final class WorkspaceModel {
     /// In-progress trim while a handle is being dragged (committed on release as one undo step).
     var draftRange: MediaTimeRange?
 
+    /// How far the sequence lane is magnified (1 = whole sequence). Zoomed, it follows the playhead.
+    var laneZoom: Double = 1
+    /// Explore: the filmstrip shows just around the clip's In–Out instead of the whole source.
+    var trimZoom = false
+
     var importStatus: String?
     var alertMessage: String?
     private(set) var isRebuilding = false
@@ -147,7 +152,10 @@ final class WorkspaceModel {
         var shape = p
         shape.modifiedAt = .distantPast
         shape.name = ""
-        for i in shape.clips.indices { shape.clips[i].volume = 1 }
+        for i in shape.clips.indices {
+            shape.clips[i].volume = 1
+            shape.clips[i].levelCurve = AutomationLane()
+        }
         shape.referenceAudio?.volume = 1
         shape.automation = Automation()
         shape.loop = nil
@@ -399,10 +407,11 @@ final class WorkspaceModel {
     private static let recordInterval = Duration.milliseconds(33)
 
     /// What a fader shows: its level while recorded, the curve where the playhead is inside a
-    /// recorded pass, otherwise the static level (the selected clip's, or the music's).
+    /// recorded pass, otherwise the static level (the selected clip's, or the music's). The CLIP
+    /// fader only follows a curve while the playhead is in the selected clip.
     func faderLevel(_ target: AutomationTarget) -> Float {
         if let recording, recording.target == target { return recordLevel }
-        if let recorded = project.automation[target].value(at: currentTime) { return recorded }
+        if let recorded = curveLevel(target) { return recorded }
         switch target {
         case .clipAudio: return selectedClip?.volume ?? 1
         case .music: return project.referenceAudio?.volume ?? 1
@@ -411,8 +420,16 @@ final class WorkspaceModel {
 
     /// True when the fader is following (or writing) a curve at the playhead.
     func isAutomated(_ target: AutomationTarget) -> Bool {
-        recording?.target == target || project.automation[target].value(at: currentTime) != nil
+        recording?.target == target || curveLevel(target) != nil
     }
+
+    private func curveLevel(_ target: AutomationTarget) -> Float? {
+        if target == .clipAudio, clipUnderPlayhead != selectedClipID { return nil }
+        return project.lane(for: target).value(at: currentTime)
+    }
+
+    /// The clip a CLIP fader ride is writing onto right now: the one under the playhead.
+    var recordingClipID: UUID? { recording?.target == .clipAudio ? clipUnderPlayhead : nil }
 
     /// A fader moved (or was touched). Records when Write is on and the sequence is playing;
     /// otherwise previews the static level.
@@ -438,7 +455,10 @@ final class WorkspaceModel {
         return true
     }
 
-    func clearAutomation(_ target: AutomationTarget) { perform(ClearAutomationCommand(target: target)) }
+    /// Clears the music curve, or one clip's curve (every clip's when `clipID` is nil).
+    func clearAutomation(_ target: AutomationTarget, clipID: UUID? = nil) {
+        perform(ClearAutomationCommand(target: target, clipID: clipID))
+    }
 
     private func startPass(_ target: AutomationTarget, at level: Float) {
         recordLevel = level

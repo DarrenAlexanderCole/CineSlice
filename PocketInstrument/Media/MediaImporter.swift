@@ -3,6 +3,7 @@ import CoreTransferable
 import EditCore
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// A movie handed over by the Photos picker. The system deletes the received
@@ -66,7 +67,8 @@ enum MediaImporter {
             hasAudio: hasAudio)
     }
 
-    /// Photos picker → project media. Returns the sources that imported and the errors for those that didn't.
+    /// Photos picker → project media: videos as they are, photos as still movies.
+    /// Returns the sources that imported and the errors for those that didn't.
     static func importPhotos(
         _ items: [PhotosPickerItem], store: ProjectStore, projectID: UUID,
         progress: @MainActor (Int, Int) -> Void
@@ -76,11 +78,21 @@ enum MediaImporter {
         for (i, item) in items.enumerated() {
             await progress(i + 1, items.count)
             do {
-                guard let movie = try await item.loadTransferable(type: PickedMovie.self) else {
-                    throw ImportError.unreadable("Item \(i + 1)")
+                let label = "Item \(i + 1)"
+                if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                    guard let movie = try await item.loadTransferable(type: PickedMovie.self) else {
+                        throw ImportError.unreadable(label)
+                    }
+                    sources.append(
+                        try await adopt(tempURL: movie.url, originalName: nil, store: store, projectID: projectID))
+                } else {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        throw ImportError.unreadable(label)
+                    }
+                    sources.append(
+                        try await adoptStill(
+                            imageData: data, originalName: "Photo", label: label, store: store, projectID: projectID))
                 }
-                sources.append(
-                    try await adopt(tempURL: movie.url, originalName: nil, store: store, projectID: projectID))
             } catch {
                 errors.append(error)
             }
@@ -88,7 +100,7 @@ enum MediaImporter {
         return (sources, errors)
     }
 
-    /// Files app → project media (security-scoped URLs are copied, never moved).
+    /// Files app → project media (security-scoped URLs are copied, never moved). Images become still movies.
     static func importFiles(
         _ urls: [URL], store: ProjectStore, projectID: UUID,
         progress: @MainActor (Int, Int) -> Void
@@ -100,6 +112,14 @@ enum MediaImporter {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             do {
+                if UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true {
+                    let data = try Data(contentsOf: url)
+                    sources.append(
+                        try await adoptStill(
+                            imageData: data, originalName: url.lastPathComponent, label: url.lastPathComponent,
+                            store: store, projectID: projectID))
+                    continue
+                }
                 let temp = FileManager.default.temporaryDirectory
                     .appendingPathComponent(UUID().uuidString)
                     .appendingPathExtension(url.pathExtension.isEmpty ? "mov" : url.pathExtension)
@@ -183,6 +203,23 @@ enum MediaImporter {
 
     // MARK: Shared
 
+    /// A photo → a still movie in the project's media, marked as a still.
+    static func adoptStill(
+        imageData: Data, originalName: String, label: String, store: ProjectStore, projectID: UUID
+    ) async throws -> SourceAsset {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("mov")
+        do {
+            try await StillVideoWriter.write(imageData: imageData, to: temp, label: label)
+        } catch {
+            try? FileManager.default.removeItem(at: temp)
+            throw error
+        }
+        var source = try await adopt(tempURL: temp, originalName: originalName, store: store, projectID: projectID)
+        source.isStill = true
+        return source
+    }
+
     static func adopt(tempURL: URL, originalName: String?, store: ProjectStore, projectID: UUID) async throws
         -> SourceAsset
     {
@@ -194,5 +231,94 @@ enum MediaImporter {
             try? FileManager.default.removeItem(at: stored)
             throw error
         }
+    }
+}
+
+// MARK: - Photos
+
+/// Turns a photo into a silent movie that holds the picture, so stills take the same
+/// composition, trim, framing and export path as video. The movie runs `duration`, so a
+/// photo clip can be stretched that long; it starts at `SourceAsset.stillClipDuration`.
+enum StillVideoWriter {
+    static let duration = MediaTime(seconds: 10)
+    static let frameRate: Int32 = 30
+    /// The longer side of the movie. Enough for a 1080×1920 export at any framing.
+    static let maxDimension: CGFloat = 1920
+
+    /// Writes `imageData` (HEIC, JPEG, PNG…) as a .mov at `url`, upright and at most `maxDimension`.
+    static func write(imageData: Data, to url: URL, label: String) async throws {
+        guard let image = UIImage(data: imageData), let upright = uprightImage(image) else {
+            throw ImportError.unreadable(label)
+        }
+        let width = upright.width
+        let height = upright.height
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
+            ])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+            ])
+        writer.add(input)
+        guard writer.startWriting() else { throw writer.error ?? ImportError.unreadable(label) }
+        writer.startSession(atSourceTime: .zero)
+
+        guard let pool = adaptor.pixelBufferPool else { throw ImportError.unreadable(label) }
+        var made: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+        guard let buffer = made else { throw ImportError.unreadable(label) }
+        draw(upright, into: buffer)
+
+        // Every frame at the sequence rate, so trimming snaps to frames like any video.
+        // Identical frames cost next to nothing once encoded.
+        let frames = Int(duration.seconds * Double(frameRate))
+        for frame in 0..<frames {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 2_000_000) }
+            adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: frameRate))
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: duration.cmTime)
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw writer.error ?? ImportError.unreadable(label) }
+    }
+
+    /// The photo drawn the right way up, scaled to fit `maxDimension`, with even pixel sides.
+    private static func uprightImage(_ image: UIImage) -> CGImage? {
+        let pixels = CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+        guard pixels.width > 0, pixels.height > 0 else { return nil }
+        let scale = min(1, maxDimension / max(pixels.width, pixels.height))
+        let size = CGSize(
+            width: max(2, (pixels.width * scale / 2).rounded() * 2),
+            height: max(2, (pixels.height * scale / 2).rounded() * 2))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }.cgImage
+    }
+
+    private static func draw(_ image: CGImage, into buffer: CVPixelBuffer) {
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        let w = CVPixelBufferGetWidth(buffer)
+        let h = CVPixelBufferGetHeight(buffer)
+        guard
+            let ctx = CGContext(
+                data: CVPixelBufferGetBaseAddress(buffer), width: w, height: h,
+                bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
     }
 }

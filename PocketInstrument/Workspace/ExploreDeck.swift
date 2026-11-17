@@ -4,6 +4,7 @@ import SwiftUI
 /// Explore state: the selected clip's whole source as a filmstrip. Drag the
 /// strip to scrub; drag the Signal handles (or use Mark In / Mark Out) to set
 /// the clip's in/out. Everything is in *source* time; nothing touches the file.
+/// Zoom fits the strip to just around In–Out, so handles move in fine steps on long sources.
 struct ExploreDeck: View {
     var model: WorkspaceModel
 
@@ -26,6 +27,16 @@ struct ExploreDeck: View {
                     .accessibilityLabel("Mark out at playhead")
             }
             HStack(spacing: 8) {
+                Button {
+                    model.trimZoom.toggle()
+                    Haptics.detent()
+                } label: {
+                    Label("Zoom", systemImage: model.trimZoom ? "minus.magnifyingglass" : "plus.magnifyingglass")
+                }
+                .buttonStyle(.instrument(active: model.trimZoom))
+                .accessibilityLabel("Zoom to clip")
+                .accessibilityValue(model.trimZoom ? "On" : "Off")
+                .accessibilityHint("Fits the filmstrip to the clip's in and out points, for finer trims.")
                 Spacer()
                 LoopButton(model: model)
             }
@@ -110,17 +121,33 @@ struct Filmstrip: View {
 
     // MARK: Geometry
 
+    private var window: (start: Double, end: Double) {
+        Filmstrip.window(clip: clip, source: source, zoomed: model.trimZoom)
+    }
+
+    /// The source span (seconds) the strip shows: all of it, or zoomed, the clip's In–Out with a
+    /// margin either side for room to extend. Taken from the committed trim, so it holds still
+    /// while a handle is dragged and re-fits on release.
+    static func window(clip: TimelineClip, source: SourceAsset, zoomed: Bool) -> (start: Double, end: Double) {
+        let total = source.duration.seconds
+        guard zoomed else { return (0, total) }
+        let range = clip.sourceRange
+        let margin = max(0.5, range.duration.seconds * 0.25)
+        return (max(0, range.start.seconds - margin), min(total, range.end.seconds + margin))
+    }
+
     private func x(for t: MediaTime, _ width: CGFloat) -> CGFloat {
-        let d = source.duration.seconds
-        guard d > 0 else { return 0 }
-        return CGFloat(min(max(t.seconds / d, 0), 1)) * width
+        let w = window
+        guard w.end > w.start else { return 0 }
+        return CGFloat(min(max((t.seconds - w.start) / (w.end - w.start), 0), 1)) * width
     }
 
     private func time(at x: CGFloat, _ width: CGFloat) -> MediaTime {
+        let w = window
         let fraction = width > 0 ? Double(min(max(x / width, 0), 1)) : 0
         // Snap to the source's frame grid.
         let fps = Int32(max(1, source.frameRate.rounded()))
-        let frames = (fraction * source.duration.seconds * Double(fps)).rounded()
+        let frames = ((w.start + fraction * (w.end - w.start)) * Double(fps)).rounded()
         return MediaTime(value: Int64(frames), timescale: fps).clamped(to: .zero, source.duration)
     }
 
@@ -129,9 +156,10 @@ struct Filmstrip: View {
     private func frames(width: CGFloat) -> some View {
         let count = max(4, Int(width / 44))
         let url = model.mediaURL(for: source)
+        let w = window
         return HStack(spacing: 1) {
             ForEach(0..<count, id: \.self) { i in
-                let t = MediaTime(seconds: source.duration.seconds * (Double(i) + 0.5) / Double(count))
+                let t = MediaTime(seconds: w.start + (w.end - w.start) * (Double(i) + 0.5) / Double(count))
                 VideoFrameView(url: url, time: t.cmTime, maxPixel: 120)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -232,7 +260,10 @@ struct TrimMusicStrip: View {
             let outX = x(for: range.end, width)
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Theme.obsidian)
-                WaveformBars(waveform: waveform, from: audioAt(.zero), to: audioAt(source.duration))
+                let w = window
+                WaveformBars(
+                    waveform: waveform, from: audioAt(MediaTime(seconds: w.start)),
+                    to: audioAt(MediaTime(seconds: w.end)))
                 Rectangle().fill(.black.opacity(0.55)).frame(width: max(0, inX), height: height)
                 Rectangle().fill(.black.opacity(0.55))
                     .frame(width: max(0, width - outX), height: height)
@@ -249,9 +280,13 @@ struct TrimMusicStrip: View {
         .accessibilityHidden(true)
     }
 
+    private var window: (start: Double, end: Double) {
+        Filmstrip.window(clip: clip, source: source, zoomed: model.trimZoom)
+    }
+
     private func x(for t: MediaTime, _ width: CGFloat) -> CGFloat {
-        let d = source.duration.seconds
-        guard d > 0 else { return 0 }
-        return CGFloat(min(max(t.seconds / d, 0), 1)) * width
+        let w = window
+        guard w.end > w.start else { return 0 }
+        return CGFloat(min(max((t.seconds - w.start) / (w.end - w.start), 0), 1)) * width
     }
 }

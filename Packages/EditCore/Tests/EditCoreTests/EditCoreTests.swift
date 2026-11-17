@@ -53,6 +53,19 @@ final class SequenceMapTests: XCTestCase {
         XCTAssertEqual(map.entry(at: map.duration)?.clipID, p.clips[1].id)
     }
 
+    func testPhotoStartsAsAShortClipAndCanStretch() throws {
+        let photo = SourceAsset(
+            fileName: "p.mov", duration: MediaTime(seconds: 10), width: 1080, height: 1440, isStill: true)
+        let video = SourceAsset(fileName: "v.mov", duration: MediaTime(seconds: 10), width: 1080, height: 1920)
+        var p = Project(name: "Stills")
+        try AddClipsCommand(sources: [photo, video]).apply(to: &p)
+        XCTAssertEqual(p.clips.map(\.sourceRange.duration), [SourceAsset.stillClipDuration, MediaTime(seconds: 10)])
+        try TrimClipCommand(
+            clipID: p.clips[0].id, sourceRange: MediaTimeRange(start: .zero, duration: MediaTime(seconds: 8))
+        ).apply(to: &p)
+        XCTAssertEqual(p.clips[0].compositionDuration, MediaTime(seconds: 8))
+    }
+
     func testSpeedScalesCompositionDuration() {
         var (p, _) = makeProject()
         p.clips[0].speed = 2

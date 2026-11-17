@@ -8,6 +8,10 @@ import SwiftUI
 /// Dragging the clip band always scrubs. Dragging the waveform scrubs in Arrange
 /// and slides the music against the picture in Mix, so the two never share a gesture
 /// in the same state. The bracket's Signal handles set the loop (snapping to clip edges).
+///
+/// Pinch or the zoom key magnifies the lane around the playhead, for lining music up
+/// closer than a frame-sized sliver of the whole sequence. Zoomed, scrubbing drags the
+/// sequence under a fixed view like tape, and every drag moves time in finer steps.
 struct SequenceLane: View {
     enum WaveformDrag { case scrub, slideMusic }
 
@@ -25,11 +29,20 @@ struct SequenceLane: View {
     @State private var loopDragBase: MediaTimeRange?
     @State private var draftOffset: MediaTime?
     @State private var offsetDragBase: MediaTime = .zero
+    @State private var scrubBase: MediaTime?
+    @State private var pinchBase: Double?
 
     private var music: AudioTrack? { model.project.referenceAudio }
     private var totalHeight: CGFloat { rulerHeight + (music == nil ? 0 : bandGap + waveHeight) }
 
     var body: some View {
+        HStack(spacing: 6) {
+            lane
+            zoomKey
+        }
+    }
+
+    private var lane: some View {
         GeometryReader { geo in
             let width = geo.size.width
             ZStack(alignment: .topLeading) {
@@ -41,7 +54,7 @@ struct SequenceLane: View {
                 clipTicks(width: width)
                 if showsAutomation {
                     let bandHeight = music == nil ? rulerHeight : waveHeight
-                    AutomationCurves(model: model)
+                    AutomationCurves(model: model, window: window)
                         .frame(width: width, height: bandHeight)
                         .offset(y: music == nil ? 0 : rulerHeight + bandGap)
                 }
@@ -55,28 +68,101 @@ struct SequenceLane: View {
                     .allowsHitTesting(false)
             }
             .frame(width: width, height: totalHeight, alignment: .topLeading)
+            // Zoomed, content runs past the sides and is cut at them; whole, the loop handles may poke out.
+            .mask(Rectangle().padding(.horizontal, zoom > 1 ? 0 : -8).padding(.vertical, -12))
             .coordinateSpace(name: "lane")
         }
         .frame(height: totalHeight)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .simultaneousGesture(pinchGesture)
         .accessibilityElement(children: .contain)
+    }
+
+    // MARK: Zoom
+
+    /// Steps the zoom key cycles through; pinching goes anywhere between 1× and `maxZoom`.
+    private static let zoomSteps: [Double] = [1, 4, 16]
+
+    /// Enough to show half a second across the lane.
+    private var maxZoom: Double { max(1, duration / 0.5) }
+    private var zoom: Double { min(max(model.laneZoom, 1), maxZoom) }
+
+    private var zoomKey: some View {
+        Button {
+            let next = Self.zoomSteps.first { $0 > zoom + 0.01 && $0 <= maxZoom } ?? 1
+            model.laneZoom = next
+            Haptics.detent()
+        } label: {
+            VStack(spacing: 2) {
+                Image(systemName: zoom > 1 ? "minus.magnifyingglass" : "plus.magnifyingglass")
+                    .font(.system(size: 14, weight: .semibold))
+                Text(zoomLabel).font(Theme.mono(10))
+            }
+        }
+        .buttonStyle(.instrument(active: zoom > 1))
+        .frame(height: max(Theme.minTouch, totalHeight))
+        .accessibilityLabel("Zoom sequence")
+        .accessibilityValue(zoomLabel)
+        .accessibilityHint("Magnifies the sequence around the playhead. Pinch the sequence for any zoom.")
+        .accessibilityAdjustableAction { direction in
+            model.laneZoom = direction == .increment ? min(zoom * 2, maxZoom) : max(zoom / 2, 1)
+        }
+    }
+
+    private var zoomLabel: String {
+        let whole = (zoom - zoom.rounded()).magnitude < 0.05 || zoom >= 10
+        return String(format: whole ? "%.0f×" : "%.1f×", zoom)
+    }
+
+    private var pinchGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { g in
+                if pinchBase == nil { pinchBase = zoom }
+                model.laneZoom = min(max((pinchBase ?? 1) * g.magnification, 1), maxZoom)
+            }
+            .onEnded { _ in
+                pinchBase = nil
+                if model.laneZoom < 1.1 { model.laneZoom = 1 }
+                Haptics.detent()
+            }
     }
 
     // MARK: Geometry
 
     private var duration: Double { model.project.duration.seconds }
 
+    /// The span of composition time (seconds) across the lane: all of it at 1×, otherwise a
+    /// window centred on the playhead, held inside the sequence.
+    private var window: (start: Double, span: Double) {
+        guard zoom > 1 else { return (0, duration) }
+        let span = duration / zoom
+        let start = min(max(model.currentTime.seconds - span / 2, 0), duration - span)
+        return (start, span)
+    }
+
     private func x(for t: MediaTime, _ width: CGFloat) -> CGFloat {
-        guard duration > 0 else { return 0 }
-        return CGFloat(min(max(t.seconds / duration, 0), 1)) * width
+        let w = window
+        guard w.span > 0 else { return 0 }
+        return CGFloat((t.seconds - w.start) / w.span) * width
+    }
+
+    /// A range's x extent, cut to the lane's sides so zoomed spans never outgrow (and shift) the lane.
+    private func visible(_ range: MediaTimeRange, _ width: CGFloat) -> (CGFloat, CGFloat) {
+        (min(max(x(for: range.start, width), 0), width), min(max(x(for: range.end, width), 0), width))
     }
 
     /// Composition time at x, snapped to the export frame grid.
     private func time(at x: CGFloat, _ width: CGFloat) -> MediaTime {
-        let fps = model.sequenceFrame.timescale
+        let w = window
         let fraction = width > 0 ? Double(min(max(x / width, 0), 1)) : 0
-        return MediaTime(value: Int64((fraction * duration * Double(fps)).rounded()), timescale: fps)
+        return frameTime(w.start + fraction * w.span)
+    }
+
+    /// Seconds on the export frame grid, inside the sequence.
+    private func frameTime(_ seconds: Double) -> MediaTime {
+        let fps = model.sequenceFrame.timescale
+        return MediaTime(value: Int64((seconds * Double(fps)).rounded()), timescale: fps)
             .clamped(to: .zero, model.project.duration)
     }
 
@@ -85,8 +171,7 @@ struct SequenceLane: View {
     private func ruler(width: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(model.sequenceMap.entries, id: \.clipID) { entry in
-                let x0 = x(for: entry.compositionRange.start, width)
-                let x1 = x(for: entry.compositionRange.end, width)
+                let (x0, x1) = visible(entry.compositionRange, width)
                 let selected = entry.clipID == model.selectedClipID
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(selected ? Theme.olive : Theme.instrument)
@@ -115,16 +200,17 @@ struct SequenceLane: View {
                 track: AudioTrack(fileName: music.fileName, duration: music.duration, offset: offset),
                 sequenceDuration: model.project.duration)
             {
-                let x0 = x(for: placement.compositionRange.start, width)
-                let x1 = x(for: placement.compositionRange.end, width)
+                let (x0, x1) = visible(placement.compositionRange, width)
                 Rectangle().fill(Theme.olive.opacity(0.25))
                     .frame(width: max(1, x1 - x0), height: waveHeight)
                     .offset(x: x0)
             }
             if let waveform = model.waveform {
-                // The lane spans composition 0…duration, i.e. audio −offset…duration−offset.
+                // The lane spans the window in composition time; audio time is composition − offset.
+                let w = window
                 WaveformBars(
-                    waveform: waveform, from: MediaTime.zero - offset, to: model.project.duration - offset)
+                    waveform: waveform, from: MediaTime(seconds: w.start) - offset,
+                    to: MediaTime(seconds: w.start + w.span) - offset)
             } else {
                 Text(model.musicURL == nil ? "Music file is missing" : "Reading waveform…")
                     .font(Theme.caption)
@@ -179,15 +265,25 @@ struct SequenceLane: View {
 
     // MARK: Gestures
 
+    /// Whole sequence: the playhead jumps to the finger. Zoomed: the sequence drags under the
+    /// fixed view like tape, since the view itself follows the playhead.
     private func scrubGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if model.engine.isPlaying { model.engine.pause() }
-                model.scrub(to: time(at: value.location.x, width), precise: false)
+                model.scrub(to: scrubTime(value, width), precise: false)
             }
             .onEnded { value in
-                model.scrub(to: time(at: value.location.x, width), precise: true)
+                model.scrub(to: scrubTime(value, width), precise: true)
+                scrubBase = nil
             }
+    }
+
+    private func scrubTime(_ value: DragGesture.Value, _ width: CGFloat) -> MediaTime {
+        guard zoom > 1 else { return time(at: value.location.x, width) }
+        if scrubBase == nil { scrubBase = model.currentTime }
+        let base = scrubBase ?? model.currentTime
+        return frameTime(base.seconds - Double(value.translation.width / max(width, 1)) * window.span)
     }
 
     /// One drag = one undo step: the offset is drafted while dragging and committed on release.
@@ -198,7 +294,7 @@ struct SequenceLane: View {
                     offsetDragBase = music.offset
                     Haptics.press()
                 }
-                let seconds = Double(g.translation.width / max(width, 1)) * duration
+                let seconds = Double(g.translation.width / max(width, 1)) * window.span
                 // Snap to the export frame grid; the ±10 ms buttons go finer.
                 let fps = model.sequenceFrame.timescale
                 let proposed = MediaTime(
@@ -219,12 +315,13 @@ struct SequenceLane: View {
     private func loopBracket(_ loop: MediaTimeRange, width: CGFloat) -> some View {
         let x0 = x(for: loop.start, width)
         let x1 = x(for: loop.end, width)
+        let (fill0, fill1) = visible(loop, width)
         return ZStack(alignment: .topLeading) {
             Rectangle().fill(Theme.signal.opacity(0.14))
                 .overlay(alignment: .top) { Rectangle().fill(Theme.signal).frame(height: 2) }
                 .overlay(alignment: .bottom) { Rectangle().fill(Theme.signal).frame(height: 2) }
-                .frame(width: max(2, x1 - x0), height: totalHeight)
-                .offset(x: x0)
+                .frame(width: max(2, fill1 - fill0), height: totalHeight)
+                .offset(x: fill0)
                 .allowsHitTesting(false)
             handle(.start, x: x0, loop: loop, width: width)
             handle(.end, x: x1, loop: loop, width: width)
@@ -320,16 +417,17 @@ struct WaveformBars: View {
 /// bold, and a pass being recorded brightest. Top is full level, bottom is silence.
 private struct AutomationCurves: View {
     var model: WorkspaceModel
+    /// The lane's visible span of composition time, in seconds.
+    var window: (start: Double, span: Double)
 
     var body: some View {
         let project = model.project
-        let duration = project.duration.seconds
         let recording = model.recording
         Canvas { context, size in
-            guard duration > 0 else { return }
+            guard window.span > 0 else { return }
             func point(_ p: AutomationPoint) -> CGPoint {
                 CGPoint(
-                    x: CGFloat(min(max(p.time.seconds / duration, 0), 1)) * size.width,
+                    x: CGFloat((p.time.seconds - window.start) / window.span) * size.width,
                     y: 2 + CGFloat(1 - p.value) * (size.height - 4))
             }
             func line(_ points: [AutomationPoint]) -> Path {
@@ -340,7 +438,7 @@ private struct AutomationCurves: View {
                 }
             }
             for target in [AutomationTarget.clipAudio, .music] {
-                let lane = project.automation[target]
+                let lane = project.lane(for: target)
                 let color = target == .music ? Theme.signal : Theme.ivory
                 if !lane.isEmpty {
                     context.stroke(

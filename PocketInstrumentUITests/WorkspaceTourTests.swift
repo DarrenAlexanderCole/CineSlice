@@ -182,7 +182,7 @@ final class WorkspaceTourTests: XCTestCase {
     }
 
     /// With Write on, riding a fader during playback records one pass (one undo step) that
-    /// can be cleared; with Write off the same move only sets the static level.
+    /// can be cleared from the Clear key; with Write off the same move only sets the static level.
     func testRecordingAMusicCurve() {
         button("New").tap()
         button("Demo clips").tap()
@@ -208,12 +208,23 @@ final class WorkspaceTourTests: XCTestCase {
         shot("Mix with a recorded music curve")
         button("Pause").tap()
 
-        write.press(forDuration: 1.0)
+        button("Clear automation").tap()
         let clear = button("Clear music curve")
         XCTAssertTrue(clear.waitForExistence(timeout: 5))
         clear.tap()
         XCTAssertTrue(button("Undo Clear Music Curve").waitForExistence(timeout: 5))
         button("Undo Clear Music Curve").tap()
         XCTAssertTrue(button("Undo Record Music Level").waitForExistence(timeout: 5))
+
+        // Zooming the lane steps 1× → 4× → 16× and back.
+        let zoom = button("Zoom sequence")
+        XCTAssertEqual(zoom.value as? String, "1×")
+        zoom.tap()
+        XCTAssertEqual(zoom.value as? String, "4×")
+        sleep(1)
+        shot("Mix lane zoomed 4×")
+        zoom.tap()
+        zoom.tap()
+        XCTAssertEqual(zoom.value as? String, "1×")
     }
 }
