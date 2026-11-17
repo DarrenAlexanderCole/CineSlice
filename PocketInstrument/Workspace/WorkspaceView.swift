@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 /// One elastic workspace. Preview and transport stay put; the deck below
 /// changes with the contextual state (Arrange, Explore, Mix). Release is the export sheet.
+/// Watch hides everything but the picture.
 struct WorkspaceView: View {
     @State var model: WorkspaceModel
     @Environment(\.dismiss) private var dismiss
@@ -20,12 +21,22 @@ struct WorkspaceView: View {
     @State private var pickPurpose = PickPurpose.clips
     @State private var showExport = false
     @State private var photoItems: [PhotosPickerItem] = []
+    @State private var isWatching = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            preview
-            deck
+        ZStack {
+            if isWatching {
+                // The editing controls go away entirely: nothing to reach with VoiceOver, nothing to redraw.
+                WatchView(model: model) { setWatching(false) }
+                    .transition(.opacity)
+            } else {
+                VStack(spacing: 0) {
+                    topBar
+                    preview
+                    deck
+                }
+                .transition(.opacity)
+            }
         }
         .background(Theme.obsidian.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -164,12 +175,37 @@ struct WorkspaceView: View {
                         }
                     }
                 }
+                if !model.project.clips.isEmpty {
+                    HStack {
+                        Spacer()
+                        Button {
+                            setWatching(true)
+                        } label: {
+                            GlassChip {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Theme.label)
+                            }
+                            .frame(minWidth: Theme.minTouch, minHeight: Theme.minTouch)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Watch")
+                        .accessibilityHint("Shows just the video and plays it. Tap the video for controls.")
+                    }
+                }
             }
             .padding(10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, 8)
+    }
+
+    /// Watch starts playback, since it is for watching; leaving it keeps whatever is playing.
+    private func setWatching(_ on: Bool) {
+        if on, !model.engine.isPlaying { model.engine.play() }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { isWatching = on }
     }
 
     private var frameRate: Double {
@@ -241,6 +277,80 @@ struct WorkspaceView: View {
         )
         .padding(.top, 8)
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85), value: model.mode)
+    }
+}
+
+/// Just the picture, edge to edge on black, with the status bar and home indicator out of the
+/// way. Tapping shows play/pause and Done for a few seconds; swiping down also leaves.
+/// With VoiceOver the controls stay up.
+private struct WatchView: View {
+    var model: WorkspaceModel
+    var onDone: () -> Void
+
+    @State private var showsControls = false
+    @State private var hideTask: Task<Void, Never>?
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            PlayerView(player: model.engine.player)
+                .ignoresSafeArea()
+                .accessibilityHidden(true)
+            if showsControls || voiceOver {
+                controls.transition(.opacity)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { setControls(!showsControls) }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30).onEnded { g in
+                if g.translation.height > 100, abs(g.translation.width) < g.translation.height { onDone() }
+            }
+        )
+        .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
+        .onDisappear { hideTask?.cancel() }
+    }
+
+    private var controls: some View {
+        VStack {
+            HStack {
+                GlassChip {
+                    TimecodeText(
+                        time: model.currentTime, frameRate: Double(model.project.exportSettings.frameRate), size: 13)
+                }
+                Spacer()
+                Button("Done", action: onDone)
+                    .buttonStyle(.instrument())
+                    .accessibilityHint("Back to editing")
+            }
+            Spacer()
+            Button {
+                model.engine.togglePlay()
+                setControls(true)
+            } label: {
+                Image(systemName: model.engine.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 26, weight: .bold))
+                    .frame(width: 64, height: 56)
+            }
+            .buttonStyle(.instrument(.key, active: model.engine.isPlaying))
+            .accessibilityLabel(model.engine.isPlaying ? "Pause" : "Play")
+        }
+        .padding(16)
+    }
+
+    /// Shows or hides the controls; shown, they fade out again after a few seconds.
+    private func setControls(_ on: Bool) {
+        hideTask?.cancel()
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { showsControls = on }
+        guard on else { return }
+        hideTask = Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) { showsControls = false }
+        }
     }
 }
 

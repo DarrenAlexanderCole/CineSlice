@@ -226,5 +226,16 @@ final class WorkspaceTourTests: XCTestCase {
         zoom.tap()
         zoom.tap()
         XCTAssertEqual(zoom.value as? String, "1×")
+
+        // Watch: only the picture, playing; a tap brings up Done.
+        button("Watch").tap()
+        XCTAssertFalse(button("Mix").waitForExistence(timeout: 1), "the deck should be hidden")
+        sleep(1)
+        shot("Watch")
+        app.tap()
+        XCTAssertTrue(button("Pause").waitForExistence(timeout: 3))
+        button("Done").tap()
+        XCTAssertTrue(button("Mix").waitForExistence(timeout: 3))
+        button("Pause").tap()
     }
 }
