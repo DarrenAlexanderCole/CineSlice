@@ -237,12 +237,13 @@ final class WorkspaceModel {
     }
 
     /// Sets the player's levels; `clip` (for the selected clip) and `music` override the project's
-    /// for live fader previews.
+    /// for live fader previews. A fader being recorded is always heard as it is.
     func applyLevels(clip: Float? = nil, music: Float? = nil) {
         guard mode != .explore, let item = engine.player.currentItem else { return }
         item.audioMix = CompositionBuilder.audioMix(
             project: project, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
-            clipLevel: clip.flatMap { level in selectedClipID.map { (id: $0, volume: level) } }, musicLevel: music)
+            clipLevel: clip.flatMap { level in selectedClipID.map { (id: $0, volume: level) } }, musicLevel: music,
+            writing: recording.map { ($0.target, recordLevel) })
     }
 
     // MARK: Selection & modes
@@ -376,6 +377,116 @@ final class WorkspaceModel {
         perform(SetClipVolumeCommand(clipID: id, volume: volume))
     }
     func setMusicVolume(_ volume: Float) { perform(SetMusicVolumeCommand(volume: volume)) }
+
+    // MARK: Automation recording
+
+    /// A pass being recorded: the fader's level sampled against composition time.
+    struct Pass {
+        let target: AutomationTarget
+        var samples: [AutomationPoint]
+    }
+
+    /// Write mode: touching a fader while the sequence plays in Mix records it into that curve.
+    var isWriting = false {
+        didSet { if !isWriting { finishPass() } }
+    }
+    /// The pass in progress, drawn live in the lane.
+    private(set) var recording: Pass?
+    @ObservationIgnored private var recordLevel: Float = 0
+    @ObservationIgnored private var recordTask: Task<Void, Never>?
+
+    /// How often a held fader is sampled while recording.
+    private static let recordInterval = Duration.milliseconds(33)
+
+    /// What a fader shows: its level while recorded, the curve where the playhead is inside a
+    /// recorded pass, otherwise the static level (the selected clip's, or the music's).
+    func faderLevel(_ target: AutomationTarget) -> Float {
+        if let recording, recording.target == target { return recordLevel }
+        if let recorded = project.automation[target].value(at: currentTime) { return recorded }
+        switch target {
+        case .clipAudio: return selectedClip?.volume ?? 1
+        case .music: return project.referenceAudio?.volume ?? 1
+        }
+    }
+
+    /// True when the fader is following (or writing) a curve at the playhead.
+    func isAutomated(_ target: AutomationTarget) -> Bool {
+        recording?.target == target || project.automation[target].value(at: currentTime) != nil
+    }
+
+    /// A fader moved (or was touched). Records when Write is on and the sequence is playing;
+    /// otherwise previews the static level.
+    func faderMoved(_ target: AutomationTarget, to level: Float) {
+        if let recording {
+            guard recording.target == target else { return }
+            recordLevel = level
+            applyLevels()
+        } else if isWriting, mode == .mix, engine.isPlaying {
+            startPass(target, at: level)
+        } else {
+            switch target {
+            case .clipAudio: applyLevels(clip: level)
+            case .music: applyLevels(music: level)
+            }
+        }
+    }
+
+    /// A fader was let go. Returns true when that ended a recorded pass, so the static level is left alone.
+    func faderReleased(_ target: AutomationTarget) -> Bool {
+        guard recording?.target == target else { return false }
+        finishPass()
+        return true
+    }
+
+    func clearAutomation(_ target: AutomationTarget) { perform(ClearAutomationCommand(target: target)) }
+
+    private func startPass(_ target: AutomationTarget, at level: Float) {
+        recordLevel = level
+        recording = Pass(target: target, samples: [AutomationPoint(time: currentTime, value: level)])
+        applyLevels()
+        Haptics.press()
+        recordTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.recordInterval)
+                guard let self, let pass = self.recording else { return }
+                guard self.engine.isPlaying, self.mode == .mix else {
+                    self.finishPass()
+                    return
+                }
+                let now = self.currentTime
+                if let last = pass.samples.last, now < last.time {
+                    // The loop wrapped: keep what was recorded and carry on from the loop start.
+                    self.commitPass()
+                    self.recording = Pass(
+                        target: pass.target, samples: [AutomationPoint(time: now, value: self.recordLevel)])
+                    self.applyLevels()
+                } else {
+                    self.recording?.samples.append(AutomationPoint(time: now, value: self.recordLevel))
+                }
+            }
+        }
+    }
+
+    /// Ends the pass in progress, if any, and writes it as one undo step.
+    private func finishPass() {
+        guard let pass = recording else { return }
+        recordTask?.cancel()
+        recordTask = nil
+        if let last = pass.samples.last, currentTime >= last.time {
+            recording?.samples.append(AutomationPoint(time: currentTime, value: recordLevel))
+        }
+        commitPass()
+        applyLevels()
+        Haptics.detent()
+    }
+
+    private func commitPass() {
+        guard let pass = recording else { return }
+        recording = nil
+        // A touch too short to span two moments records nothing.
+        guard AutomationSegment(recorded: pass.samples, sequenceDuration: project.duration) != nil else { return }
+        perform(WriteAutomationCommand(target: pass.target, samples: pass.samples))
+    }
     func setMusicOffset(_ offset: MediaTime) { perform(SetMusicOffsetCommand(offset: offset)) }
 
     /// Slides the music later (positive) or earlier (negative) by `step`.

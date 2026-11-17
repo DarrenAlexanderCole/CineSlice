@@ -168,10 +168,12 @@ enum CompositionBuilder {
     /// own level from its first frame, and recorded automation) as volume ramps. Shared by
     /// preview and export. Cheap, so the player's mix can be swapped while a fader moves:
     /// `clipLevel`/`musicLevel` replace the static levels for live fader previews; recorded
-    /// automation still wins where it exists.
+    /// automation still wins where it exists. `writing` plays one track at a fader's level
+    /// throughout, while that fader is being recorded.
     static func audioMix(
         project: Project, clipAudioTrackID: CMPersistentTrackID?, musicTrackID: CMPersistentTrackID?,
-        clipLevel: (id: UUID, volume: Float)? = nil, musicLevel: Float? = nil
+        clipLevel: (id: UUID, volume: Float)? = nil, musicLevel: Float? = nil,
+        writing: (target: AutomationTarget, level: Float)? = nil
     ) -> AVAudioMix? {
         var mixed = project
         if let clipLevel, let i = mixed.index(ofClip: clipLevel.id) { mixed.clips[i].volume = clipLevel.volume }
@@ -184,6 +186,10 @@ enum CompositionBuilder {
             guard let trackID else { return nil }
             let p = AVMutableAudioMixInputParameters()
             p.trackID = trackID
+            if let writing, writing.target == target {
+                p.setVolume(writing.level, at: .zero)
+                return p
+            }
             let envelope = mixed.levelEnvelope(for: target)
             for (a, b) in zip(envelope, envelope.dropFirst()) where b.time > a.time {
                 if a.value == b.value {

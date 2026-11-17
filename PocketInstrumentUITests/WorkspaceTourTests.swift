@@ -167,4 +167,53 @@ final class WorkspaceTourTests: XCTestCase {
         wait(for: [followed], timeout: 10)
         button("Pause").tap()
     }
+
+    // MARK: Automation
+
+    private var musicFader: XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "MUSIC")).firstMatch
+    }
+
+    /// Rides the music fader from near the top to lower down, slowly, then holds.
+    private func rideMusicFader() {
+        let start = musicFader.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.75))
+        let end = musicFader.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.75))
+        start.press(forDuration: 0.2, thenDragTo: end, withVelocity: 80, thenHoldForDuration: 1)
+    }
+
+    /// With Write on, riding a fader during playback records one pass (one undo step) that
+    /// can be cleared; with Write off the same move only sets the static level.
+    func testRecordingAMusicCurve() {
+        button("New").tap()
+        button("Demo clips").tap()
+        XCTAssertTrue(button("Mix").waitForExistence(timeout: 60), "demo clips never arrived")
+        button("Mix").tap()
+        button("Demo click track").tap()
+        XCTAssertTrue(musicFader.waitForExistence(timeout: 30))
+        let write = button("Write automation")
+        XCTAssertTrue(write.waitForExistence(timeout: 30))
+
+        // Write off: a fader move is a static level change.
+        button("Play").tap()
+        rideMusicFader()
+        XCTAssertTrue(button("Undo Music Level").waitForExistence(timeout: 5))
+        button("Pause").tap()
+
+        write.tap()
+        XCTAssertEqual(write.value as? String, "On")
+        button("Play").tap()
+        sleep(1)
+        rideMusicFader()
+        XCTAssertTrue(button("Undo Record Music Level").waitForExistence(timeout: 5), "no pass was recorded")
+        shot("Mix with a recorded music curve")
+        button("Pause").tap()
+
+        write.press(forDuration: 1.0)
+        let clear = button("Clear music curve")
+        XCTAssertTrue(clear.waitForExistence(timeout: 5))
+        clear.tap()
+        XCTAssertTrue(button("Undo Clear Music Curve").waitForExistence(timeout: 5))
+        button("Undo Clear Music Curve").tap()
+        XCTAssertTrue(button("Undo Record Music Level").waitForExistence(timeout: 5))
+    }
 }

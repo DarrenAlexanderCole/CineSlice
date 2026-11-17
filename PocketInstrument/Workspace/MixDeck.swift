@@ -5,6 +5,8 @@ import SwiftUI
 /// against the clips' own sound. Everything here is in composition time.
 /// Dragging the waveform slides the music; the clip band above it scrubs.
 /// Each clip has its own level: pick one in the clip row and the CLIP fader follows it.
+/// With Write on, riding a fader during playback records it as a curve (drawn in the lane);
+/// inside a recorded pass the fader follows the curve and reads AUTO.
 struct MixDeck: View {
     var model: WorkspaceModel
     var onAddMusicFile: () -> Void
@@ -12,24 +14,27 @@ struct MixDeck: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            SequenceLane(model: model, waveformDrag: .slideMusic)
+            SequenceLane(model: model, waveformDrag: .slideMusic, showsAutomation: true)
             if let music = model.project.referenceAudio {
                 alignment(music)
             } else {
                 emptyMusic
             }
             MixClipPicker(model: model)
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
+                WriteKey(model: model)
                 Fader(
-                    title: clipFaderTitle, value: model.selectedClip?.volume ?? 1,
-                    onChange: { model.applyLevels(clip: $0) },
+                    title: faderTitle(clipFaderTitle, .clipAudio), value: model.faderLevel(.clipAudio),
+                    onChange: { model.faderMoved(.clipAudio, to: $0) },
+                    onRelease: { _ in model.faderReleased(.clipAudio) },
                     onCommit: { model.setClipVolume($0) }
                 )
                 .id(model.selectedClipID)  // a new clip starts a fresh drag, never inherits another's draft
                 .disabled(model.selectedClip == nil)
                 Fader(
-                    title: "MUSIC", value: model.project.referenceAudio?.volume ?? 1,
-                    onChange: { model.applyLevels(music: $0) },
+                    title: faderTitle("MUSIC", .music), value: model.faderLevel(.music),
+                    onChange: { model.faderMoved(.music, to: $0) },
+                    onRelease: { _ in model.faderReleased(.music) },
                     onCommit: { model.setMusicVolume($0) }
                 )
                 .disabled(model.project.referenceAudio == nil)
@@ -40,6 +45,10 @@ struct MixDeck: View {
                 LoopButton(model: model)
             }
         }
+    }
+
+    private func faderTitle(_ title: String, _ target: AutomationTarget) -> String {
+        model.isAutomated(target) ? "\(title) · AUTO" : title
     }
 
     private var clipFaderTitle: String {
@@ -136,6 +145,52 @@ struct MixDeck: View {
                         .strokeBorder(Theme.hairline))
         }
         .accessibilityLabel("Music")
+    }
+}
+
+/// Arms recording. Tap toggles Write; hold for clearing either curve.
+private struct WriteKey: View {
+    var model: WorkspaceModel
+
+    var body: some View {
+        let isOn = model.isWriting
+        let isRecording = model.recording != nil
+        Menu {
+            Button(role: .destructive) {
+                model.clearAutomation(.clipAudio)
+            } label: {
+                Label("Clear clip curve", systemImage: "film")
+            }
+            .disabled(model.project.automation.clipAudio.isEmpty)
+            Button(role: .destructive) {
+                model.clearAutomation(.music)
+            } label: {
+                Label("Clear music curve", systemImage: "music.note")
+            }
+            .disabled(model.project.automation.music.isEmpty)
+        } label: {
+            Image(systemName: isRecording ? "record.circle.fill" : "record.circle")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(isOn ? Theme.signal : Theme.ivory)
+                .frame(width: Theme.minTouch, height: Theme.minTouch)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Theme.instrument, Theme.obsidian], startPoint: .top, endPoint: .bottom))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
+                        .strokeBorder(isOn ? Theme.signal : Theme.hairline, lineWidth: isOn ? 1.5 : 1)
+                        .shadow(color: isOn ? Theme.signal.opacity(isRecording ? 0.9 : 0.5) : .clear, radius: 6)
+                )
+        } primaryAction: {
+            model.isWriting.toggle()
+            Haptics.tap()
+        }
+        .accessibilityLabel("Write automation")
+        .accessibilityValue(isRecording ? "Recording" : isOn ? "On" : "Off")
+        .accessibilityHint("When on, moving a fader during playback records it. Hold to clear a curve.")
     }
 }
 

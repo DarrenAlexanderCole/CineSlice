@@ -60,6 +60,11 @@ public struct AutomationLane: Codable, Hashable, Sendable {
 
     public var isEmpty: Bool { segments.isEmpty }
 
+    /// The recorded level at `t`, or nil where no pass covers it.
+    public func value(at t: MediaTime) -> Float? {
+        segments.first { $0.start <= t && t <= $0.end }?.value(at: t)
+    }
+
     /// How long each pass's edges take to ease to or from the static level.
     public static let glide = MediaTime(value: 90, timescale: 600)
 

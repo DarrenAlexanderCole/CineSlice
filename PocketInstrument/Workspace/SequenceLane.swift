@@ -13,6 +13,8 @@ struct SequenceLane: View {
 
     var model: WorkspaceModel
     var waveformDrag: WaveformDrag = .scrub
+    /// Mix: draw the level curves (music in Signal, clip sound in Ivory) over the waveform.
+    var showsAutomation = false
 
     private let rulerHeight: CGFloat = 22
     private let waveHeight: CGFloat = 46
@@ -37,6 +39,12 @@ struct SequenceLane: View {
                         .offset(y: rulerHeight + bandGap)
                 }
                 clipTicks(width: width)
+                if showsAutomation {
+                    let bandHeight = music == nil ? rulerHeight : waveHeight
+                    AutomationCurves(model: model)
+                        .frame(width: width, height: bandHeight)
+                        .offset(y: music == nil ? 0 : rulerHeight + bandGap)
+                }
                 if let loop = draftLoop ?? model.activeLoop?.range {
                     loopBracket(loop, width: width)
                 }
@@ -305,5 +313,61 @@ struct WaveformBars: View {
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// The level curves across the sequence: the playing envelope faintly, recorded passes
+/// bold, and a pass being recorded brightest. Top is full level, bottom is silence.
+private struct AutomationCurves: View {
+    var model: WorkspaceModel
+
+    var body: some View {
+        let project = model.project
+        let duration = project.duration.seconds
+        let recording = model.recording
+        Canvas { context, size in
+            guard duration > 0 else { return }
+            func point(_ p: AutomationPoint) -> CGPoint {
+                CGPoint(
+                    x: CGFloat(min(max(p.time.seconds / duration, 0), 1)) * size.width,
+                    y: 2 + CGFloat(1 - p.value) * (size.height - 4))
+            }
+            func line(_ points: [AutomationPoint]) -> Path {
+                Path { path in
+                    guard let first = points.first else { return }
+                    path.move(to: point(first))
+                    for p in points.dropFirst() { path.addLine(to: point(p)) }
+                }
+            }
+            for target in [AutomationTarget.clipAudio, .music] {
+                let lane = project.automation[target]
+                let color = target == .music ? Theme.signal : Theme.ivory
+                if !lane.isEmpty {
+                    context.stroke(
+                        line(project.levelEnvelope(for: target)), with: .color(color.opacity(0.45)), lineWidth: 1)
+                    for segment in lane.segments {
+                        // A dark outline keeps the curve readable over the waveform's bars.
+                        context.stroke(
+                            line(segment.points), with: .color(Theme.obsidian),
+                            style: StrokeStyle(lineWidth: 4.5, lineCap: .round, lineJoin: .round))
+                        context.stroke(
+                            line(segment.points), with: .color(color),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    }
+                }
+                if let recording, recording.target == target {
+                    context.stroke(
+                        line(recording.samples), with: .color(Theme.obsidian),
+                        style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+                    var glow = context
+                    glow.addFilter(.shadow(color: color, radius: 3))
+                    glow.stroke(
+                        line(recording.samples), with: .color(color),
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

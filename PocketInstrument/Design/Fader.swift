@@ -2,11 +2,13 @@ import SwiftUI
 
 /// Horizontal level fader (0…1). Dragging moves the level relative to where it
 /// was, so grabbing anywhere on the track never makes it jump. `onChange`
-/// fires live while dragging; `onCommit` fires once on release (one undo step).
+/// fires on touch and live while dragging; `onCommit` fires once on release (one undo step)
+/// unless `onRelease` returns true to say the release was handled (e.g. a recorded pass).
 struct Fader: View {
     let title: String
     let value: Float
     var onChange: (Float) -> Void = { _ in }
+    var onRelease: (Float) -> Bool = { _ in false }
     var onCommit: (Float) -> Void
 
     @Environment(\.isEnabled) private var isEnabled
@@ -86,6 +88,7 @@ struct Fader: View {
             .onEnded { _ in
                 guard let final = draft else { return }
                 draft = nil
+                if onRelease(final) { return }
                 if final != value { onCommit(final) }
             }
     }
