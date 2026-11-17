@@ -147,10 +147,12 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
     /// Where audio time 0 sits on the composition timeline (may be negative).
     public var offset: MediaTime
     public var volume: Float
+    /// Locked once lined up, so the song can't be bumped: `offset` changes are refused.
+    public var isLocked: Bool
 
     public init(
         id: UUID = UUID(), fileName: String, originalFilename: String? = nil,
-        duration: MediaTime, offset: MediaTime = .zero, volume: Float = 1
+        duration: MediaTime, offset: MediaTime = .zero, volume: Float = 1, isLocked: Bool = false
     ) {
         self.id = id
         self.fileName = fileName
@@ -158,6 +160,22 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
         self.duration = duration
         self.offset = offset
         self.volume = volume
+        self.isLocked = isLocked
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, fileName, originalFilename, duration, offset, volume, isLocked
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        fileName = try c.decode(String.self, forKey: .fileName)
+        originalFilename = try c.decodeIfPresent(String.self, forKey: .originalFilename)
+        duration = try c.decode(MediaTime.self, forKey: .duration)
+        offset = try c.decodeIfPresent(MediaTime.self, forKey: .offset) ?? .zero
+        volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
+        isLocked = try c.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
     }
 }
 

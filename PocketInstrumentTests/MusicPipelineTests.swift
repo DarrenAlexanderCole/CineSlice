@@ -76,6 +76,11 @@ final class MusicPipelineTests: XCTestCase {
         let bar = CMTimeRange(start: CMTime(value: 4, timescale: 1), duration: CMTime(value: 2, timescale: 1))
         engine.loopRange = bar
         engine.load(item, duration: built.duration, at: bar.start, resume: true)
+        // A phone that has just woken can take a moment to start audio; time the loop from
+        // when playback is actually moving.
+        for _ in 0..<50 where engine.currentTime.seconds < 4.05 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
         var times: [Double] = []
         for _ in 0..<35 {
             try await Task.sleep(nanoseconds: 100_000_000)

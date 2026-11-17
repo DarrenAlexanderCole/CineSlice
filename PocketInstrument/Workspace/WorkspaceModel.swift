@@ -579,12 +579,27 @@ final class WorkspaceModel {
         guard AutomationSegment(recorded: pass.samples, sequenceDuration: project.duration) != nil else { return }
         perform(WriteAutomationCommand(target: pass.target, samples: pass.samples))
     }
-    func setMusicOffset(_ offset: MediaTime) { perform(SetMusicOffsetCommand(offset: offset)) }
+    /// Moves the music; a locked song stays put (with a warning tap rather than an alert).
+    func setMusicOffset(_ offset: MediaTime) {
+        guard let music = project.referenceAudio else { return }
+        guard !music.isLocked else {
+            Haptics.warning()
+            return
+        }
+        perform(SetMusicOffsetCommand(offset: offset))
+    }
 
     /// Slides the music later (positive) or earlier (negative) by `step`.
     func nudgeMusic(by step: MediaTime) {
-        guard let music = project.referenceAudio else { return }
+        guard let music = project.referenceAudio, !music.isLocked else { return }
         setMusicOffset(music.offset + step)
+        Haptics.detent()
+    }
+
+    var isMusicLocked: Bool { project.referenceAudio?.isLocked ?? false }
+
+    func toggleMusicLock() {
+        perform(SetMusicLockCommand(isLocked: !isMusicLocked))
         Haptics.detent()
     }
 

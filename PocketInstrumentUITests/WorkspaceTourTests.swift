@@ -216,6 +216,15 @@ final class WorkspaceTourTests: XCTestCase {
         button("Undo Clear Music Curve").tap()
         XCTAssertTrue(button("Undo Record Music Level").waitForExistence(timeout: 5))
 
+        // Locked music can't be nudged; unlocking frees it again.
+        let lock = button("Lock music")
+        lock.tap()
+        XCTAssertEqual((lock.value as? String)?.lowercased(), "locked")
+        XCTAssertFalse(button("Music one frame later").isEnabled)
+        XCTAssertTrue(button("Undo Lock Music").exists)
+        lock.tap()
+        XCTAssertTrue(button("Music one frame later").isEnabled)
+
         // Zooming the lane steps 1× → 4× → 16× and back.
         let zoom = button("Zoom sequence")
         XCTAssertEqual(zoom.value as? String, "1×")

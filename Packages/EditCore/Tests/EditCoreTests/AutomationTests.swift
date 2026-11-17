@@ -291,6 +291,25 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(envelope, [point(0, 0.8), point(5, 0.8)])
     }
 
+    // MARK: Music lock
+
+    func testLockedMusicRefusesToMove() throws {
+        var p = project()
+        var undo = UndoStack()
+        try SetMusicOffsetCommand(offset: t(1)).apply(to: &p)
+        try undo.perform(SetMusicLockCommand(isLocked: true), on: &p)
+        XCTAssertThrowsError(try SetMusicOffsetCommand(offset: t(2)).apply(to: &p)) {
+            XCTAssertEqual($0 as? EditError, .locked)
+        }
+        XCTAssertEqual(p.referenceAudio?.offset, t(1))
+        // The lock survives saving, and undo unlocks.
+        let reopened = try ProjectStore.decoder.decode(Project.self, from: ProjectStore.encoder.encode(p))
+        XCTAssertEqual(reopened.referenceAudio?.isLocked, true)
+        XCTAssertEqual(undo.undo(&p), "Lock Music")
+        try SetMusicOffsetCommand(offset: t(2)).apply(to: &p)
+        XCTAssertEqual(p.referenceAudio?.offset, t(2))
+    }
+
     // MARK: Persistence
 
     func testCurvesPersist() throws {

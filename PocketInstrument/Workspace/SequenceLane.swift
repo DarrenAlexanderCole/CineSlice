@@ -6,8 +6,8 @@ import SwiftUI
 /// both, the loop bracket and the playhead.
 ///
 /// Dragging the clip band always scrubs. Dragging the waveform scrubs in Arrange
-/// and slides the music against the picture in Mix, so the two never share a gesture
-/// in the same state. The bracket's Signal handles set the loop (snapping to clip edges).
+/// and slides the music against the picture in Mix (unless the music is locked, when it
+/// scrubs), so the two never share a gesture in the same state. The bracket's Signal handles set the loop (snapping to clip edges).
 ///
 /// Pinch or the zoom key magnifies the lane around the playhead, for lining music up
 /// closer than a frame-sized sliver of the whole sequence. Zoomed, scrubbing drags the
@@ -193,6 +193,7 @@ struct SequenceLane: View {
 
     private func waveBand(_ music: AudioTrack, width: CGFloat) -> some View {
         let offset = draftOffset ?? music.offset
+        let slides = waveformDrag == .slideMusic && !music.isLocked
         let sliding = draftOffset != nil
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.obsidian)
@@ -233,19 +234,19 @@ struct SequenceLane: View {
         )
         .contentShape(Rectangle())
         .gesture(
-            waveformDrag == .slideMusic
+            slides
                 ? AnyGesture(slideGesture(music, width: width).map { _ in () })
                 : AnyGesture(scrubGesture(width: width).map { _ in () })
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(waveformDrag == .slideMusic ? "Music position" : "Music waveform")
+        .accessibilityLabel(slides ? "Music position" : music.isLocked ? "Music, locked" : "Music waveform")
         .accessibilityValue(
             String(
                 format: "Song starts %.2f seconds %@ the video", abs(music.offset.seconds),
                 music.offset <= .zero ? "before" : "into")
         )
         .accessibilityAdjustableAction { direction in
-            guard waveformDrag == .slideMusic else { return }
+            guard slides else { return }
             model.setMusicOffset(music.offset + MediaTime(seconds: direction == .increment ? 1 : -1))
         }
     }

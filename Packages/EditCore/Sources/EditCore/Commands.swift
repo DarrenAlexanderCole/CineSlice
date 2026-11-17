@@ -4,6 +4,8 @@ public enum EditError: Error, Equatable {
     case clipNotFound
     case sourceNotFound
     case invalidRange
+    /// The music is locked in place.
+    case locked
 }
 
 /// Every project mutation goes through a command so it can be undone.
@@ -163,8 +165,20 @@ public struct SetMusicOffsetCommand: EditingCommand {
     public var actionName: String { "Move Music" }
     public func apply(to project: inout Project) throws {
         guard var track = project.referenceAudio else { throw EditError.sourceNotFound }
+        guard !track.isLocked else { throw EditError.locked }
         track.offset = track.clampedOffset(offset, sequenceDuration: project.duration)
         project.referenceAudio = track
+    }
+}
+
+/// Locks the music in place (or unlocks it) so it can't be slid or nudged by accident.
+public struct SetMusicLockCommand: EditingCommand {
+    public let isLocked: Bool
+    public init(isLocked: Bool) { self.isLocked = isLocked }
+    public var actionName: String { isLocked ? "Lock Music" : "Unlock Music" }
+    public func apply(to project: inout Project) throws {
+        guard project.referenceAudio != nil else { throw EditError.sourceNotFound }
+        project.referenceAudio?.isLocked = isLocked
     }
 }
 

@@ -3,7 +3,8 @@ import SwiftUI
 
 /// Mix state: line the reference music up with the sequence and balance it
 /// against the clips' own sound. Everything here is in composition time.
-/// Dragging the waveform slides the music; the clip band above it scrubs.
+/// Dragging the waveform slides the music; the clip band above it scrubs. Once lined up, the
+/// lock keeps the song in place: the waveform then scrubs too, and the nudges are off.
 /// Each clip has its own level: pick one in the clip row and the CLIP fader follows it.
 /// With Write on, riding a fader during playback records it as a curve (drawn in the lane);
 /// inside a recorded pass the fader follows the curve and reads AUTO, and with Write off, moving
@@ -77,7 +78,8 @@ struct MixDeck: View {
         .frame(maxWidth: .infinity, minHeight: 100)
     }
 
-    /// Where the song sits relative to the video, with frame and 10 ms nudges.
+    /// Where the song sits relative to the video, with frame and 10 ms nudges, and the lock
+    /// that keeps it there once lined up.
     private func alignment(_ music: AudioTrack) -> some View {
         let startsBefore = music.offset <= .zero
         let frame = model.sequenceFrame
@@ -88,6 +90,12 @@ struct MixDeck: View {
                     .font(Theme.caption)
                     .foregroundStyle(Theme.secondaryLabel)
                 Spacer()
+                if music.isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.signal)
+                        .accessibilityLabel("Locked")
+                }
                 Text(MusicSyncNote.clock(abs(music.offset.seconds)))
                     .font(Theme.mono(15))
                     .monospacedDigit()
@@ -97,6 +105,17 @@ struct MixDeck: View {
             HStack(spacing: 6) {
                 nudge("−1F", by: MediaTime.zero - frame, label: "Music one frame earlier")
                 nudge("−10MS", by: MediaTime.zero - fine, label: "Music 10 milliseconds earlier")
+                Spacer(minLength: 0)
+                Button {
+                    model.toggleMusicLock()
+                } label: {
+                    Image(systemName: music.isLocked ? "lock.fill" : "lock.open")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .buttonStyle(.instrument(active: music.isLocked))
+                .accessibilityLabel("Lock music")
+                .accessibilityValue(music.isLocked ? "Locked" : "Unlocked")
+                .accessibilityHint("Keeps the song lined up: no sliding or nudging until unlocked.")
                 Spacer(minLength: 0)
                 nudge("+10MS", by: fine, label: "Music 10 milliseconds later")
                 nudge("+1F", by: frame, label: "Music one frame later")
@@ -108,6 +127,7 @@ struct MixDeck: View {
     private func nudge(_ title: String, by step: MediaTime, label: String) -> some View {
         Button(title) { model.nudgeMusic(by: step) }
             .buttonStyle(.instrument())
+            .disabled(model.isMusicLocked)
             .accessibilityLabel(label)
     }
 
