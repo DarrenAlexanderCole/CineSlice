@@ -8,9 +8,11 @@ The folder and Xcode project are still named **PocketInstrument** (the working t
 the user sees is **CineSlice**. `CLAUDE.md` holds the original product brief and rules.
 
 > **Status (2026-11-18):** Phases 0–4 and most of Phase 5 are done and tested on the Simulator and
-> on an iPhone 17 Pro. 64 core tests, 15 media-pipeline tests and 4 UI tests pass. Next: the app
-> icon (three concepts in `DesignReferences/AppIcon concepts/`), a privacy manifest, first-run
-> hints, TestFlight, then a VoiceOver pass last.
+> on an iPhone 17 Pro. 64 core tests, 15 media-pipeline tests and 4 UI tests pass. The app has its
+> icon (the worn gate), a privacy manifest and its permanent ID `com.studio4.cineslice`; the first
+> TestFlight upload is next, then first-run hints, and a VoiceOver pass last.
+>
+> Repo: https://github.com/DarrenAlexanderCole/CineSlice (private).
 
 ## Tech
 - Swift 5 / SwiftUI, iOS 17+, iPhone only, portrait.
@@ -130,8 +132,26 @@ tests skip when the app isn't in the foreground). UI tests launch with `-skipInt
 - Match the existing comment style (a short doc comment on each type saying what it is for),
   keep the palette, and avoid new files where an existing one fits (XcodeGen, see above).
 
+## Writing a spec for a new component
+A spec that fits this codebase answers these, in plain words (no code needed):
+1. **Purpose.** What the user is trying to do, and in which state (Library, Arrange, Trim, Mix,
+   Release, Watch). One sentence on why it belongs in CineSlice.
+2. **Placement.** Where it sits on screen, and what it replaces or moves. Screen space is tight:
+   the picture comes first, the wheel stays at the bottom for thumbs.
+3. **Look.** Which existing parts it resembles (round key, slim key, fader, wheel, gate, recessed
+   well, LED, meter), using the palette above. Reference images welcome.
+4. **Behaviour.** Every gesture (tap, drag, hold, pinch) and what it does; what happens while
+   playing; haptics; what shows when it's empty, disabled or busy.
+5. **Data.** Does it change the project (then it needs an undoable edit, saved with the project),
+   or is it only a view setting? Should it affect the exported video?
+6. **Done when.** How we'd check it works, e.g. "export a clip with X and the file shows Y".
+7. **Out of scope.** What it deliberately doesn't do.
+
+Keep to one component per spec. Things the product brief rules out: volume-button or external
+controller input, cloud features, AI auto-editing, heavy effects, and attaching Instagram's licensed music.
+
 ## Known gaps
-- No app icon in the build yet; no privacy manifest; no TestFlight setup yet.
+- No first-run hints yet beyond the scrub lane's; TestFlight upload pending.
 - VoiceOver works on the main controls but hasn't had a full pass.
 - Export uses `AVAssetExportSession.exportAsynchronously` (deprecated on iOS 18, still works).
 - HDR sources export as SDR H.264.
