@@ -1,6 +1,7 @@
 import AVFoundation
 import EditCore
 import Photos
+import UIKit
 
 enum ExportError: LocalizedError {
     case cannotCreateSession
@@ -32,7 +33,8 @@ struct ExportResult: Equatable {
 }
 
 /// Renders the project with the same CompositionBuilder the preview uses.
-/// Output: H.264 MP4 at the project's export size (default 1080×1920, 30 fps),
+/// Output: H.264 MP4 at the project's export size (default 1080×1920, 30 fps; 1080×1350 cut
+/// to the feed),
 /// with the sound chosen by `Project.exportSoundPolicy`.
 enum ExportService {
     static func export(
@@ -43,7 +45,8 @@ enum ExportService {
         let policy = project.exportSoundPolicy
         let built = try await CompositionBuilder.build(
             project: project,
-            renderSize: CGSize(width: settings.width, height: settings.height),
+            renderSize: CGSize(width: settings.outputWidth, height: settings.outputHeight),
+            frameSize: CGSize(width: settings.width, height: settings.height),
             frameRate: Int32(settings.frameRate),
             includeClipAudio: policy.includesClipAudio,
             includeMusic: policy.includesMusic,
@@ -127,11 +130,29 @@ enum ExportService {
         }
     }
 
-    static func saveToPhotos(_ url: URL) async throws {
+    /// Saves the video to Photos; returns its Photos identifier, for handing it to Instagram.
+    @discardableResult
+    static func saveToPhotos(_ url: URL) async throws -> String? {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else { throw ExportError.photosAccessDenied }
+        var identifier: String?
         try await PHPhotoLibrary.shared().performChanges {
-            _ = PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            identifier =
+                PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)?.placeholderForCreatedAsset?
+                .localIdentifier
         }
+        return identifier
+    }
+
+    /// Instagram's own link for opening it on a video in Photos, falling back to just opening it.
+    /// nil when Instagram isn't installed.
+    @MainActor
+    static func instagramURL(forPhotosAsset identifier: String?) -> URL? {
+        guard let app = URL(string: "instagram://app"), UIApplication.shared.canOpenURL(app) else { return nil }
+        guard let identifier,
+            let encoded = identifier.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
+            let library = URL(string: "instagram://library?LocalIdentifier=\(encoded)")
+        else { return app }
+        return library
     }
 }

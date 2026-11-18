@@ -31,9 +31,12 @@ enum CompositionBuilder {
     ///   - mediaURL: resolves a source to its file; return nil when the file is missing.
     ///   - includeClipAudio / includeMusic: both false produces a silent composition.
     ///   - musicURL: the reference music file, or nil when there's none or it's missing.
+    ///   - frameSize: the frame the clips are framed and cropped in, when the output keeps only
+    ///     its centre (the feed's 4:5 of a 9:16 sequence); nil means `renderSize`.
     static func build(
         project: Project,
         renderSize: CGSize,
+        frameSize: CGSize? = nil,
         frameRate: Int32,
         includeClipAudio: Bool,
         includeMusic: Bool,
@@ -54,6 +57,10 @@ enum CompositionBuilder {
             : nil
 
         let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        let frame = frameSize ?? renderSize
+        // Centres the frame on the output, cutting what overhangs.
+        let toOutput = CGAffineTransform(
+            translationX: (renderSize.width - frame.width) / 2, y: (renderSize.height - frame.height) / 2)
         var cursor = CMTime.zero
         var insertedAudio = false
 
@@ -113,7 +120,8 @@ enum CompositionBuilder {
             layer.setTransform(
                 framingTransform(
                     naturalSize: naturalSize, preferred: preferred,
-                    renderSize: renderSize, framing: clip.framing, crop: clip.crop),
+                    renderSize: frame, framing: clip.framing, crop: clip.crop
+                ).concatenating(toOutput),
                 at: cursor)
             cursor = cursor + compDuration
         }

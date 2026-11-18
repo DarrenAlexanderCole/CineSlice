@@ -2,8 +2,9 @@ import EditCore
 import SwiftUI
 import UIKit
 
-/// Release: 9:16 H.264, a sound policy (including silent for Instagram music),
-/// the music sync note, progress + cancel, then Save to Photos / Share.
+/// Release: H.264 at the sequence's frame (a vertical one can be cut to the feed's 4:5), a sound
+/// policy (including silent for Instagram music), the Instagram handoff (where to start the song),
+/// progress + cancel, then Save to Photos / Open Instagram / Share.
 struct ExportSheet: View {
     var model: WorkspaceModel
 
@@ -19,15 +20,19 @@ struct ExportSheet: View {
     @State private var savedToPhotos = false
     @State private var saveError: String?
     @State private var copiedSync = false
+    /// The saved video's Photos identifier, to open Instagram on it.
+    @State private var photosIdentifier: String?
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         let settings = model.project.exportSettings
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 details(settings)
+                if !settings.isLandscape { framePicker(settings) }
                 soundPicker()
                 if let note = MusicSyncNote(project: model.project) {
-                    syncNote(note)
+                    handoff(note)
                 }
                 content
             }
@@ -46,11 +51,55 @@ struct ExportSheet: View {
 
         Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
             row("Duration", String(format: "%.2fs", model.project.duration.seconds))
-            row("Frame", "\(settings.aspectLabel) · \(settings.width)×\(settings.height)")
+            row("Frame", "\(settings.outputAspectLabel) · \(settings.outputWidth)×\(settings.outputHeight)")
             row("Format", "H.264 MP4 · \(settings.frameRate) fps")
             row("Clips", "\(model.project.clips.count)")
         }
 
+    }
+
+    // MARK: Frame
+
+    /// Full 9:16 for Reels and Stories, or the centre 4:5 the feed shows (the dashed lines in the viewer).
+    private func framePicker(_ settings: ExportSettings) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("FRAME").font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
+            option(
+                "Reels · Stories  9:16", "The whole vertical frame.", isOn: !settings.cutsToFeed
+            ) { model.setFeedCut(false) }
+            option(
+                "Feed  4:5", "The centre of the frame, between the viewer's dashed lines. 1080×1350.",
+                isOn: settings.cutsToFeed
+            ) { model.setFeedCut(true) }
+        }
+        .disabled(isExporting)
+    }
+
+    /// One choice in a list: an LED, a title and a line of detail.
+    private func option(_ title: String, _ detail: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            Haptics.detent()
+        } label: {
+            HStack(spacing: 10) {
+                LED(isOn: isOn)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.label)
+                    Text(detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.secondaryLabel)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 6)
+            .frame(minHeight: Theme.minTouch)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
     // MARK: Sound
@@ -64,29 +113,7 @@ struct ExportSheet: View {
         return VStack(alignment: .leading, spacing: 6) {
             Text("SOUND").font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
             ForEach(policies, id: \.self) { policy in
-                Button {
-                    model.setSoundPolicy(policy)
-                    Haptics.detent()
-                } label: {
-                    HStack(spacing: 10) {
-                        LED(isOn: current == policy)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(title(policy))
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(Theme.label)
-                            Text(detail(policy))
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.secondaryLabel)
-                                .multilineTextAlignment(.leading)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.vertical, 6)
-                    .frame(minHeight: Theme.minTouch)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(current == policy ? .isSelected : [])
+                option(title(policy), detail(policy), isOn: current == policy) { model.setSoundPolicy(policy) }
             }
         }
         .disabled(isExporting)
@@ -109,23 +136,53 @@ struct ExportSheet: View {
         }
     }
 
-    // MARK: Sync note
+    // MARK: Instagram handoff
 
-    /// Where the song sits against the video, for lining up the same song inside Instagram by hand.
-    private func syncNote(_ note: MusicSyncNote) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("MUSIC SYNC").font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
-            Text(note.instruction).font(Theme.mono(13)).foregroundStyle(Theme.label)
+    /// Where the song starts, big, and how to line the same song up in Instagram by hand: apps
+    /// can't attach Instagram's licensed music or set its start.
+    private func handoff(_ note: MusicSyncNote) -> some View {
+        let start = MusicSyncNote.clock(note.songStartSeconds)
+        let song = note.referenceFilename
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("INSTAGRAM HANDOFF").font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
+            HStack(alignment: .firstTextBaseline) {
+                Text("SONG STARTS AT").font(Theme.mono(10, weight: .bold)).foregroundStyle(Theme.secondaryLabel)
+                Spacer()
+                Text(start)
+                    .font(Theme.mono(30, weight: .bold))
+                    .foregroundStyle(Theme.signal)
+                    .shadow(color: Theme.signal.opacity(0.5), radius: 6)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .recessed(padding: 0)
+            .accessibilityElement(children: .combine)
+            if model.project.exportSoundPolicy == .silent {
+                VStack(alignment: .leading, spacing: 6) {
+                    step(1, "Render, then save the silent video to Photos.")
+                    step(2, "In Instagram, make a Reel with it and add \u{201C}\(song)\u{201D}.")
+                    step(3, "Drag the song so it starts at \(start).")
+                }
+            } else {
+                Text(note.instruction).font(.system(size: 13)).foregroundStyle(Theme.label)
+            }
             Text(note.caveat)
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.secondaryLabel)
-            Button(copiedSync ? "Copied" : "Copy") {
+            Button(copiedSync ? "Copied" : "Copy song start") {
                 UIPasteboard.general.string = note.instruction
                 copiedSync = true
                 Haptics.success()
             }
             .buttonStyle(.instrument())
             .accessibilityLabel("Copy sync instruction")
+        }
+    }
+
+    private func step(_ number: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(number)").font(Theme.mono(11, weight: .bold)).foregroundStyle(Theme.signal)
+            Text(text).font(.system(size: 13)).foregroundStyle(Theme.label)
         }
     }
 
@@ -164,7 +221,7 @@ struct ExportSheet: View {
                     Button(savedToPhotos ? "Saved to Photos" : "Save to Photos") {
                         Task {
                             do {
-                                try await ExportService.saveToPhotos(url)
+                                photosIdentifier = try await ExportService.saveToPhotos(url)
                                 savedToPhotos = true
                                 Haptics.success()
                             } catch {
@@ -179,8 +236,19 @@ struct ExportSheet: View {
                     Button("Again") {
                         phase = .ready
                         savedToPhotos = false
+                        photosIdentifier = nil
                     }
                     .buttonStyle(.instrument())
+                }
+                // Once it's in Photos, Instagram can open on it (shown only when Instagram is installed).
+                if savedToPhotos, let instagram = ExportService.instagramURL(forPhotosAsset: photosIdentifier) {
+                    Button {
+                        openURL(instagram)
+                    } label: {
+                        Label("Open Instagram", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.instrument(.prominent))
+                    .accessibilityHint("Opens Instagram on the video you just saved, to add the song.")
                 }
                 if let noteURL = result.syncNoteURL {
                     ShareLink(item: noteURL) { Label("Share sync file (.json)", systemImage: "doc.text") }

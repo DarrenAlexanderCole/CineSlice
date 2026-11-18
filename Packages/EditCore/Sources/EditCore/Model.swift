@@ -251,16 +251,23 @@ public struct ExportSettings: Codable, Hashable, Sendable {
     public var frameRate: Int
     /// nil until the user picks one; see `Project.exportSoundPolicy` for the default.
     public var soundPolicy: SoundPolicy?
+    /// A vertical sequence exported for the feed: the centre 4:5 of the 9:16 frame (the part a
+    /// feed shows), at the same width. Ignored for a horizontal sequence.
+    public var cutsToFeed: Bool
 
-    public init(width: Int = 1080, height: Int = 1920, frameRate: Int = 30, soundPolicy: SoundPolicy? = nil) {
+    public init(
+        width: Int = 1080, height: Int = 1920, frameRate: Int = 30, soundPolicy: SoundPolicy? = nil,
+        cutsToFeed: Bool = false
+    ) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
         self.soundPolicy = soundPolicy
+        self.cutsToFeed = cutsToFeed
     }
 
     enum CodingKeys: String, CodingKey {
-        case width, height, frameRate, soundPolicy
+        case width, height, frameRate, soundPolicy, cutsToFeed
         /// Phase 1: false meant a silent export.
         case includeClipAudio
     }
@@ -277,6 +284,7 @@ public struct ExportSettings: Codable, Hashable, Sendable {
             let clipAudio = try c.decodeIfPresent(Bool.self, forKey: .includeClipAudio) ?? true
             soundPolicy = clipAudio ? nil : .silent
         }
+        cutsToFeed = try c.decodeIfPresent(Bool.self, forKey: .cutsToFeed) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -285,7 +293,18 @@ public struct ExportSettings: Codable, Hashable, Sendable {
         try c.encode(height, forKey: .height)
         try c.encode(frameRate, forKey: .frameRate)
         try c.encodeIfPresent(soundPolicy, forKey: .soundPolicy)
+        if cutsToFeed { try c.encode(true, forKey: .cutsToFeed) }
     }
+
+    /// Whether the export is the feed's 4:5 cut of a vertical sequence.
+    public var exportsFeedCut: Bool { cutsToFeed && !isLandscape }
+
+    /// The exported file's frame: the sequence frame, or its centre 4:5 for the feed.
+    public var outputWidth: Int { width }
+    public var outputHeight: Int { exportsFeedCut ? width * 5 / 4 : height }
+
+    /// The exported frame's shape, e.g. "9:16", "4:5".
+    public var outputAspectLabel: String { exportsFeedCut ? "4:5" : aspectLabel }
 
     public static let vertical1080 = ExportSettings()
 

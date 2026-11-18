@@ -173,6 +173,7 @@ final class WorkspaceModel {
         shape.automation = Automation()
         shape.loop = nil
         shape.exportSettings.soundPolicy = nil  // preview always plays the full mix; the policy is export-only
+        shape.exportSettings.cutsToFeed = false  // preview shows the whole frame, with the feed's cut marked
         return shape
     }
 
@@ -440,6 +441,11 @@ final class WorkspaceModel {
         cropDraft = nil
         perform(SetCropCommand(clipID: id, crop: nil))
         Haptics.press()
+    }
+    func setFeedCut(_ on: Bool) {
+        var settings = project.exportSettings
+        settings.cutsToFeed = on
+        perform(SetExportSettingsCommand(settings: settings))
     }
     func setSoundPolicy(_ policy: SoundPolicy) {
         var settings = project.exportSettings

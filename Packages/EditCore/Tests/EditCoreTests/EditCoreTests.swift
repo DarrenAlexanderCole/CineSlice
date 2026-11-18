@@ -192,6 +192,19 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertNil(p.clips[0].crop)
     }
 
+    func testFeedCutIsTheCentreFourByFiveOfAVerticalFrame() throws {
+        var settings = ExportSettings.vertical1080
+        settings.cutsToFeed = true
+        XCTAssertEqual([settings.outputWidth, settings.outputHeight], [1080, 1350])
+        XCTAssertEqual(settings.outputAspectLabel, "4:5")
+        let data = try JSONEncoder().encode(settings)
+        XCTAssertEqual(try JSONDecoder().decode(ExportSettings.self, from: data), settings)
+        // A horizontal sequence has no feed cut.
+        let turned = settings.oriented(landscape: true)
+        XCTAssertFalse(turned.exportsFeedCut)
+        XCTAssertEqual([turned.outputWidth, turned.outputHeight], [1920, 1080])
+    }
+
     func testOlderFileWithMissingFieldsDecodes() throws {
         let json = """
             {"id":"\(UUID().uuidString)","name":"Old","createdAt":0}

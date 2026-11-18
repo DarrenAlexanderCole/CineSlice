@@ -59,6 +59,9 @@ targets:
         UIRequiresFullScreen: true
         UIUserInterfaceStyle: Dark
         NSPhotoLibraryAddUsageDescription: Pocket Instrument saves your finished exports to Photos.
+        # Only to show "Open Instagram" after saving, when Instagram is installed.
+        LSApplicationQueriesSchemes:
+          - instagram
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.studio4.pocketinstrument

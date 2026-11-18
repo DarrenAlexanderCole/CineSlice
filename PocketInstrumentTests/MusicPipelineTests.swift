@@ -462,6 +462,40 @@ final class MusicPipelineTests: XCTestCase {
         }
     }
 
+    /// The feed cut keeps the centre 4:5 of the 9:16 frame. The still has red bands at its top and
+    /// bottom, inside the part the feed drops, so the cut file's edges are green.
+    func testFeedExportIsTheCentreFourByFive() async throws {
+        let banded = UIGraphicsImageRenderer(size: CGSize(width: 540, height: 960)).image { ctx in
+            UIColor.green.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 540, height: 960))
+            UIColor.red.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 540, height: 110))
+            ctx.fill(CGRect(x: 0, y: 850, width: 540, height: 110))
+        }
+        var project = try store.create(name: "Feed")
+        let source = try await MediaImporter.adoptStill(
+            imageData: try XCTUnwrap(banded.pngData()), originalName: "Bands", label: "Bands", store: store,
+            projectID: project.id)
+        try AddClipsCommand(sources: [source]).apply(to: &project)
+        var settings = project.exportSettings
+        settings.cutsToFeed = true
+        try SetExportSettingsCommand(settings: settings).apply(to: &project)
+        try store.save(project)
+
+        let result = try await ExportService.export(project: project, store: store) { _ in }
+        let asset = AVURLAsset(url: result.videoURL)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let video = try XCTUnwrap(tracks.first)
+        let size = try await video.load(.naturalSize)
+        XCTAssertEqual(size, CGSize(width: 1080, height: 1350))
+        let generator = AVAssetImageGenerator(asset: asset)
+        let frame = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
+        for y in [0.02, 0.5, 0.98] {
+            let (r, g, _) = try pixel(frame, x: 0.5, y: y)
+            XCTAssertGreaterThan(g, r + 100, "the feed cut at \(y) should be the green centre")
+        }
+    }
+
     /// The colour at a fraction of the way across and down an image.
     private func pixel(_ image: CGImage, x: Double, y: Double) throws -> (Int, Int, Int) {
         var rgba = [UInt8](repeating: 0, count: 4)
