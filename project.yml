@@ -62,12 +62,14 @@ targets:
         UIRequiresFullScreen: true
         UIUserInterfaceStyle: Dark
         NSPhotoLibraryAddUsageDescription: CineSlice saves your finished exports to Photos.
+        # No encryption beyond what iOS itself provides, so uploads skip the export-compliance question.
+        ITSAppUsesNonExemptEncryption: false
         # Only to show "Open Instagram" after saving, when Instagram is installed.
         LSApplicationQueriesSchemes:
           - instagram
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.pocketinstrument
+        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.cineslice
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
         # The lint script reads the whole source tree, which the script sandbox would block.
@@ -87,7 +89,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.pocketinstrument.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.cineslice.tests
 
   # Taps through the workspace states and attaches a screenshot of each (layout check).
   PocketInstrumentUITests:
@@ -100,6 +102,6 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.pocketinstrument.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.studio4.cineslice.uitests
 
 # Core logic tests run without Xcode: cd Packages/EditCore && swift test
