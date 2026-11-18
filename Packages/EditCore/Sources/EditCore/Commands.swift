@@ -216,18 +216,33 @@ public struct SetLoopCommand: EditingCommand {
     }
 }
 
-/// Records one fader pass into a curve, replacing whatever it overlaps (one undo step).
+/// Records one fader pass, or one stroke drawn by finger, into a curve, replacing whatever it
+/// overlaps (one undo step). A drawn stroke is smoothed more, since a finger wobbles.
 public struct WriteAutomationCommand: EditingCommand {
     public let target: AutomationTarget
     public let samples: [AutomationPoint]
-    public init(target: AutomationTarget, samples: [AutomationPoint]) {
+    public let drawn: Bool
+    public init(target: AutomationTarget, samples: [AutomationPoint], drawn: Bool = false) {
         self.target = target
         self.samples = samples
+        self.drawn = drawn
     }
-    public var actionName: String { target == .music ? "Record Music Level" : "Record Clip Level" }
+    public var actionName: String {
+        switch (target, drawn) {
+        case (.music, false): "Record Music Level"
+        case (.clipAudio, false): "Record Clip Level"
+        case (.music, true): "Draw Music Curve"
+        case (.clipAudio, true): "Draw Clip Curve"
+        }
+    }
     public func apply(to project: inout Project) throws {
         if target == .music, project.referenceAudio == nil { throw EditError.sourceNotFound }
-        guard let pass = AutomationSegment(recorded: samples, sequenceDuration: project.duration) else {
+        let tolerance = drawn ? AutomationLane.drawnTolerance : AutomationLane.tolerance
+        guard
+            let pass = AutomationSegment(
+                recorded: drawn ? smoothed(samples) : samples, sequenceDuration: project.duration,
+                tolerance: tolerance)
+        else {
             throw EditError.invalidRange
         }
         switch target {
@@ -261,6 +276,53 @@ public struct TrimAutomationCommand: EditingCommand {
             shifted = project.clips[i].levelCurve.shiftPass(containing: time, by: delta)
         }
         guard shifted else { throw EditError.invalidRange }
+    }
+}
+
+/// Edits one point of a curve by hand. Points are named by pass and index in the curve's own
+/// time (composition time for the music, the clip's source time for a clip, which bounds it).
+public struct EditCurvePointCommand: EditingCommand {
+    public enum Edit: Hashable, Sendable {
+        case move(segment: Int, point: Int, to: AutomationPoint)
+        case add(AutomationPoint)
+        case remove(segment: Int, point: Int)
+    }
+
+    public let target: AutomationTarget
+    public let clipID: UUID?
+    public let edit: Edit
+    public init(target: AutomationTarget, clipID: UUID? = nil, edit: Edit) {
+        self.target = target
+        self.clipID = clipID
+        self.edit = edit
+    }
+    public var actionName: String {
+        switch edit {
+        case .move: "Move Curve Point"
+        case .add: "Add Curve Point"
+        case .remove: "Delete Curve Point"
+        }
+    }
+    public func apply(to project: inout Project) throws {
+        let done: Bool
+        switch target {
+        case .music:
+            guard project.referenceAudio != nil else { throw EditError.sourceNotFound }
+            done = Self.apply(
+                edit, to: &project.automation.music, within: MediaTimeRange(start: .zero, end: project.duration))
+        case .clipAudio:
+            guard let clipID, let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
+            done = Self.apply(edit, to: &project.clips[i].levelCurve, within: project.clips[i].sourceRange)
+        }
+        guard done else { throw EditError.invalidRange }
+    }
+
+    private static func apply(_ edit: Edit, to lane: inout AutomationLane, within bounds: MediaTimeRange) -> Bool {
+        switch edit {
+        case .move(let s, let p, let point): lane.movePoint(segment: s, point: p, to: point, within: bounds)
+        case .add(let point): lane.addPoint(point, within: bounds)
+        case .remove(let s, let p): lane.removePoint(segment: s, point: p)
+        }
     }
 }
 

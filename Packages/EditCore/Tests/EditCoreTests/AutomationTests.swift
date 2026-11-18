@@ -310,6 +310,88 @@ final class AutomationTests: XCTestCase {
         XCTAssertEqual(p.referenceAudio?.offset, t(2))
     }
 
+    // MARK: Editing points
+
+    private func edit(
+        _ edit: EditCurvePointCommand.Edit, _ target: AutomationTarget = .music, clip: UUID? = nil,
+        in p: inout Project
+    ) throws {
+        try EditCurvePointCommand(target: target, clipID: clip, edit: edit).apply(to: &p)
+    }
+
+    func testMovingAPointStaysBetweenItsNeighbours() throws {
+        var p = project()
+        try write(.music, [point(2, 0.5), point(4, 0.2), point(6, 0.5)], to: &p)
+        try edit(.move(segment: 0, point: 1, to: point(3, 0.9)), in: &p)
+        XCTAssertEqual(p.automation.music.segments[0].points, [point(2, 0.5), point(3, 0.9), point(6, 0.5)])
+        // Dragged past the next point (and above full level), it stops just short of it.
+        try edit(.move(segment: 0, point: 1, to: point(8, 1.4)), in: &p)
+        let moved = p.automation.music.segments[0].points[1]
+        XCTAssertEqual(moved.time, t(6) - AutomationLane.pointGap)
+        XCTAssertEqual(moved.value, 1)
+    }
+
+    func testAPassEndStopsAtTheNextPass() throws {
+        var p = project()
+        try write(.music, [point(1, 0.5), point(2, 0.5)], to: &p)
+        try write(.music, [point(4, 0.2), point(5, 0.2)], to: &p)
+        try edit(.move(segment: 0, point: 1, to: point(7, 0.5)), in: &p)
+        XCTAssertEqual(p.automation.music.segments[0].end, t(4))
+        XCTAssertEqual(p.automation.music.segments[1].start, t(4))
+    }
+
+    func testAddingAPointBendsThePassOrStartsAShortOne() throws {
+        var p = project()
+        try write(.music, [point(2, 0.5), point(6, 0.5)], to: &p)
+        try edit(.add(point(4, 0.1)), in: &p)
+        XCTAssertEqual(p.automation.music.segments[0].points, [point(2, 0.5), point(4, 0.1), point(6, 0.5)])
+        XCTAssertEqual(p.levelEnvelope(for: .music).first { $0.time == t(4) }?.value, 0.1)
+        // Between passes: a one-second flat pass at that level, cut short by the pass beside it.
+        try edit(.add(point(8, 0.3)), in: &p)
+        XCTAssertEqual(p.automation.music.segments[1].points, [point(7.5, 0.3), point(8.5, 0.3)])
+        try edit(.add(point(6.2, 0.7)), in: &p)
+        XCTAssertEqual(p.automation.music.segments[1].points, [point(6, 0.7), point(6.7, 0.7)])
+    }
+
+    func testRemovingPointsAndTheLastTwoRemovesThePass() throws {
+        var p = project()
+        var undo = UndoStack()
+        try write(.music, [point(2, 0.5), point(4, 0.2), point(6, 0.5)], to: &p)
+        try undo.perform(EditCurvePointCommand(target: .music, edit: .remove(segment: 0, point: 1)), on: &p)
+        XCTAssertEqual(p.automation.music.segments[0].points, [point(2, 0.5), point(6, 0.5)])
+        try undo.perform(EditCurvePointCommand(target: .music, edit: .remove(segment: 0, point: 0)), on: &p)
+        XCTAssertTrue(p.automation.music.isEmpty)
+        XCTAssertThrowsError(try edit(.remove(segment: 0, point: 0), in: &p))
+        XCTAssertEqual(undo.undo(&p), "Delete Curve Point")
+        XCTAssertEqual(undo.undo(&p), "Delete Curve Point")
+        XCTAssertEqual(p.automation.music.segments[0].points, [point(2, 0.5), point(4, 0.2), point(6, 0.5)])
+    }
+
+    func testADrawnStrokeReplacesWhatItCrossesAndIsSmoothedMore() throws {
+        var p = project()
+        var undo = UndoStack()
+        try write(.music, [point(1, 0.5), point(9, 0.5)], to: &p)
+        // A wobbly finger: a rise from 20% to 80% with ±2% jitter.
+        let stroke = samples(3, 6) { s in Float(0.2 + 0.2 * (s - 3)) + (Int(s * 30) % 2 == 0 ? 0.02 : -0.02) }
+        try undo.perform(WriteAutomationCommand(target: .music, samples: stroke, drawn: true), on: &p)
+        XCTAssertEqual(undo.undoActionName, "Draw Music Curve")
+        let lane = p.automation.music
+        XCTAssertEqual(lane.segments.map(\.start), [t(1), t(3), stroke.last!.time])
+        XCTAssertLessThanOrEqual(lane.segments[1].points.count, 3, "jitter under 3% is smoothed away")
+        XCTAssertEqual(lane.value(at: t(4.5))!, 0.5, accuracy: 0.03)
+    }
+
+    func testClipPointsStayInsideTheClip() throws {
+        var p = project(clips: [(10, 1)])
+        let id = p.clips[0].id
+        try TrimClipCommand(clipID: id, sourceRange: MediaTimeRange(start: t(2), end: t(8))).apply(to: &p)
+        try edit(.add(point(5, 0.4)), .clipAudio, clip: id, in: &p)
+        XCTAssertEqual(p.clips[0].levelCurve.segments[0].points, [point(4.5, 0.4), point(5.5, 0.4)])
+        try edit(.move(segment: 0, point: 0, to: point(0, 0.4)), .clipAudio, clip: id, in: &p)
+        XCTAssertEqual(p.clips[0].levelCurve.segments[0].start, t(2))
+        XCTAssertThrowsError(try edit(.add(point(9, 0.4)), .clipAudio, clip: id, in: &p))
+    }
+
     // MARK: Persistence
 
     func testCurvesPersist() throws {

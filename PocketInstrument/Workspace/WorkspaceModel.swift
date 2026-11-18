@@ -27,7 +27,10 @@ final class WorkspaceModel {
     private(set) var mode: Mode = .arrange
     var selectedClipID: UUID? {
         // The CLIP fader resets on a new clip without a release, so a trim in progress ends here.
-        didSet { if curveTrim?.target == .clipAudio { curveTrim = nil } }
+        didSet {
+            if curveTrim?.target == .clipAudio { curveTrim = nil }
+            if curveEditTarget == .clipAudio { curveDraft = nil }
+        }
     }
     /// Explore only: loops the clip's in/out range. Arrange and Mix use the project's loop region.
     var loopSelection = false { didSet { updateLoopRange() } }
@@ -271,6 +274,7 @@ final class WorkspaceModel {
     func setMode(_ newMode: Mode) {
         guard newMode != mode else { return }
         Haptics.detent()
+        if newMode != .mix { curveEditTarget = nil }
         switch newMode {
         case .explore:
             enterExplore()
@@ -421,12 +425,165 @@ final class WorkspaceModel {
     }
     private(set) var curveTrim: CurveTrim?
 
-    /// The project as heard and drawn right now: with a curve trim in progress applied.
+    /// The project as heard and drawn right now: with a curve trim or point drag in progress applied.
     var mixProject: Project {
-        guard let curveTrim, curveTrim.delta != 0 else { return project }
-        var trimmed = project
-        try? curveTrim.command.apply(to: &trimmed)
-        return trimmed
+        guard curveTrim.map({ $0.delta != 0 }) ?? false || curveDraft != nil else { return project }
+        var drafted = project
+        if let curveTrim, curveTrim.delta != 0 { try? curveTrim.command.apply(to: &drafted) }
+        if let curveDraft { try? curveDraft.apply(to: &drafted) }
+        return drafted
+    }
+
+    // MARK: Editing curve points
+
+    /// Mix: the curve being edited by hand in the lane (the selected clip's for clip sound), or
+    /// nil when the lane scrubs and slides as usual.
+    var curveEditTarget: AutomationTarget? {
+        didSet {
+            curveDraft = nil
+            if curveEditTarget != nil, engine.isPlaying { engine.pause() }
+        }
+    }
+    /// A point being dragged or a stroke being drawn, heard and shown live; committed on
+    /// release as one undo step.
+    private(set) var curveDraft: (any EditingCommand)?
+    /// The stroke being drawn, in composition time and in time order.
+    @ObservationIgnored private var stroke: [AutomationPoint] = []
+    @ObservationIgnored private var strokeLast: AutomationPoint?
+
+    /// One stored point of the edited curve, placed in composition time.
+    struct CurveHandle: Hashable {
+        let segment: Int
+        let point: Int
+        let position: AutomationPoint
+    }
+
+    /// The edited curve's points where they play (with a drag in progress applied). A clip's
+    /// points outside its In–Out don't play, so they aren't offered.
+    var curveHandles: [CurveHandle] {
+        guard let target = curveEditTarget else { return [] }
+        let shown = mixProject
+        switch target {
+        case .music:
+            return shown.automation.music.segments.enumerated().flatMap { s, segment in
+                segment.points.enumerated().map { p, point in CurveHandle(segment: s, point: p, position: point) }
+            }
+        case .clipAudio:
+            guard let id = selectedClipID, let clip = shown.clip(id: id) else { return [] }
+            return clip.levelCurve.segments.enumerated().flatMap { s, segment in
+                segment.points.enumerated().compactMap { p, point in
+                    guard clip.sourceRange.contains(point.time) || point.time == clip.sourceRange.end,
+                        let time = compositionTime(ofSource: point.time)
+                    else { return nil }
+                    return CurveHandle(segment: s, point: p, position: AutomationPoint(time: time, value: point.value))
+                }
+            }
+        }
+    }
+
+    /// Where a point may go, in composition time: the whole sequence, or the selected clip.
+    var curveEditRange: MediaTimeRange? {
+        switch curveEditTarget {
+        case .music: MediaTimeRange(start: .zero, end: project.duration)
+        case .clipAudio: selectedClipID.flatMap { sequenceMap.entry(for: $0)?.compositionRange }
+        case nil: nil
+        }
+    }
+
+    /// Draws the edited curve by finger: each move adds the finger's position, and sweeping back
+    /// over part of the stroke redraws it. Replaces what it passes over (drafted until
+    /// `commitCurveDraft`), held to the selected clip for clip sound.
+    func drawCurve(to position: AutomationPoint) {
+        guard let target = curveEditTarget, let range = curveEditRange else { return }
+        if engine.isPlaying { engine.pause() }
+        let point = AutomationPoint(
+            time: position.time.clamped(to: range.start, range.end), value: min(max(position.value, 0), 1))
+        if let last = strokeLast {
+            let lower = min(last.time, point.time)
+            let upper = max(last.time, point.time)
+            stroke.removeAll { $0.time == point.time || ($0.time > lower && $0.time < upper) }
+        }
+        stroke.insert(point, at: stroke.firstIndex { $0.time > point.time } ?? stroke.count)
+        strokeLast = point
+        curveDraft = WriteAutomationCommand(target: target, samples: stroke, drawn: true)
+        applyLevels()
+    }
+
+    /// Drags a point to a composition-time position (drafted until `commitCurveDraft`).
+    func dragCurvePoint(_ handle: CurveHandle, to position: AutomationPoint) {
+        guard let target = curveEditTarget, let point = curvePoint(position) else { return }
+        if engine.isPlaying { engine.pause() }
+        curveDraft = EditCurvePointCommand(
+            target: target, clipID: target == .clipAudio ? selectedClipID : nil,
+            edit: .move(segment: handle.segment, point: handle.point, to: point))
+        applyLevels()
+    }
+
+    func commitCurveDraft() {
+        stroke = []
+        strokeLast = nil
+        guard let draft = curveDraft else { return }
+        curveDraft = nil
+        // A stroke that never spanned two moments draws nothing.
+        if let write = draft as? WriteAutomationCommand,
+            AutomationSegment(recorded: write.samples, sequenceDuration: project.duration) == nil
+        {
+            applyLevels()
+            return
+        }
+        perform(draft)
+        applyLevels()
+        Haptics.detent()
+    }
+
+    /// Adds a point at a composition-time position: it bends the pass there, or starts a short one.
+    func addCurvePoint(_ position: AutomationPoint) {
+        guard let target = curveEditTarget, let point = curvePoint(position),
+            let range = curveEditRange, range.contains(position.time) || position.time == range.end
+        else {
+            Haptics.warning()
+            return
+        }
+        perform(
+            EditCurvePointCommand(
+                target: target, clipID: target == .clipAudio ? selectedClipID : nil, edit: .add(point)))
+        applyLevels()
+        Haptics.press()
+    }
+
+    func removeCurvePoint(_ handle: CurveHandle) {
+        guard let target = curveEditTarget else { return }
+        perform(
+            EditCurvePointCommand(
+                target: target, clipID: target == .clipAudio ? selectedClipID : nil,
+                edit: .remove(segment: handle.segment, point: handle.point)))
+        applyLevels()
+        Haptics.detent()
+    }
+
+    /// A composition-time position in the edited curve's own time.
+    private func curvePoint(_ position: AutomationPoint) -> AutomationPoint? {
+        switch curveEditTarget {
+        case .music:
+            return position
+        case .clipAudio:
+            guard let id = selectedClipID, let entry = sequenceMap.entry(for: id) else { return nil }
+            let local =
+                position.time.clamped(to: entry.compositionRange.start, entry.compositionRange.end)
+                - entry.compositionRange.start
+            return AutomationPoint(
+                time: entry.sourceStart + (entry.speed == 1 ? local : local.scaled(by: entry.speed)),
+                value: position.value)
+        case nil:
+            return nil
+        }
+    }
+
+    /// The composition time at which the selected clip plays a moment of its source.
+    private func compositionTime(ofSource time: MediaTime) -> MediaTime? {
+        guard let id = selectedClipID, let entry = sequenceMap.entry(for: id) else { return nil }
+        let local = time - entry.sourceStart
+        return entry.compositionRange.start + (entry.speed == 1 ? local : local.scaled(by: 1 / entry.speed))
     }
     @ObservationIgnored private var recordLevel: Float = 0
     @ObservationIgnored private var recordTask: Task<Void, Never>?

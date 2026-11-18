@@ -10,6 +10,7 @@ import SwiftUI
 /// inside a recorded pass the fader follows the curve and reads AUTO, and with Write off, moving
 /// it there raises or lowers that whole pass (shape kept). A CLIP ride writes onto
 /// each clip it plays over, and the fader names the clip under the playhead while it records.
+/// The Edit key opens a curve for hand editing in the lane, point by point.
 struct MixDeck: View {
     var model: WorkspaceModel
     var onAddMusicFile: () -> Void
@@ -26,6 +27,7 @@ struct MixDeck: View {
             MixClipPicker(model: model)
             HStack(spacing: 10) {
                 WriteKey(model: model)
+                EditKey(model: model)
                 ClearKey(model: model)
                 Fader(
                     title: faderTitle(clipFaderTitle, .clipAudio), value: model.faderLevel(.clipAudio),
@@ -190,6 +192,60 @@ private struct WriteKey: View {
         .accessibilityLabel("Write automation")
         .accessibilityValue(isRecording ? "Recording" : isOn ? "On" : "Off")
         .accessibilityHint("When on, moving a fader during playback records it.")
+    }
+}
+
+/// Opens the music curve or the selected clip's curve for editing point by point in the lane;
+/// lit while editing, when a tap closes it again.
+private struct EditKey: View {
+    var model: WorkspaceModel
+
+    var body: some View {
+        if let target = model.curveEditTarget {
+            Button {
+                model.curveEditTarget = nil
+                Haptics.tap()
+            } label: {
+                KeyFace(systemImage: "point.topleft.down.to.point.bottomright.curvepath.fill", isLit: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Edit curve")
+            .accessibilityValue(target == .music ? "Editing music curve" : "Editing \(clipTitle.lowercased()) curve")
+            .accessibilityHint("Stops editing the curve.")
+        } else {
+            Menu {
+                Button {
+                    open(.clipAudio)
+                } label: {
+                    Label("Edit \(clipTitle.lowercased()) curve", systemImage: "film")
+                }
+                .disabled(model.selectedClip == nil)
+                Button {
+                    open(.music)
+                } label: {
+                    Label("Edit music curve", systemImage: "music.note")
+                }
+                .disabled(model.project.referenceAudio == nil)
+            } label: {
+                KeyFace(systemImage: "point.topleft.down.to.point.bottomright.curvepath", isLit: false)
+            }
+            .disabled(model.project.clips.isEmpty)
+            .accessibilityLabel("Edit curve")
+            .accessibilityValue("Off")
+            .accessibilityHint(
+                "Drag points to move them, tap the curve band to add one, double-tap a point to delete it.")
+        }
+    }
+
+    private func open(_ target: AutomationTarget) {
+        model.isWriting = false
+        model.curveEditTarget = target
+        Haptics.tap()
+    }
+
+    private var clipTitle: String {
+        guard let id = model.selectedClipID, let index = model.project.index(ofClip: id) else { return "Clip" }
+        return String(format: "Clip %02d", index + 1)
     }
 }
 

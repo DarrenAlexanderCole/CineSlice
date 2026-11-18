@@ -12,6 +12,10 @@ import SwiftUI
 /// Pinch or the zoom key magnifies the lane around the playhead, for lining music up
 /// closer than a frame-sized sliver of the whole sequence. Zoomed, scrubbing drags the
 /// sequence under a fixed view like tape, and every drag moves time in finer steps.
+///
+/// While a curve is being edited by hand (`WorkspaceModel.curveEditTarget`), the curve band
+/// grows and takes the touches: drag a point to move it, drag anywhere else to draw the
+/// curve by finger, tap the band to add a point, and double-tap a point to delete it. The clip band still scrubs.
 struct SequenceLane: View {
     enum WaveformDrag { case scrub, slideMusic }
 
@@ -21,7 +25,7 @@ struct SequenceLane: View {
     var showsAutomation = false
 
     private let rulerHeight: CGFloat = 22
-    private let waveHeight: CGFloat = 46
+    private var waveHeight: CGFloat { isEditingCurve ? 112 : 46 }
     private let bandGap: CGFloat = 2
     private let snapDistance: CGFloat = 10
 
@@ -31,9 +35,14 @@ struct SequenceLane: View {
     @State private var offsetDragBase: MediaTime = .zero
     @State private var scrubBase: MediaTime?
     @State private var pinchBase: Double?
+    @State private var pointGrab: PointGrab?
+    @State private var lastPointTap: (handle: WorkspaceModel.CurveHandle, at: Date)?
 
     private var music: AudioTrack? { model.project.referenceAudio }
-    private var totalHeight: CGFloat { rulerHeight + (music == nil ? 0 : bandGap + waveHeight) }
+    private var isEditingCurve: Bool { showsAutomation && model.curveEditTarget != nil }
+    /// Below the clip band: the music's waveform, or an empty curve band while editing a clip curve.
+    private var hasBand: Bool { music != nil || isEditingCurve }
+    private var totalHeight: CGFloat { rulerHeight + (hasBand ? bandGap + waveHeight : 0) }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -50,13 +59,21 @@ struct SequenceLane: View {
                 if let music {
                     waveBand(music, width: width)
                         .offset(y: rulerHeight + bandGap)
+                } else if isEditingCurve {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Theme.obsidian)
+                        .frame(width: width, height: waveHeight)
+                        .offset(y: rulerHeight + bandGap)
                 }
                 clipTicks(width: width)
                 if showsAutomation {
-                    let bandHeight = music == nil ? rulerHeight : waveHeight
+                    let bandHeight = hasBand ? waveHeight : rulerHeight
                     AutomationCurves(model: model, window: window)
                         .frame(width: width, height: bandHeight)
-                        .offset(y: music == nil ? 0 : rulerHeight + bandGap)
+                        .offset(y: hasBand ? rulerHeight + bandGap : 0)
+                }
+                if isEditingCurve {
+                    curveEditor(width: width)
+                        .offset(y: rulerHeight + bandGap)
                 }
                 if let loop = draftLoop ?? model.activeLoop?.range {
                     loopBracket(loop, width: width)
@@ -307,6 +324,138 @@ struct SequenceLane: View {
                 draftOffset = nil
                 Haptics.detent()
             }
+    }
+
+    // MARK: Curve point editing
+
+    /// A touch on the curve band: on a point (dragging it once it moves), or on empty band.
+    private struct PointGrab {
+        let handle: WorkspaceModel.CurveHandle?
+        var moved = false
+    }
+
+    /// How close a touch must land to pick up a point.
+    private let pointReach: CGFloat = 22
+
+    private func curveY(_ value: Float) -> CGFloat { 2 + CGFloat(1 - value) * (waveHeight - 4) }
+    private func curveValue(_ y: CGFloat) -> Float { Float(min(max(1 - (y - 2) / (waveHeight - 4), 0), 1)) }
+
+    private func curveEditor(width: CGFloat) -> some View {
+        let handles = model.curveHandles.filter {
+            let hx = x(for: $0.position.time, width)
+            return hx >= -pointReach && hx <= width + pointReach
+        }
+        let range = model.curveEditRange
+        let color = model.curveEditTarget == .music ? Theme.signal : Theme.ivory
+        return ZStack(alignment: .topLeading) {
+            // Outside the edited clip nothing can be added, so it's shaded.
+            if let range {
+                let (x0, x1) = visible(range, width)
+                Rectangle().fill(Theme.obsidian.opacity(0.55)).frame(width: max(0, x0), height: waveHeight)
+                Rectangle().fill(Theme.obsidian.opacity(0.55))
+                    .frame(width: max(0, width - x1), height: waveHeight)
+                    .offset(x: x1)
+            }
+            ForEach(handles, id: \.self) { handle in
+                let grabbed =
+                    pointGrab?.handle.map { $0.segment == handle.segment && $0.point == handle.point } ?? false
+                Circle()
+                    .fill(grabbed ? color : Theme.obsidian)
+                    .overlay(Circle().strokeBorder(color, lineWidth: 2))
+                    .frame(width: grabbed ? 16 : 12, height: grabbed ? 16 : 12)
+                    .frame(width: Theme.minTouch, height: Theme.minTouch)
+                    .offset(
+                        x: x(for: handle.position.time, width) - Theme.minTouch / 2,
+                        y: curveY(handle.position.value) - Theme.minTouch / 2
+                    )
+                    .accessibilityElement()
+                    .accessibilityLabel("Curve point")
+                    .accessibilityValue(
+                        String(
+                            format: "%d percent at %.2f seconds", Int((handle.position.value * 100).rounded()),
+                            handle.position.time.seconds)
+                    )
+                    .accessibilityAdjustableAction { direction in
+                        var moved = handle.position
+                        moved.value += direction == .increment ? 0.05 : -0.05
+                        model.dragCurvePoint(handle, to: moved)
+                        model.commitCurveDraft()
+                    }
+                    .accessibilityAction(named: "Delete point") { model.removeCurvePoint(handle) }
+            }
+        }
+        .frame(width: width, height: waveHeight, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .gesture(pointGesture(handles, width: width))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(model.curveEditTarget == .music ? "Music curve" : "Clip curve")
+        .accessibilityAction(named: "Add point at playhead") {
+            let t = model.currentTime
+            let level = model.mixProject.levelEnvelope(for: model.curveEditTarget ?? .music)
+            let value = level.last { $0.time <= t }?.value ?? 1
+            model.addCurvePoint(AutomationPoint(time: t, value: value))
+        }
+    }
+
+    /// Drag a point to move it; drag anywhere else to draw; tap the band to add a point;
+    /// double-tap a point to delete it.
+    private func pointGesture(_ handles: [WorkspaceModel.CurveHandle], width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                if pointGrab == nil {
+                    let nearest = handles.min {
+                        distance($0, to: g.startLocation, width) < distance($1, to: g.startLocation, width)
+                    }
+                    let hit = nearest.flatMap { distance($0, to: g.startLocation, width) <= pointReach ? $0 : nil }
+                    pointGrab = PointGrab(handle: hit)
+                    if hit != nil { Haptics.press() }
+                }
+                if !(pointGrab?.moved ?? false), hypot(g.translation.width, g.translation.height) < 3 { return }
+                if pointGrab?.moved == false {
+                    pointGrab?.moved = true
+                    if pointGrab?.handle == nil {
+                        // Off a point, a drag draws: start the stroke where the finger went down.
+                        model.drawCurve(
+                            to: AutomationPoint(
+                                time: time(at: g.startLocation.x, width), value: curveValue(g.startLocation.y)))
+                    }
+                }
+                guard let handle = pointGrab?.handle else {
+                    model.drawCurve(
+                        to: AutomationPoint(time: time(at: g.location.x, width), value: curveValue(g.location.y)))
+                    return
+                }
+                let startX = x(for: handle.position.time, width)
+                let startY = curveY(handle.position.value)
+                model.dragCurvePoint(
+                    handle,
+                    to: AutomationPoint(
+                        time: time(at: startX + g.translation.width, width),
+                        value: curveValue(startY + g.translation.height)))
+            }
+            .onEnded { g in
+                defer { pointGrab = nil }
+                guard let grab = pointGrab else { return }
+                if let handle = grab.handle {
+                    if grab.moved {
+                        model.commitCurveDraft()
+                    } else if let last = lastPointTap, last.handle == handle, Date().timeIntervalSince(last.at) < 0.4 {
+                        lastPointTap = nil
+                        model.removeCurvePoint(handle)
+                    } else {
+                        lastPointTap = (handle, Date())
+                    }
+                } else if grab.moved {
+                    model.commitCurveDraft()
+                } else {
+                    model.addCurvePoint(
+                        AutomationPoint(time: time(at: g.location.x, width), value: curveValue(g.location.y)))
+                }
+            }
+    }
+
+    private func distance(_ handle: WorkspaceModel.CurveHandle, to location: CGPoint, _ width: CGFloat) -> CGFloat {
+        hypot(x(for: handle.position.time, width) - location.x, curveY(handle.position.value) - location.y)
     }
 
     // MARK: Loop bracket

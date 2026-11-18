@@ -72,6 +72,8 @@ public struct AutomationLane: Codable, Hashable, Sendable {
 
     /// Level change below which a recorded point is dropped as redundant (1%).
     public static let tolerance: Float = 0.01
+    /// The same for a curve drawn by finger, which wobbles more than a fader (3%).
+    public static let drawnTolerance: Float = 0.03
 
     /// Replaces whatever the pass overlaps with the pass, splitting an older pass it lands inside.
     mutating func write(_ pass: AutomationSegment) {
@@ -95,6 +97,77 @@ public struct AutomationLane: Codable, Hashable, Sendable {
         for j in segments[i].points.indices {
             segments[i].points[j].value = min(max(segments[i].points[j].value + delta, 0), 1)
         }
+        return true
+    }
+
+    // MARK: Point editing
+
+    /// Closest two points may come in time, so a pass never folds back on itself.
+    static let pointGap = MediaTime(value: 1, timescale: 600)
+
+    /// Width of the flat pass a point added between passes starts as.
+    static let newPassWidth = MediaTime(seconds: 1)
+
+    /// Moves a point, held between its neighbours (and the passes either side) and inside `bounds`.
+    mutating func movePoint(
+        segment s: Int, point p: Int, to target: AutomationPoint, within bounds: MediaTimeRange
+    ) -> Bool {
+        guard segments.indices.contains(s), segments[s].points.indices.contains(p) else { return false }
+        let points = segments[s].points
+        var lower = bounds.start
+        var upper = bounds.end
+        if p > 0 {
+            lower = points[p - 1].time + Self.pointGap
+        } else if s > 0 {
+            lower = max(lower, segments[s - 1].end)
+        }
+        if p < points.count - 1 {
+            upper = points[p + 1].time - Self.pointGap
+        } else if s < segments.count - 1 {
+            upper = min(upper, segments[s + 1].start)
+        }
+        guard upper >= lower else { return false }
+        segments[s].points[p] = AutomationPoint(
+            time: target.time.clamped(to: lower, upper), value: min(max(target.value, 0), 1))
+        return true
+    }
+
+    /// Adds a point: inside a pass it bends the pass there; between passes it starts a short
+    /// flat pass at that level, fitted to the gap and `bounds`.
+    mutating func addPoint(_ point: AutomationPoint, within bounds: MediaTimeRange) -> Bool {
+        let value = min(max(point.value, 0), 1)
+        let t = point.time
+        guard t >= bounds.start, t <= bounds.end else { return false }
+        if let s = segments.firstIndex(where: { $0.start <= t && t <= $0.end }) {
+            let points = segments[s].points
+            if let same = points.firstIndex(where: { $0.time == t }) {
+                segments[s].points[same].value = value
+                return true
+            }
+            let i = points.firstIndex { $0.time > t } ?? points.count
+            guard t - points[i - 1].time >= Self.pointGap, points[i].time - t >= Self.pointGap else { return false }
+            segments[s].points.insert(AutomationPoint(time: t, value: value), at: i)
+            return true
+        }
+        let half = Self.newPassWidth.scaled(by: 0.5)
+        let before = segments.last { $0.end <= t }?.end ?? bounds.start
+        let after = segments.first { $0.start >= t }?.start ?? bounds.end
+        let start = max(t - half, max(before, bounds.start))
+        let end = min(t + half, min(after, bounds.end))
+        guard end - start >= Self.pointGap else { return false }
+        segments.append(
+            AutomationSegment(points: [
+                AutomationPoint(time: start, value: value), AutomationPoint(time: end, value: value),
+            ]))
+        segments.sort { $0.start < $1.start }
+        return true
+    }
+
+    /// Removes a point; a pass left with one point goes entirely.
+    mutating func removePoint(segment s: Int, point p: Int) -> Bool {
+        guard segments.indices.contains(s), segments[s].points.indices.contains(p) else { return false }
+        segments[s].points.remove(at: p)
+        if segments[s].points.count < 2 { segments.remove(at: s) }
         return true
     }
 }
@@ -174,8 +247,11 @@ extension Project {
 extension AutomationSegment {
     /// Cleans up raw fader samples for storage: sorted, one point per time, levels and
     /// times clamped, and points that a straight line already reproduces within
-    /// `AutomationLane.tolerance` removed. nil if fewer than two distinct times remain.
-    public init?(recorded samples: [AutomationPoint], sequenceDuration: MediaTime) {
+    /// `tolerance` removed. nil if fewer than two distinct times remain.
+    public init?(
+        recorded samples: [AutomationPoint], sequenceDuration: MediaTime,
+        tolerance: Float = AutomationLane.tolerance
+    ) {
         var points: [AutomationPoint] = []
         for sample in samples.sorted(by: { $0.time < $1.time }) {
             let point = AutomationPoint(
@@ -187,7 +263,20 @@ extension AutomationSegment {
             }
         }
         guard points.count >= 2 else { return nil }
-        self.init(points: simplify(points, tolerance: AutomationLane.tolerance))
+        self.init(points: simplify(points, tolerance: tolerance))
+    }
+}
+
+/// A finger's samples in time order with each level averaged with up to two neighbours either
+/// side, so wobble doesn't survive as jagged points. The ends keep their levels.
+func smoothed(_ samples: [AutomationPoint]) -> [AutomationPoint] {
+    let sorted = samples.sorted { $0.time < $1.time }
+    guard sorted.count > 2 else { return sorted }
+    return sorted.indices.map { i in
+        guard i > 0, i < sorted.count - 1 else { return sorted[i] }
+        let reach = min(2, i, sorted.count - 1 - i)
+        let window = sorted[(i - reach)...(i + reach)]
+        return AutomationPoint(time: sorted[i].time, value: window.map(\.value).reduce(0, +) / Float(window.count))
     }
 }
 

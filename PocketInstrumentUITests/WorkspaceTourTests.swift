@@ -225,6 +225,42 @@ final class WorkspaceTourTests: XCTestCase {
         lock.tap()
         XCTAssertTrue(button("Music one frame later").isEnabled)
 
+        // Editing the music curve by hand: tap the band to add a point, drag one, double-tap one away.
+        let edit = button("Edit curve")
+        edit.tap()
+        let editMusic = button("Edit music curve")
+        XCTAssertTrue(editMusic.waitForExistence(timeout: 5))
+        editMusic.tap()
+        let labelled = { (label: String) in
+            self.app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+        }
+        let band = labelled("Music curve").firstMatch
+        XCTAssertTrue(band.waitForExistence(timeout: 5))
+        let points = labelled("Curve point")
+        let before = points.count
+        XCTAssertGreaterThan(before, 1, "the recorded pass should show its points")
+        sleep(1)
+        shot("Editing the music curve")
+        band.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.3)).tap()
+        XCTAssertTrue(button("Undo Add Curve Point").waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(points.count, before)
+        let first = points.element(boundBy: 0)
+        let center = first.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        center.press(forDuration: 0.1, thenDragTo: center.withOffset(CGVector(dx: 12, dy: 30)))
+        XCTAssertTrue(button("Undo Move Curve Point").waitForExistence(timeout: 5))
+        shot("Music curve point moved")
+        let count = points.count
+        points.element(boundBy: 0).doubleTap()
+        XCTAssertTrue(button("Undo Delete Curve Point").waitForExistence(timeout: 5))
+        XCTAssertEqual(points.count, count - 1)
+        // Off a point (here, above the recorded pass), a drag draws the curve.
+        let from = band.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.08))
+        from.press(forDuration: 0.1, thenDragTo: band.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.6)))
+        XCTAssertTrue(button("Undo Draw Music Curve").waitForExistence(timeout: 5))
+        shot("Music curve drawn by finger")
+        edit.tap()
+        XCTAssertFalse(band.waitForExistence(timeout: 1))
+
         // Zooming the lane steps 1× → 4× → 16× and back.
         let zoom = button("Zoom sequence")
         XCTAssertEqual(zoom.value as? String, "1×")
