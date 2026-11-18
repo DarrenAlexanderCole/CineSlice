@@ -225,7 +225,7 @@ struct WorkspaceView: View {
     /// Cast into the housing's bottom rail.
     private var housingLabel: String {
         model.mode == .explore
-            ? "POCKET INSTRUMENT · SOURCE" : "POCKET INSTRUMENT · \(model.project.exportSettings.aspectLabel) VIEWER"
+            ? "CINESLICE · SOURCE" : "CINESLICE · \(model.project.exportSettings.aspectLabel) VIEWER"
     }
 
     /// Width over height of what the preview shows: the clip's source in Explore, else the sequence's frame.

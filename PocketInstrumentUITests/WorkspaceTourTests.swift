@@ -8,7 +8,22 @@ final class WorkspaceTourTests: XCTestCase {
 
     override func setUp() {
         continueAfterFailure = false
+        app.launchArguments = ["-skipIntro"]
+        guard name.contains("testIntro") == false else { return }
         app.launch()
+    }
+
+    /// The intro: shutters with the CineSlice plate, sliced, then parting on the library.
+    func testIntroOpensOnTheLibrary() {
+        app.launchArguments = ["-holdIntro"]
+        app.launch()
+        let intro = app.descendants(matching: .any)["intro"]
+        XCTAssertTrue(intro.waitForExistence(timeout: 5))
+        sleep(2)
+        shot("Intro")
+        intro.tap()
+        XCTAssertTrue(intro.waitForNonExistence(timeout: 5), "a tap should open the shutters")
+        XCTAssertTrue(button("New").isHittable)
     }
 
     private func button(_ label: String) -> XCUIElement {

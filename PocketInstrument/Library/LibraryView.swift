@@ -324,7 +324,7 @@ struct LibraryView: View {
     private var namePlate: some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
-                Text("PI")
+                Text("CS")
                     .font(.system(size: 11, weight: .heavy, design: .serif))
                     .foregroundStyle(Color(hex: 0x2A2416))
                     .padding(.horizontal, 6)
@@ -336,7 +336,7 @@ struct LibraryView: View {
                                 endPoint: .bottom))
                     )
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Pocket Instrument")
+                    Text("CineSlice")
                         .font(.system(size: 17, weight: .semibold, design: .serif).italic())
                     Text("\(library.projects.count) REELS · \(bytes(library.totalBytes))")
                         .font(Theme.mono(9, weight: .semibold))

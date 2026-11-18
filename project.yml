@@ -48,7 +48,7 @@ targets:
     info:
       path: PocketInstrument/Info.plist
       properties:
-        CFBundleDisplayName: Pocket Instrument
+        CFBundleDisplayName: CineSlice
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
@@ -58,7 +58,7 @@ targets:
           - UIInterfaceOrientationPortrait
         UIRequiresFullScreen: true
         UIUserInterfaceStyle: Dark
-        NSPhotoLibraryAddUsageDescription: Pocket Instrument saves your finished exports to Photos.
+        NSPhotoLibraryAddUsageDescription: CineSlice saves your finished exports to Photos.
         # Only to show "Open Instagram" after saving, when Instagram is installed.
         LSApplicationQueriesSchemes:
           - instagram
