@@ -96,7 +96,7 @@ struct WorkspaceView: View {
             } label: {
                 Image(systemName: "chevron.left")
             }
-            .buttonStyle(.instrument())
+            .buttonStyle(.instrument(height: 36))
             .accessibilityLabel("Projects")
             Text(model.project.name)
                 .font(.system(size: 16, weight: .semibold))
@@ -108,7 +108,7 @@ struct WorkspaceView: View {
             } label: {
                 Image(systemName: "arrow.uturn.backward")
             }
-            .buttonStyle(.instrument())
+            .buttonStyle(.instrument(height: 36))
             .disabled(model.undoName == nil)
             .accessibilityLabel(model.undoName.map { "Undo \($0)" } ?? "Undo")
             Button {
@@ -116,7 +116,7 @@ struct WorkspaceView: View {
             } label: {
                 Image(systemName: "arrow.uturn.forward")
             }
-            .buttonStyle(.instrument())
+            .buttonStyle(.instrument(height: 36))
             .disabled(model.redoName == nil)
             .accessibilityLabel(model.redoName.map { "Redo \($0)" } ?? "Redo")
             Button {
@@ -125,12 +125,12 @@ struct WorkspaceView: View {
             } label: {
                 Image(systemName: "square.and.arrow.up")
             }
-            .buttonStyle(.instrument())
+            .buttonStyle(.instrument(height: 36))
             .disabled(model.project.clips.isEmpty)
             .accessibilityLabel("Export")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
     }
 
     // MARK: Preview
@@ -142,6 +142,15 @@ struct WorkspaceView: View {
                 emptyState
             } else {
                 PlayerView(player: model.engine.player)
+                    .padding(Viewfinder.margin)
+                Viewfinder(
+                    aspect: pictureAspect,
+                    showsFeedCrop: model.mode != .explore && !model.isLandscape && !model.isCropping
+                )
+                .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.8), value: pictureAspect)
+                if model.isCropping {
+                    CropFrame(model: model, aspect: pictureAspect)
+                }
             }
             VStack {
                 HStack {
@@ -155,14 +164,15 @@ struct WorkspaceView: View {
                     }
                     Spacer()
                     if !model.project.clips.isEmpty {
+                        // Stacked, so it fits on the gate beside a vertical picture.
                         GlassChip {
-                            HStack(spacing: 4) {
-                                TimecodeText(time: model.currentTime, frameRate: frameRate, size: 13)
-                                Text("/").foregroundStyle(Theme.secondaryLabel)
+                            VStack(alignment: .trailing, spacing: 0) {
+                                TimecodeText(time: model.currentTime, frameRate: frameRate, size: 12)
                                 TimecodeText(
-                                    time: MediaTime(model.engine.duration), frameRate: frameRate, size: 13,
+                                    time: MediaTime(model.engine.duration), frameRate: frameRate, size: 9,
                                     color: Theme.secondaryLabel)
                             }
+                            .padding(.vertical, 3)
                         }
                     }
                 }
@@ -177,6 +187,7 @@ struct WorkspaceView: View {
                 }
                 if !model.project.clips.isEmpty {
                     HStack {
+                        if model.mode != .explore { orientationKey }
                         Spacer()
                         Button {
                             setWatching(true)
@@ -198,8 +209,55 @@ struct WorkspaceView: View {
             .padding(10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .padding(.horizontal, 8)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.black.opacity(0.8), lineWidth: 1.5)
+                .allowsHitTesting(false)
+        )
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 20)
+        .background(ViewerHousing(label: housingLabel))
+        .padding(.horizontal, 6)
+    }
+
+    /// Cast into the housing's bottom rail.
+    private var housingLabel: String {
+        model.mode == .explore
+            ? "POCKET INSTRUMENT · SOURCE" : "POCKET INSTRUMENT · \(model.project.exportSettings.aspectLabel) VIEWER"
+    }
+
+    /// Width over height of what the preview shows: the clip's source in Explore, else the sequence's frame.
+    private var pictureAspect: CGFloat {
+        if model.mode == .explore, let source = model.selectedSource, source.height > 0 {
+            return CGFloat(source.width) / CGFloat(source.height)
+        }
+        let settings = model.project.exportSettings
+        return CGFloat(settings.width) / CGFloat(max(settings.height, 1))
+    }
+
+    /// Turns the picture between 9:16 and 16:9; the viewfinder turns with it.
+    private var orientationKey: some View {
+        Button {
+            model.toggleOrientation()
+        } label: {
+            GlassChip {
+                HStack(spacing: 6) {
+                    Image(systemName: model.isLandscape ? "rectangle.portrait.rotate" : "rectangle.landscape.rotate")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(model.project.exportSettings.aspectLabel)
+                        .font(Theme.mono(11, weight: .bold))
+                }
+                .foregroundStyle(Theme.label)
+            }
+            .frame(minHeight: Theme.minTouch)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Picture shape")
+        .accessibilityValue(model.isLandscape ? "16:9 horizontal" : "9:16 vertical")
+        .accessibilityHint("Turns the picture between vertical and horizontal.")
     }
 
     /// Watch starts playback, since it is for watching; leaving it keeps whatever is playing.
@@ -236,13 +294,42 @@ struct WorkspaceView: View {
 
     // MARK: Deck
 
+    /// The instrument's body: brushed graphite with a machined, light-catching top edge.
+    private var chassis: some View {
+        let shape = UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22, style: .continuous)
+        return shape.fill(
+            LinearGradient(
+                colors: [Color(hex: 0x4B5539), Color(hex: 0x3A4230), Color(hex: 0x20251A)], startPoint: .top,
+                endPoint: .bottom)
+        )
+        .overlay(BrushedMetal(strength: 0.8).clipShape(shape))
+        .overlay(Grain(opacity: 0.5).clipShape(shape))
+        .overlay(alignment: .top) {
+            HStack {
+                Screw(angle: 20)
+                Spacer()
+                Screw(angle: -50)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+        }
+        .overlay(
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.22), Color.white.opacity(0.03), .clear], startPoint: .top,
+                    endPoint: .bottom),
+                lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.7), radius: 8, y: -2)
+    }
+
     private func pick(_ purpose: PickPurpose, photos: Bool) {
         pickPurpose = purpose
         if photos { showPhotos = true } else { showFiles = true }
     }
 
     private var deck: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             if !model.project.clips.isEmpty {
                 StateSwitcher(model: model)
             }
@@ -267,15 +354,10 @@ struct WorkspaceView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-        .background(
-            UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22, style: .continuous)
-                .fill(LinearGradient(colors: [Theme.instrument, Theme.obsidian], startPoint: .top, endPoint: .bottom))
-                .overlay(alignment: .top) { Rectangle().fill(Theme.hairline).frame(height: 1).padding(.horizontal, 22) }
-                .ignoresSafeArea(edges: .bottom)
-        )
-        .padding(.top, 8)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+        .background(chassis.ignoresSafeArea(edges: .bottom))
+        .padding(.top, 6)
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85), value: model.mode)
     }
 }
@@ -466,42 +548,87 @@ private struct WatchView: View {
     }
 }
 
-/// Shared transport: frame step, play/pause, loop.
+/// Shared transport: the jog wheel between frame-step keys, then play/pause between each
+/// state's own keys.
 struct TransportRow<Leading: View, Trailing: View>: View {
     var model: WorkspaceModel
+    /// What the wheel moves: by default it jogs and shuttles the playhead. Mix hands it a curve
+    /// point instead (`jogTitle` "POINT", its own `onJog`, and no shuttle).
+    var jogTitle = "JOG"
+    var onJog: ((Int) -> Void)?
+    var shuttles = true
+    var onJogEnd: () -> Void = {}
+    /// One row: play, the wheel, then `trailing` (`leading` and the frame-step keys are left out;
+    /// the wheel steps frames itself).
+    var compact = false
     @ViewBuilder var leading: Leading
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
-        HStack(spacing: 8) {
-            leading
-            Spacer(minLength: 0)
-            Button {
-                model.step(-1)
-            } label: {
-                Image(systemName: "backward.frame.fill")
+        if compact {
+            HStack(alignment: .bottom, spacing: 6) {
+                playKey(diameter: 44).padding(.bottom, 4)
+                wheel
+                trailing.padding(.bottom, 4)
             }
-            .buttonStyle(.instrument())
-            .accessibilityLabel("Back one frame")
-            Button {
-                model.engine.togglePlay()
-            } label: {
-                Image(systemName: model.engine.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 20, weight: .bold))
-                    .frame(width: 44, height: 40)
-            }
-            .buttonStyle(.instrument(.key, active: model.engine.isPlaying))
-            .accessibilityLabel(model.engine.isPlaying ? "Pause" : "Play")
-            Button {
-                model.step(1)
-            } label: {
-                Image(systemName: "forward.frame.fill")
-            }
-            .buttonStyle(.instrument())
-            .accessibilityLabel("Forward one frame")
-            Spacer(minLength: 0)
-            trailing
+        } else {
+            full
         }
+    }
+
+    private var wheel: some View {
+        JogDial(
+            title: jogTitle, onStep: onJog ?? { model.jog(by: $0) },
+            onShuttle: shuttles ? { model.shuttle($0) } : nil, onEnd: onJogEnd
+        )
+        .disabled(model.project.clips.isEmpty)
+    }
+
+    private func playKey(diameter: CGFloat) -> some View {
+        Button {
+            model.engine.togglePlay()
+        } label: {
+            Image(systemName: model.engine.isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: diameter * 0.4, weight: .heavy))
+        }
+        .buttonStyle(.round(diameter, lit: model.engine.isPlaying, prominent: true))
+        .disabled(model.project.clips.isEmpty)
+        .accessibilityLabel(model.engine.isPlaying ? "Pause" : "Play")
+    }
+
+    private var full: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 2) {
+                StepKey(model: model, frames: -1)
+                wheel
+                StepKey(model: model, frames: 1)
+            }
+            .disabled(model.project.clips.isEmpty)
+            HStack(spacing: 8) {
+                leading
+                Spacer(minLength: 0)
+                playKey(diameter: 50)
+                Spacer(minLength: 0)
+                trailing
+            }
+        }
+    }
+}
+
+/// A round key stepping one frame back or forward, at either end of the jog wheel.
+struct StepKey: View {
+    var model: WorkspaceModel
+    var frames: Int
+
+    var body: some View {
+        Button {
+            model.step(frames)
+        } label: {
+            Image(systemName: frames < 0 ? "backward.frame.fill" : "forward.frame.fill")
+        }
+        .buttonStyle(.round(34))
+        .padding(.bottom, 9)
+        .accessibilityLabel(frames < 0 ? "Back one frame" : "Forward one frame")
     }
 }
 
@@ -522,7 +649,7 @@ struct LoopButton: View {
             } label: {
                 Image(systemName: "repeat")
             }
-            .buttonStyle(.instrument(.dark, active: isOn))
+            .buttonStyle(.round(42, lit: isOn))
             .disabled(model.selectedClip == nil)
             .accessibilityLabel("Loop in to out")
             .accessibilityValue(isOn ? "On" : "Off")
@@ -538,21 +665,7 @@ struct LoopButton: View {
                     Label("Loop whole sequence", systemImage: "arrow.left.and.right")
                 }
             } label: {
-                Image(systemName: "repeat")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(isOn ? Theme.signal : Theme.ivory)
-                    .frame(width: Theme.minTouch + 20, height: Theme.minTouch)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Theme.instrument, Theme.obsidian], startPoint: .top, endPoint: .bottom))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                            .strokeBorder(isOn ? Theme.signal : Theme.hairline, lineWidth: isOn ? 1.5 : 1)
-                            .shadow(color: isOn ? Theme.signal.opacity(0.6) : .clear, radius: 6)
-                    )
+                RoundKeyFace(diameter: 42, isLit: isOn) { Image(systemName: "repeat") }
             } primaryAction: {
                 model.toggleLoop()
             }
@@ -569,18 +682,395 @@ struct StateSwitcher: View {
     var model: WorkspaceModel
 
     var body: some View {
+        // Three keys in one recessed slot, like a rocker; the current one is lit.
         HStack(spacing: 6) {
             ForEach(WorkspaceModel.Mode.allCases, id: \.self) { mode in
                 let isCurrent = model.mode == mode
                 Button {
                     model.setMode(mode)
                 } label: {
-                    Text(mode.title).frame(maxWidth: .infinity)
+                    Text(mode.title).font(Theme.mono(10, weight: .bold)).frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.instrument(.dark, active: isCurrent))
+                .buttonStyle(.instrument(.dark, active: isCurrent, height: 28))
                 .disabled(mode == .explore && model.selectedClip == nil)
                 .accessibilityAddTraits(isCurrent ? .isSelected : [])
             }
         }
+        .recessed(cornerRadius: 11, padding: 3)
+    }
+}
+
+/// A viewfinder around the picture: everything outside it is a machined film gate, a brushed
+/// metal plate with a bevelled aperture cut to the picture's shape, screwed down beside it, with
+/// engraved rulers along each edge of the aperture. Inside are corner brackets, a centre cross and
+/// a soft vignette. On a vertical sequence, faint lines mark the 4:5 crop a feed shows. It turns
+/// (the aperture springs between shapes) when the picture changes between 9:16 and 16:9.
+private struct Viewfinder: View, Animatable {
+    /// Width over height of the picture.
+    var aspect: CGFloat
+    var showsFeedCrop: Bool
+
+    /// Room round the picture for the rulers; the player is inset by the same.
+    static let margin: CGFloat = 14
+
+    var animatableData: CGFloat {
+        get { aspect }
+        set { aspect = newValue }
+    }
+
+    /// The picture's frame in a preview of `bounds`, fitted inside the margin the way the
+    /// player (inset by the margin) fits it.
+    static func pictureRect(aspect: CGFloat, in bounds: CGSize) -> CGRect {
+        let inner = CGSize(width: bounds.width - 2 * margin, height: bounds.height - 2 * margin)
+        guard aspect > 0, inner.width > 0, inner.height > 0 else { return .zero }
+        let fitsWidth = inner.width / inner.height < aspect
+        let size =
+            fitsWidth
+            ? CGSize(width: inner.width, height: inner.width / aspect)
+            : CGSize(width: inner.height * aspect, height: inner.height)
+        return CGRect(
+            x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2, width: size.width,
+            height: size.height)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let rect = Self.pictureRect(aspect: aspect, in: geo.size).insetBy(dx: 0.5, dy: 0.5)
+            let hood = Path { p in
+                p.addRect(CGRect(origin: .zero, size: geo.size))
+                p.addRoundedRect(in: rect, cornerSize: CGSize(width: 4, height: 4))
+            }
+            let plate = hood.fill(style: FillStyle(eoFill: true))
+            ZStack {
+                // The gate plate: brushed metal, lit from above.
+                LinearGradient(
+                    colors: [Color(hex: 0xA7AB9C), Color(hex: 0x878C7B), Color(hex: 0x5F6456)], startPoint: .top,
+                    endPoint: .bottom
+                )
+                .overlay(BrushedMetal(strength: 1.6).blendMode(.multiply))
+                .overlay(Grain(opacity: 0.55))
+                .mask(plate)
+                // The aperture's bevel: its upper edge in shadow, its lower edge catching the light.
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.black.opacity(0.75), Color.black.opacity(0.3), Color.white.opacity(0.6)],
+                            startPoint: .top, endPoint: .bottom),
+                        lineWidth: 8
+                    )
+                    .frame(width: rect.width + 8, height: rect.height + 8)
+                    .position(x: rect.midX, y: rect.midY)
+                    .mask(plate)
+                screws(bounds: geo.size, rect: rect)
+                // Inside the picture, the corners fall off a little.
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(
+                        RadialGradient(
+                            colors: [.clear, .clear, .black.opacity(0.35)], center: .center, startRadius: 0,
+                            endRadius: max(rect.width, rect.height) * 0.75)
+                    )
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
+                Canvas { context, _ in draw(in: &context, rect: rect) }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    /// Pairs of screws holding the plate down, where it is wide enough beside the aperture.
+    @ViewBuilder
+    private func screws(bounds: CGSize, rect: CGRect) -> some View {
+        let side = rect.minX
+        let band = rect.minY
+        if side > 44 {
+            ForEach([rect.minX / 2, bounds.width - side / 2], id: \.self) { x in
+                ForEach([-14.0, 14.0], id: \.self) { dy in
+                    Screw(angle: 25 + dy * 3).position(x: x, y: rect.midY + dy)
+                }
+            }
+        } else if band > 40 {
+            ForEach([band / 2, bounds.height - band / 2], id: \.self) { y in
+                ForEach([-70.0, -50.0, 50.0, 70.0], id: \.self) { dx in
+                    Screw(angle: 40 + dx).position(x: rect.midX + dx, y: y)
+                }
+            }
+        }
+    }
+
+    private func draw(in context: inout GraphicsContext, rect: CGRect) {
+        // Engraved into the plate.
+        let tick = Color.black.opacity(0.6)
+        context.stroke(Path(roundedRect: rect, cornerRadius: 4), with: .color(.black.opacity(0.85)), lineWidth: 1.5)
+
+        // Rulers just outside each edge: 40 divisions, longer every fifth, Signal at the middle.
+        func ruler(from a: CGPoint, to b: CGPoint, outward: CGVector) {
+            for i in 0...40 {
+                let f = CGFloat(i) / 40
+                let p = CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f)
+                let major = i % 5 == 0
+                let length: CGFloat = i == 20 ? 12 : (major ? 8 : 4)
+                var line = Path()
+                line.move(to: CGPoint(x: p.x + outward.dx * 6, y: p.y + outward.dy * 6))
+                line.addLine(to: CGPoint(x: p.x + outward.dx * (6 + length), y: p.y + outward.dy * (6 + length)))
+                context.stroke(
+                    line, with: .color(i == 20 ? Theme.signal : (major ? tick : tick.opacity(0.5))),
+                    lineWidth: i == 20 ? 1.5 : 1)
+            }
+        }
+        ruler(
+            from: CGPoint(x: rect.minX, y: rect.minY), to: CGPoint(x: rect.minX, y: rect.maxY),
+            outward: CGVector(dx: -1, dy: 0))
+        ruler(
+            from: CGPoint(x: rect.maxX, y: rect.minY), to: CGPoint(x: rect.maxX, y: rect.maxY),
+            outward: CGVector(dx: 1, dy: 0))
+        ruler(
+            from: CGPoint(x: rect.minX, y: rect.minY), to: CGPoint(x: rect.maxX, y: rect.minY),
+            outward: CGVector(dx: 0, dy: -1))
+        ruler(
+            from: CGPoint(x: rect.minX, y: rect.maxY), to: CGPoint(x: rect.maxX, y: rect.maxY),
+            outward: CGVector(dx: 0, dy: 1))
+
+        // Corner brackets just inside the frame.
+        let inset: CGFloat = 10
+        let arm = min(rect.width, rect.height) * 0.09
+        let corners: [(CGPoint, CGFloat, CGFloat)] = [
+            (CGPoint(x: rect.minX + inset, y: rect.minY + inset), 1, 1),
+            (CGPoint(x: rect.maxX - inset, y: rect.minY + inset), -1, 1),
+            (CGPoint(x: rect.minX + inset, y: rect.maxY - inset), 1, -1),
+            (CGPoint(x: rect.maxX - inset, y: rect.maxY - inset), -1, -1),
+        ]
+        for (c, dx, dy) in corners {
+            var bracket = Path()
+            bracket.move(to: CGPoint(x: c.x + dx * arm, y: c.y))
+            bracket.addLine(to: c)
+            bracket.addLine(to: CGPoint(x: c.x, y: c.y + dy * arm))
+            context.stroke(
+                bracket, with: .color(Theme.signal.opacity(0.75)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+        }
+
+        // Centre cross.
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        var cross = Path()
+        cross.move(to: CGPoint(x: c.x - 9, y: c.y))
+        cross.addLine(to: CGPoint(x: c.x + 9, y: c.y))
+        cross.move(to: CGPoint(x: c.x, y: c.y - 9))
+        cross.addLine(to: CGPoint(x: c.x, y: c.y + 9))
+        context.stroke(cross, with: .color(Theme.ivory.opacity(0.4)), lineWidth: 1)
+
+        // The 4:5 crop a feed shows of a vertical video: faint dashed lines with a label.
+        if showsFeedCrop {
+            let cropHeight = min(rect.width * 5 / 4, rect.height)
+            let top = rect.midY - cropHeight / 2
+            let bottom = rect.midY + cropHeight / 2
+            for y in [top, bottom] {
+                var line = Path()
+                line.move(to: CGPoint(x: rect.minX + 4, y: y))
+                line.addLine(to: CGPoint(x: rect.maxX - 4, y: y))
+                context.stroke(
+                    line, with: .color(Theme.ivory.opacity(0.22)), style: StrokeStyle(lineWidth: 1, dash: [4, 5]))
+            }
+            context.draw(
+                Text("4:5").font(Theme.mono(8, weight: .bold)).foregroundStyle(Theme.ivory.opacity(0.45)),
+                at: CGPoint(x: rect.maxX - 16, y: top + 8))
+        }
+    }
+}
+
+/// The viewer's metal housing: a cast, brushed frame round the hood whatever the picture's shape,
+/// held by slotted screws at its sides, with its name cast into the bottom rail.
+private struct ViewerHousing: View {
+    var label: String
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        shape.fill(
+            LinearGradient(
+                colors: [Color(hex: 0x9EA391), Color(hex: 0x737966), Color(hex: 0x4E5444)], startPoint: .top,
+                endPoint: .bottom)
+        )
+        .overlay(BrushedMetal(strength: 1.2).clipShape(shape).blendMode(.multiply))
+        // Hammered enamel: a coarse grain over the brushing.
+        .overlay(Grain(opacity: 0.7).clipShape(shape))
+        .overlay(
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.55), Color.white.opacity(0.08), Color.black.opacity(0.5)],
+                    startPoint: .top, endPoint: .bottom),
+                lineWidth: 1.5)
+        )
+        // The lip where the hood opens: a dark shadow line just inside the frame.
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.75), Color.white.opacity(0.35)], startPoint: .top,
+                        endPoint: .bottom),
+                    lineWidth: 2.5
+                )
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
+                .padding(.bottom, 18)
+        )
+        .overlay {
+            HStack {
+                Screw(angle: 70)
+                Spacer()
+                Screw(angle: -20)
+            }
+            .padding(.horizontal, 1.5)
+        }
+        .overlay(alignment: .bottom) {
+            // Cast lettering: dark, with a lit edge below.
+            Text(label)
+                .font(Theme.mono(7, weight: .heavy))
+                .tracking(2)
+                .foregroundStyle(Color.black.opacity(0.55))
+                .shadow(color: .white.opacity(0.35), radius: 0, y: 0.8)
+                .padding(.bottom, 5)
+        }
+        .shadow(color: .black.opacity(0.7), radius: 8, y: 4)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Cropping a clip: its whole frame plays, and the crop (the part that will fill the frame) is
+/// drawn over it with the rest dimmed. Drag inside to move it, drag a corner to size it from the
+/// opposite corner, or pinch. Each gesture is one undo step, committed on release.
+private struct CropFrame: View {
+    var model: WorkspaceModel
+    var aspect: CGFloat
+
+    private enum Grab {
+        case move
+        case corner(anchorX: Double, anchorY: Double, right: Bool, bottom: Bool)
+    }
+    @State private var grab: (kind: Grab, base: Crop)?
+    @State private var pinchBase: Crop?
+
+    var body: some View {
+        GeometryReader { geo in
+            let picture = Viewfinder.pictureRect(aspect: aspect, in: geo.size)
+            let crop = model.shownCrop
+            let box = CGRect(
+                x: picture.minX + crop.x * picture.width, y: picture.minY + crop.y * picture.height,
+                width: crop.size * picture.width, height: crop.size * picture.height)
+            ZStack(alignment: .topLeading) {
+                Path { p in
+                    p.addRect(picture)
+                    p.addRect(box)
+                }
+                .fill(Color.black.opacity(0.6), style: FillStyle(eoFill: true))
+                Canvas { context, _ in draw(in: &context, box: box) }
+                Text(String(format: "%.2f×", crop.magnification))
+                    .font(Theme.mono(10, weight: .bold))
+                    .foregroundStyle(Theme.obsidian)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Theme.signal))
+                    .offset(x: box.minX + 6, y: box.minY + 6)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .contentShape(Rectangle().path(in: picture.insetBy(dx: -12, dy: -12)))
+            .gesture(dragGesture(picture: picture, box: box))
+            .simultaneousGesture(pinchGesture)
+        }
+        .accessibilityElement()
+        .accessibilityLabel("Crop frame")
+        .accessibilityValue(String(format: "%.2f times", model.shownCrop.magnification))
+        .accessibilityHint("Swipe up to push in, down to pull out.")
+        .accessibilityAdjustableAction { direction in
+            let crop = model.shownCrop
+            model.cropDraft = crop.sized(crop.size * (direction == .increment ? 0.9 : 1 / 0.9))
+            model.commitCrop()
+        }
+    }
+
+    private func draw(in context: inout GraphicsContext, box: CGRect) {
+        context.stroke(Path(box), with: .color(Theme.signal), lineWidth: 1.5)
+        // Thirds, to place the subject.
+        for f in [1.0 / 3, 2.0 / 3] {
+            var line = Path()
+            line.move(to: CGPoint(x: box.minX + box.width * f, y: box.minY))
+            line.addLine(to: CGPoint(x: box.minX + box.width * f, y: box.maxY))
+            line.move(to: CGPoint(x: box.minX, y: box.minY + box.height * f))
+            line.addLine(to: CGPoint(x: box.maxX, y: box.minY + box.height * f))
+            context.stroke(line, with: .color(Theme.ivory.opacity(0.35)), lineWidth: 0.75)
+        }
+        // Corner handles.
+        let arm = min(16, min(box.width, box.height) * 0.3)
+        for (x, y, dx, dy) in [
+            (box.minX, box.minY, 1.0, 1.0), (box.maxX, box.minY, -1, 1), (box.minX, box.maxY, 1, -1),
+            (box.maxX, box.maxY, -1, -1),
+        ] {
+            var handle = Path()
+            handle.move(to: CGPoint(x: x + dx * arm, y: y))
+            handle.addLine(to: CGPoint(x: x, y: y))
+            handle.addLine(to: CGPoint(x: x, y: y + dy * arm))
+            context.stroke(handle, with: .color(Theme.signal), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+        }
+    }
+
+    private func dragGesture(picture: CGRect, box: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 1)
+            .onChanged { g in
+                guard picture.width > 0, pinchBase == nil else { return }
+                if grab == nil {
+                    let base = model.shownCrop
+                    let corners = [
+                        (CGPoint(x: box.minX, y: box.minY), false, false),
+                        (CGPoint(x: box.maxX, y: box.minY), true, false),
+                        (CGPoint(x: box.minX, y: box.maxY), false, true),
+                        (CGPoint(x: box.maxX, y: box.maxY), true, true),
+                    ]
+                    let near = corners.min {
+                        hypot($0.0.x - g.startLocation.x, $0.0.y - g.startLocation.y)
+                            < hypot($1.0.x - g.startLocation.x, $1.0.y - g.startLocation.y)
+                    }
+                    if let near, hypot(near.0.x - g.startLocation.x, near.0.y - g.startLocation.y) < 30 {
+                        // The opposite corner stays put.
+                        grab = (
+                            .corner(
+                                anchorX: near.1 ? base.x : base.x + base.size,
+                                anchorY: near.2 ? base.y : base.y + base.size,
+                                right: near.1, bottom: near.2), base
+                        )
+                    } else {
+                        grab = (.move, base)
+                    }
+                }
+                guard let grab else { return }
+                let fx = Double((g.location.x - picture.minX) / picture.width)
+                let fy = Double((g.location.y - picture.minY) / picture.height)
+                switch grab.kind {
+                case .move:
+                    let base = grab.base
+                    model.cropDraft = base.centred(
+                        at: base.x + base.size / 2 + Double(g.translation.width / picture.width),
+                        base.y + base.size / 2 + Double(g.translation.height / picture.height))
+                case .corner(let ax, let ay, let right, let bottom):
+                    let room = min(right ? 1 - ax : ax, bottom ? 1 - ay : ay)
+                    let size = min(max(abs(fx - ax), abs(fy - ay), Crop.minSize), room)
+                    model.cropDraft = Crop(x: right ? ax : ax - size, y: bottom ? ay : ay - size, size: size)
+                }
+            }
+            .onEnded { _ in
+                grab = nil
+                model.commitCrop()
+            }
+    }
+
+    private var pinchGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { g in
+                let base = pinchBase ?? model.shownCrop
+                pinchBase = base
+                grab = nil
+                model.cropDraft = base.sized(base.size / Double(g.magnification))
+            }
+            .onEnded { _ in
+                pinchBase = nil
+                model.commitCrop()
+            }
     }
 }

@@ -9,7 +9,7 @@ import SwiftUI
 /// and slides the music against the picture in Mix (unless the music is locked, when it
 /// scrubs), so the two never share a gesture in the same state. The bracket's Signal handles set the loop (snapping to clip edges).
 ///
-/// Pinch or the zoom key magnifies the lane around the playhead, for lining music up
+/// Pinch or the zoom key (`LaneZoomKey`, on the transport) magnifies the lane around the playhead, for lining music up
 /// closer than a frame-sized sliver of the whole sequence. Zoomed, scrubbing drags the
 /// sequence under a fixed view like tape, and every drag moves time in finer steps.
 ///
@@ -35,6 +35,9 @@ struct SequenceLane: View {
     @State private var offsetDragBase: MediaTime = .zero
     @State private var scrubBase: MediaTime?
     @State private var pinchBase: Double?
+    /// Whether the person has ever scrubbed the lane; until then a hint says it can be dragged.
+    @AppStorage("hint.laneScrubbed") private var hasScrubbed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pointGrab: PointGrab?
     @State private var lastPointTap: (handle: WorkspaceModel.CurveHandle, at: Date)?
 
@@ -45,13 +48,6 @@ struct SequenceLane: View {
     private var totalHeight: CGFloat { rulerHeight + (hasBand ? bandGap + waveHeight : 0) }
 
     var body: some View {
-        HStack(spacing: 6) {
-            lane
-            zoomKey
-        }
-    }
-
-    private var lane: some View {
         GeometryReader { geo in
             let width = geo.size.width
             ZStack(alignment: .topLeading) {
@@ -92,45 +88,15 @@ struct SequenceLane: View {
         .frame(height: totalHeight)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .recessed(padding: 2)
         .simultaneousGesture(pinchGesture)
         .accessibilityElement(children: .contain)
     }
 
     // MARK: Zoom
 
-    /// Steps the zoom key cycles through; pinching goes anywhere between 1× and `maxZoom`.
-    private static let zoomSteps: [Double] = [1, 4, 16]
-
-    /// Enough to show half a second across the lane.
-    private var maxZoom: Double { max(1, duration / 0.5) }
-    private var zoom: Double { min(max(model.laneZoom, 1), maxZoom) }
-
-    private var zoomKey: some View {
-        Button {
-            let next = Self.zoomSteps.first { $0 > zoom + 0.01 && $0 <= maxZoom } ?? 1
-            model.laneZoom = next
-            Haptics.detent()
-        } label: {
-            VStack(spacing: 2) {
-                Image(systemName: zoom > 1 ? "minus.magnifyingglass" : "plus.magnifyingglass")
-                    .font(.system(size: 14, weight: .semibold))
-                Text(zoomLabel).font(Theme.mono(10))
-            }
-        }
-        .buttonStyle(.instrument(active: zoom > 1))
-        .frame(height: max(Theme.minTouch, totalHeight))
-        .accessibilityLabel("Zoom sequence")
-        .accessibilityValue(zoomLabel)
-        .accessibilityHint("Magnifies the sequence around the playhead. Pinch the sequence for any zoom.")
-        .accessibilityAdjustableAction { direction in
-            model.laneZoom = direction == .increment ? min(zoom * 2, maxZoom) : max(zoom / 2, 1)
-        }
-    }
-
-    private var zoomLabel: String {
-        let whole = (zoom - zoom.rounded()).magnitude < 0.05 || zoom >= 10
-        return String(format: whole ? "%.0f×" : "%.1f×", zoom)
-    }
+    private var maxZoom: Double { LaneZoomKey.maxZoom(model) }
+    private var zoom: Double { LaneZoomKey.zoom(model) }
 
     private var pinchGesture: some Gesture {
         MagnifyGesture()
@@ -201,6 +167,9 @@ struct SequenceLane: View {
             }
         }
         .frame(width: width, height: rulerHeight, alignment: .topLeading)
+        .overlay {
+            if !hasScrubbed { scrubHint }
+        }
         .contentShape(Rectangle())
         .gesture(scrubGesture(width: width))
         .accessibilityElement()
@@ -281,6 +250,35 @@ struct SequenceLane: View {
         .allowsHitTesting(false)
     }
 
+    /// Shown until the first scrub: the clip band can be dragged. A light sweeps across it.
+    private var scrubHint: some View {
+        TimelineView(.animation(paused: reduceMotion)) { timeline in
+            let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2.4) / 2.4
+            Text("◂  DRAG TO SCRUB  ▸")
+                .font(Theme.mono(9, weight: .bold))
+                .foregroundStyle(Theme.ivory.opacity(0.55))
+                .overlay {
+                    if !reduceMotion {
+                        let p = phase * 1.4 - 0.2
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: min(max(p - 0.2, 0), 1)),
+                                .init(color: Theme.signal, location: min(max(p, 0), 1)),
+                                .init(color: .clear, location: min(max(p + 0.2, 0), 1)),
+                            ], startPoint: .leading, endPoint: .trailing
+                        )
+                        .mask(Text("◂  DRAG TO SCRUB  ▸").font(Theme.mono(9, weight: .bold)))
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Theme.obsidian.opacity(0.75)))
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+        .accessibilityHidden(true)
+    }
+
     // MARK: Gestures
 
     /// Whole sequence: the playhead jumps to the finger. Zoomed: the sequence drags under the
@@ -294,6 +292,9 @@ struct SequenceLane: View {
             .onEnded { value in
                 model.scrub(to: scrubTime(value, width), precise: true)
                 scrubBase = nil
+                if !hasScrubbed {
+                    withAnimation(.easeOut(duration: 0.4)) { hasScrubbed = true }
+                }
             }
     }
 
@@ -620,5 +621,61 @@ private struct AutomationCurves: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// Magnifies the sequence lane around the playhead: 1× → 4× → 16×. Pinching the lane goes
+/// anywhere between.
+struct LaneZoomKey: View {
+    var model: WorkspaceModel
+    /// A slim square key (Arrange's clip row) instead of a round one.
+    var compact = false
+
+    /// Steps the key cycles through.
+    private static let steps: [Double] = [1, 4, 16]
+
+    /// Enough to show half a second across the lane.
+    static func maxZoom(_ model: WorkspaceModel) -> Double { max(1, model.project.duration.seconds / 0.5) }
+    static func zoom(_ model: WorkspaceModel) -> Double { min(max(model.laneZoom, 1), maxZoom(model)) }
+
+    var body: some View {
+        let zoom = Self.zoom(model)
+        let maxZoom = Self.maxZoom(model)
+        let key = Button {
+            model.laneZoom = Self.steps.first { $0 > zoom + 0.01 && $0 <= maxZoom } ?? 1
+            Haptics.detent()
+        } label: {
+            if compact {
+                HStack(spacing: 2) {
+                    Image(systemName: zoom > 1 ? "minus.magnifyingglass" : "plus.magnifyingglass")
+                    Text(label(zoom)).font(Theme.mono(9, weight: .bold))
+                }
+            } else {
+                VStack(spacing: 0) {
+                    Image(systemName: zoom > 1 ? "minus.magnifyingglass" : "plus.magnifyingglass")
+                        .font(.system(size: 13, weight: .bold))
+                    Text(label(zoom)).font(Theme.mono(8, weight: .bold))
+                }
+            }
+        }
+        Group {
+            if compact {
+                key.buttonStyle(.instrument(active: zoom > 1, height: 28))
+            } else {
+                key.buttonStyle(.round(40, lit: zoom > 1))
+            }
+        }
+        .disabled(model.project.clips.isEmpty)
+        .accessibilityLabel("Zoom sequence")
+        .accessibilityValue(label(zoom))
+        .accessibilityHint("Magnifies the sequence around the playhead. Pinch the sequence for any zoom.")
+        .accessibilityAdjustableAction { direction in
+            model.laneZoom = direction == .increment ? min(zoom * 2, maxZoom) : max(zoom / 2, 1)
+        }
+    }
+
+    private func label(_ zoom: Double) -> String {
+        let whole = (zoom - zoom.rounded()).magnitude < 0.05 || zoom >= 10
+        return String(format: whole ? "%.0f×" : "%.1f×", zoom)
     }
 }

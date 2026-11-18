@@ -4,78 +4,114 @@ import SwiftUI
 /// Arrange state: the whole sequence as tiles. Tap selects (and cues the
 /// playhead), long-press then drag reorders; the Explore state opens the
 /// selected clip. Reorder and trim never share a gesture: trimming lives in Explore.
-/// Under the tiles, the sequence lane shows the music waveform, cuts and loop bracket.
+/// Under the tiles, the sequence lane shows the music waveform, cuts and loop bracket, across
+/// the whole width to scrub. The Crop key sets the selected clip's push-in on the picture.
 struct ArrangeDeck: View {
     var model: WorkspaceModel
     var onAddPhotos: () -> Void
     var onAddFiles: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             ClipStrip(model: model, onAddPhotos: onAddPhotos, onAddFiles: onAddFiles)
             SequenceLane(model: model)
             selectedClipBar
-            JogDial(title: "JOG", onStep: { model.jog(by: $0) }, onShuttle: { model.shuttle($0) })
-                .disabled(model.project.clips.isEmpty)
-            TransportRow(model: model) {
-                Color.clear.frame(width: 44, height: 44)
+            // Play and Loop at the wheel's ends: no row of their own, so the picture gets the room.
+            TransportRow(model: model, compact: true) {
+                EmptyView()
             } trailing: {
                 LoopButton(model: model)
             }
         }
     }
 
+    /// Slim keys for the selected clip. Cropping, the bar reads out the push-in instead.
     @ViewBuilder
     private var selectedClipBar: some View {
         if let clip = model.selectedClip {
             let source = model.project.source(for: clip)
+            let number = (model.project.index(ofClip: clip.id) ?? 0) + 1
             HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(source?.originalFilename ?? "Clip \((model.project.index(ofClip: clip.id) ?? 0) + 1)")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.label)
-                        .lineLimit(1)
-                    Text(
-                        "\(String(format: "%.2fs", clip.compositionDuration.seconds)) · \(source?.orientationLabel ?? "Missing") · \(clip.framing == .fill ? "Fill" : "Fit")"
-                    )
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.secondaryLabel)
+                VStack(alignment: .leading, spacing: 1) {
+                    if model.isCropping {
+                        Text(String(format: "CROP CLIP %02d · %.2f×", number, model.shownCrop.magnification))
+                            .font(Theme.mono(11, weight: .bold))
+                            .foregroundStyle(Theme.signal)
+                        Text("Drag or pinch the picture")
+                            .font(Theme.caption)
+                            .foregroundStyle(Theme.secondaryLabel)
+                    } else {
+                        Text(source?.originalFilename ?? "Clip \(number)")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.label)
+                        Text(meta(clip, source))
+                            .font(Theme.caption)
+                            .foregroundStyle(Theme.secondaryLabel)
+                    }
                 }
+                .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Button {
-                    model.toggleFraming(clip.id)
-                } label: {
-                    Image(
-                        systemName: clip.framing == .fill
-                            ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
-                }
-                .buttonStyle(.instrument())
-                .accessibilityLabel(
-                    clip.framing == .fill ? "Framing: fill. Switch to fit" : "Framing: fit. Switch to fill")
+                if model.isCropping {
+                    Button("Reset") { model.resetCrop() }
+                        .buttonStyle(.instrument(height: 28))
+                        .disabled(clip.crop == nil)
+                        .accessibilityLabel("Reset crop")
+                } else {
+                    Button {
+                        model.toggleFraming(clip.id)
+                    } label: {
+                        Image(
+                            systemName: clip.framing == .fill
+                                ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
+                    }
+                    .buttonStyle(.instrument(height: 28))
+                    .accessibilityLabel(
+                        clip.framing == .fill ? "Framing: fill. Switch to fit" : "Framing: fit. Switch to fill")
 
-                Button {
-                    model.duplicate(clip.id)
-                } label: {
-                    Image(systemName: "plus.square.on.square")
-                }
-                .buttonStyle(.instrument())
-                .accessibilityLabel("Duplicate clip")
+                    Button {
+                        model.duplicate(clip.id)
+                    } label: {
+                        Image(systemName: "plus.square.on.square")
+                    }
+                    .buttonStyle(.instrument(height: 28))
+                    .accessibilityLabel("Duplicate clip")
 
-                Button(role: .destructive) {
-                    model.remove(clip.id)
-                } label: {
-                    Image(systemName: "trash")
+                    Button(role: .destructive) {
+                        model.remove(clip.id)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.instrument(height: 28))
+                    .accessibilityLabel("Remove clip from sequence")
                 }
-                .buttonStyle(.instrument())
-                .accessibilityLabel("Remove clip from sequence")
+                Button {
+                    model.setCropping(!model.isCropping)
+                } label: {
+                    Image(systemName: model.isCropping ? "checkmark" : "crop")
+                }
+                .buttonStyle(.instrument(active: model.isCropping || clip.crop != nil, height: 28))
+                .accessibilityLabel(model.isCropping ? "Done cropping" : "Crop")
+                .accessibilityValue(clip.crop.map { String(format: "%.2f times", $0.magnification) } ?? "Whole frame")
+                .accessibilityHint("Push in on this clip: drag and pinch its crop over the picture.")
+                LaneZoomKey(model: model, compact: true)
             }
+            .frame(minHeight: 32)
         } else {
             Text("Select a clip to explore and trim it")
                 .font(Theme.caption)
                 .foregroundStyle(Theme.secondaryLabel)
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(maxWidth: .infinity, minHeight: 32)
         }
+    }
+
+    private func meta(_ clip: TimelineClip, _ source: SourceAsset?) -> String {
+        var parts = [
+            String(format: "%.2fs", clip.compositionDuration.seconds), source?.orientationLabel ?? "Missing",
+            clip.framing == .fill ? "Fill" : "Fit",
+        ]
+        if let crop = clip.crop { parts.append(String(format: "%.2f× crop", crop.magnification)) }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -87,7 +123,8 @@ struct ClipStrip: View {
     var onAddPhotos: () -> Void
     var onAddFiles: () -> Void
 
-    private let tileWidth: CGFloat = 64
+    private let tileWidth: CGFloat = 50
+    private let tileHeight: CGFloat = 62
     private let spacing: CGFloat = 8
     private let inset: CGFloat = 2
     private var stride: CGFloat { tileWidth + spacing }
@@ -162,7 +199,7 @@ struct ClipStrip: View {
                 }
             }
         }
-        .frame(height: 112)
+        .frame(height: tileHeight + 12)
     }
 
     /// Horizontal travel of the dragged tile in content space.
@@ -212,28 +249,35 @@ struct ClipStrip: View {
         let midpoint = clip.sourceRange.start + MediaTime(seconds: clip.sourceRange.duration.seconds / 2)
         let lastIndex = model.project.clips.count - 1
 
-        return VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
                 VideoFrameView(url: url, time: midpoint.cmTime, maxPixel: 180)
-                    .frame(width: tileWidth, height: 84)
+                    .frame(width: tileWidth, height: tileHeight)
+                // Number and LED on the frame itself, so the strip needs no label row.
+                HStack(spacing: 3) {
+                    LED(isOn: isPlaying)
+                    Text(String(format: "%02d", index + 1))
+                        .font(Theme.mono(9, weight: .bold))
+                        .foregroundStyle(isSelected ? Theme.signal : .white)
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(.black.opacity(0.55)))
+                .padding(3)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 Text(String(format: "%.1fs", clip.compositionDuration.seconds))
                     .font(Theme.mono(9))
                     .foregroundStyle(.white)
                     .shadow(radius: 2)
                     .padding(4)
             }
+            .frame(width: tileWidth, height: tileHeight)
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .strokeBorder(isSelected ? Theme.signal : Theme.hairline, lineWidth: isSelected ? 2 : 1)
             )
             .shadow(color: isSelected ? Theme.signal.opacity(0.45) : .black.opacity(0.4), radius: isSelected ? 8 : 3)
-            HStack(spacing: 4) {
-                LED(isOn: isPlaying)
-                Text(String(format: "%02d", index + 1))
-                    .font(Theme.caption)
-                    .foregroundStyle(isSelected ? Theme.signal : Theme.secondaryLabel)
-            }
         }
         .scaleEffect(isDragging ? 1.08 : 1)
         .zIndex(isDragging ? 1 : 0)
@@ -338,14 +382,14 @@ struct ClipStrip: View {
             Image(systemName: "plus")
                 .font(.system(size: 20, weight: .medium))
                 .foregroundStyle(Theme.ivory)
-                .frame(width: tileWidth, height: 84)
+                .frame(width: tileWidth, height: tileHeight)
                 .overlay(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .strokeBorder(Theme.ivory.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                 )
         }
         .accessibilityLabel("Add clips")
-        .padding(.bottom, 18)
+
     }
 }
 

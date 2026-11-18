@@ -85,6 +85,43 @@ public enum Framing: String, Codable, Sendable, CaseIterable {
     case fit
 }
 
+/// A push-in on a clip: the part of the framed picture that fills the frame, as fractions of the
+/// frame. It keeps the frame's shape, so `size` is both its width and its height share.
+public struct Crop: Codable, Hashable, Sendable {
+    /// Left and top edges, 0…1 - size.
+    public var x: Double
+    public var y: Double
+    /// 1 shows the whole frame; ½ is a 2× push-in.
+    public var size: Double
+
+    /// The tightest push-in, 4×.
+    public static let minSize = 0.25
+    public static let full = Crop(x: 0, y: 0, size: 1)
+
+    /// Clamped to stay inside the frame.
+    public init(x: Double, y: Double, size: Double) {
+        let s = min(max(size, Self.minSize), 1)
+        self.size = s
+        self.x = min(max(x, 0), 1 - s)
+        self.y = min(max(y, 0), 1 - s)
+    }
+
+    /// The same size around a new centre (fractions of the frame), kept inside it.
+    public func centred(at cx: Double, _ cy: Double) -> Crop {
+        Crop(x: cx - size / 2, y: cy - size / 2, size: size)
+    }
+
+    /// A new size about the same centre.
+    public func sized(_ newSize: Double) -> Crop {
+        let s = min(max(newSize, Self.minSize), 1)
+        return Crop(x: x + (size - s) / 2, y: y + (size - s) / 2, size: s)
+    }
+
+    public var isFull: Bool { size >= 0.999 }
+    /// How much it pushes in: 1 / size.
+    public var magnification: Double { 1 / size }
+}
+
 /// One moment of a source placed in the sequence. Clips are placed
 /// back-to-back in array order (no gaps in Phase 1).
 public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
@@ -95,6 +132,8 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     /// Playback speed. 1 = normal. Stored now; exposed in a later phase.
     public var speed: Double
     public var framing: Framing
+    /// A push-in on the framed picture; nil shows the whole frame.
+    public var crop: Crop?
     /// This clip's own sound level, 0…1.
     public var volume: Float
     /// Recorded level passes in source time, so the curve travels with the clip. Parts outside
@@ -103,19 +142,21 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
 
     public init(
         id: UUID = UUID(), sourceID: UUID, sourceRange: MediaTimeRange,
-        speed: Double = 1, framing: Framing = .fill, volume: Float = 1, levelCurve: AutomationLane = .init()
+        speed: Double = 1, framing: Framing = .fill, crop: Crop? = nil, volume: Float = 1,
+        levelCurve: AutomationLane = .init()
     ) {
         self.id = id
         self.sourceID = sourceID
         self.sourceRange = sourceRange
         self.speed = speed
         self.framing = framing
+        self.crop = crop
         self.volume = volume
         self.levelCurve = levelCurve
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceID, sourceRange, speed, framing, volume, levelCurve
+        case id, sourceID, sourceRange, speed, framing, crop, volume, levelCurve
     }
 
     public init(from decoder: Decoder) throws {
@@ -125,6 +166,7 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         sourceRange = try c.decode(MediaTimeRange.self, forKey: .sourceRange)
         speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 1
         framing = try c.decodeIfPresent(Framing.self, forKey: .framing) ?? .fill
+        crop = try c.decodeIfPresent(Crop.self, forKey: .crop)
         volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
         levelCurve = try c.decodeIfPresent(AutomationLane.self, forKey: .levelCurve) ?? AutomationLane()
     }
@@ -247,7 +289,22 @@ public struct ExportSettings: Codable, Hashable, Sendable {
 
     public static let vertical1080 = ExportSettings()
 
-    public var aspectLabel: String { width * 16 == height * 9 ? "9:16" : "\(width):\(height)" }
+    /// Wider than tall: 16:9 rather than the default 9:16.
+    public var isLandscape: Bool { width > height }
+
+    /// The same settings turned to landscape (16:9) or portrait (9:16).
+    public func oriented(landscape: Bool) -> ExportSettings {
+        guard landscape != isLandscape else { return self }
+        var turned = self
+        (turned.width, turned.height) = (height, width)
+        return turned
+    }
+
+    public var aspectLabel: String {
+        if width * 16 == height * 9 { return "9:16" }
+        if width * 9 == height * 16 { return "16:9" }
+        return "\(width):\(height)"
+    }
 }
 
 // MARK: - Project

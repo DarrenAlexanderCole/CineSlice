@@ -132,6 +132,21 @@ public struct SetFramingCommand: EditingCommand {
     }
 }
 
+/// Sets a clip's push-in; a full-frame crop (or nil) takes it off.
+public struct SetCropCommand: EditingCommand {
+    public let clipID: UUID
+    public let crop: Crop?
+    public init(clipID: UUID, crop: Crop?) {
+        self.clipID = clipID
+        self.crop = crop.flatMap { $0.isFull ? nil : $0 }
+    }
+    public var actionName: String { crop == nil ? "Reset Crop" : "Crop Clip" }
+    public func apply(to project: inout Project) throws {
+        guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
+        project.clips[i].crop = crop
+    }
+}
+
 public struct RenameProjectCommand: EditingCommand {
     public let name: String
     public init(name: String) { self.name = name }
@@ -168,6 +183,16 @@ public struct SetMusicOffsetCommand: EditingCommand {
         guard !track.isLocked else { throw EditError.locked }
         track.offset = track.clampedOffset(offset, sequenceDuration: project.duration)
         project.referenceAudio = track
+    }
+}
+
+/// Turns the picture to 16:9 (or back to 9:16). Clips keep their framing, refitted to the new shape.
+public struct SetOrientationCommand: EditingCommand {
+    public let landscape: Bool
+    public init(landscape: Bool) { self.landscape = landscape }
+    public var actionName: String { landscape ? "Horizontal 16:9" : "Vertical 9:16" }
+    public func apply(to project: inout Project) throws {
+        project.exportSettings = project.exportSettings.oriented(landscape: landscape)
     }
 }
 

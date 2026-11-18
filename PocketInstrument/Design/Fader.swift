@@ -33,9 +33,14 @@ struct Fader: View {
                 let travel = max(1, geo.size.width - thumbWidth)
                 let x = CGFloat(shown) * travel
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.obsidian)
-                        .overlay(Capsule().strokeBorder(Theme.hairline))
-                        .frame(height: 6)
+                    // A slot cut into the panel.
+                    Capsule().fill(Color.black.shadow(.inner(color: .black, radius: 2, y: 1)))
+                        .overlay(
+                            Capsule().strokeBorder(
+                                LinearGradient(
+                                    colors: [.clear, Color.white.opacity(0.12)], startPoint: .top, endPoint: .bottom))
+                        )
+                        .frame(height: 8)
                     Capsule()
                         .fill(
                             LinearGradient(
@@ -43,13 +48,32 @@ struct Fader: View {
                         )
                         .frame(width: x + thumbWidth / 2, height: 6)
                         .opacity(isEnabled ? 1 : 0.3)
+                    // A machined cap with grip ridges and a Signal index line.
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(
-                            LinearGradient(colors: [Theme.ivory, Theme.aluminum], startPoint: .top, endPoint: .bottom)
+                            LinearGradient(
+                                colors: [Theme.ivory, Theme.aluminum, Color(hex: 0x8F9186)], startPoint: .top,
+                                endPoint: .bottom)
                         )
-                        .overlay(Rectangle().fill(Theme.obsidian).frame(width: 1.5, height: 14))
-                        .frame(width: thumbWidth, height: 26)
-                        .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
+                        .overlay(
+                            VStack(spacing: 2.5) {
+                                ForEach(0..<6, id: \.self) { i in
+                                    Rectangle()
+                                        .fill(i == 2 || i == 3 ? Theme.obsidian : Color.black.opacity(0.25))
+                                        .frame(height: 1)
+                                }
+                            }
+                            .padding(.horizontal, 3)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .strokeBorder(
+                                    LinearGradient(
+                                        colors: [Color.white.opacity(0.8), Color.black.opacity(0.4)], startPoint: .top,
+                                        endPoint: .bottom), lineWidth: 0.8)
+                        )
+                        .frame(width: thumbWidth, height: 28)
+                        .shadow(color: .black.opacity(0.6), radius: 2.5, y: 2)
                         .offset(x: x)
                 }
                 .frame(maxHeight: .infinity)

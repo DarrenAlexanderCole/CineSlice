@@ -158,6 +158,40 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertTrue(store.listProjects().isEmpty)
     }
 
+    func testTurningToLandscapeSwapsTheFrame() throws {
+        var p = Project(name: "Turn")
+        var undo = UndoStack()
+        try undo.perform(SetOrientationCommand(landscape: true), on: &p)
+        XCTAssertEqual([p.exportSettings.width, p.exportSettings.height], [1920, 1080])
+        XCTAssertEqual(p.exportSettings.aspectLabel, "16:9")
+        XCTAssertEqual(undo.undo(&p), "Horizontal 16:9")
+        XCTAssertEqual(p.exportSettings, .vertical1080)
+        XCTAssertEqual(p.exportSettings.aspectLabel, "9:16")
+    }
+
+    func testCropStaysInsideTheFrameAndUndoes() throws {
+        var p = Project(name: "Crop")
+        let s = SourceAsset(fileName: "a.mov", duration: MediaTime(seconds: 4), width: 1920, height: 1080)
+        try AddClipsCommand(sources: [s]).apply(to: &p)
+        let id = p.clips[0].id
+        // Pushed in 2× near the right edge: kept inside the frame.
+        let crop = Crop.full.sized(0.5).centred(at: 0.95, 0.5)
+        XCTAssertEqual(crop, Crop(x: 0.5, y: 0.25, size: 0.5))
+        XCTAssertEqual(Crop(x: 0, y: 0, size: 0.1).size, Crop.minSize)
+        var undo = UndoStack()
+        try undo.perform(SetCropCommand(clipID: id, crop: crop), on: &p)
+        XCTAssertEqual(p.clips[0].crop, crop)
+        // It survives a save.
+        let data = try ProjectStore.encoder.encode(p)
+        XCTAssertEqual(try ProjectStore.decoder.decode(Project.self, from: data).clips[0].crop, crop)
+        // A full-frame crop is no crop.
+        try undo.perform(SetCropCommand(clipID: id, crop: .full), on: &p)
+        XCTAssertNil(p.clips[0].crop)
+        XCTAssertEqual(undo.undo(&p), "Reset Crop")
+        XCTAssertEqual(undo.undo(&p), "Crop Clip")
+        XCTAssertNil(p.clips[0].crop)
+    }
+
     func testOlderFileWithMissingFieldsDecodes() throws {
         let json = """
             {"id":"\(UUID().uuidString)","name":"Old","createdAt":0}

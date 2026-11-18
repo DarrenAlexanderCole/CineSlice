@@ -33,6 +33,7 @@ final class WorkspaceModel {
                 curveDraft = nil
                 selectedCurvePoint = nil
             }
+            cropDraft = nil
         }
     }
     /// Explore only: loops the clip's in/out range. Arrange and Mix use the project's loop region.
@@ -149,7 +150,8 @@ final class WorkspaceModel {
         if mode == .explore, selectedClip == nil { mode = .arrange }
         if previous.referenceAudio?.fileName != project.referenceAudio?.fileName { loadWaveform() }
         scheduleSave()
-        if mode != .explore, Self.playbackShape(previous) == Self.playbackShape(project) {
+        if selectedClip == nil { isCropping = false }
+        if mode != .explore, Self.playbackShape(previewed(previous)) == Self.playbackShape(previewed(project)) {
             // Levels or loop only: adjust the live item instead of reloading it, so playback doesn't stutter.
             applyLevels()
             updateLoopRange()
@@ -170,8 +172,17 @@ final class WorkspaceModel {
         shape.referenceAudio?.volume = 1
         shape.automation = Automation()
         shape.loop = nil
-        shape.exportSettings = .vertical1080  // preview always plays the full mix; the policy is export-only
+        shape.exportSettings.soundPolicy = nil  // preview always plays the full mix; the policy is export-only
         return shape
+    }
+
+    /// What the preview plays: while cropping, the selected clip shows its whole frame, so its
+    /// crop can be drawn over it and moved.
+    private func previewed(_ p: Project) -> Project {
+        guard isCropping, let id = selectedClipID, let i = p.index(ofClip: id) else { return p }
+        var shown = p
+        shown.clips[i].crop = nil
+        return shown
     }
 
     // MARK: Persistence
@@ -204,7 +215,7 @@ final class WorkspaceModel {
     /// Rebuilds the sequence composition (debounced so rapid edits don't thrash the player).
     func rebuildSequence(keepingTime time: MediaTime, resume: Bool? = nil) {
         rebuildTask?.cancel()
-        let snapshot = project
+        let snapshot = previewed(project)
         let store = self.store
         isRebuilding = true
         rebuildTask = Task { [weak self] in
@@ -268,10 +279,16 @@ final class WorkspaceModel {
     // MARK: Selection & modes
 
     func select(_ clipID: UUID) {
+        let changed = clipID != selectedClipID
         selectedClipID = clipID
         Haptics.detent()
         if mode != .explore, let start = sequenceMap.compositionStart(of: clipID) {
-            engine.seek(to: start.cmTime, precise: true)
+            // Cropping, the newly selected clip is the one shown whole.
+            if isCropping, changed {
+                rebuildSequence(keepingTime: start)
+            } else {
+                engine.seek(to: start.cmTime, precise: true)
+            }
         }
         updateLoopRange()
     }
@@ -280,6 +297,7 @@ final class WorkspaceModel {
         guard newMode != mode else { return }
         Haptics.detent()
         if newMode != .mix { curveEditTarget = nil }
+        if newMode != .arrange { setCropping(false) }
         switch newMode {
         case .explore:
             enterExplore()
@@ -384,6 +402,45 @@ final class WorkspaceModel {
         perform(SetFramingCommand(clipID: clipID, framing: clip.framing == .fill ? .fit : .fill))
     }
     func rename(_ name: String) { perform(RenameProjectCommand(name: name)) }
+
+    // MARK: Crop
+
+    /// Arrange: the selected clip's crop (its push-in) is being set. That clip then plays whole,
+    /// with the crop drawn over it to move and size.
+    private(set) var isCropping = false
+    /// The crop while a finger is moving it, committed on release as one undo step.
+    var cropDraft: Crop?
+
+    /// The crop drawn over the picture while cropping.
+    var shownCrop: Crop { cropDraft ?? selectedClip?.crop ?? .full }
+
+    /// Starts or stops cropping the selected clip. Starting brings the playhead into that clip.
+    func setCropping(_ on: Bool) {
+        guard on != isCropping else { return }
+        guard !on || (mode == .arrange && selectedClip != nil) else { return }
+        isCropping = on
+        cropDraft = nil
+        var time = currentTime
+        if on, let id = selectedClipID, clipUnderPlayhead != id, let start = sequenceMap.compositionStart(of: id) {
+            time = start
+        }
+        rebuildSequence(keepingTime: time)
+        Haptics.detent()
+    }
+
+    func commitCrop() {
+        guard let id = selectedClipID, let draft = cropDraft else { return }
+        cropDraft = nil
+        guard draft != (selectedClip?.crop ?? .full) else { return }
+        perform(SetCropCommand(clipID: id, crop: draft))
+    }
+
+    func resetCrop() {
+        guard let id = selectedClipID, selectedClip?.crop != nil else { return }
+        cropDraft = nil
+        perform(SetCropCommand(clipID: id, crop: nil))
+        Haptics.press()
+    }
     func setSoundPolicy(_ policy: SoundPolicy) {
         var settings = project.exportSettings
         settings.soundPolicy = policy
@@ -767,6 +824,14 @@ final class WorkspaceModel {
     func toggleMusicLock() {
         perform(SetMusicLockCommand(isLocked: !isMusicLocked))
         Haptics.detent()
+    }
+
+    var isLandscape: Bool { project.exportSettings.isLandscape }
+
+    /// Turns the picture between 9:16 and 16:9 (one undo step); the sequence rebuilds to match.
+    func toggleOrientation() {
+        perform(SetOrientationCommand(landscape: !isLandscape))
+        Haptics.press()
     }
 
     func removeMusic() { perform(SetReferenceAudioCommand(track: nil)) }

@@ -7,6 +7,8 @@ struct InstrumentButtonStyle: ButtonStyle {
 
     var kind: Kind = .dark
     var isActive = false
+    /// Slimmer keys (the mode strip) trade height for room; they stay full width to tap.
+    var height: CGFloat = Theme.minTouch
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -16,37 +18,16 @@ struct InstrumentButtonStyle: ButtonStyle {
             .font(Theme.caption)
             .textCase(.uppercase)
             .foregroundStyle(foreground)
-            .frame(minWidth: Theme.minTouch, minHeight: Theme.minTouch)
-            .padding(.horizontal, 10)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                    .fill(fill)
-                    .shadow(color: .black.opacity(0.55), radius: pressed ? 1 : 4, y: pressed ? 1 : 3)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                    .strokeBorder(isActive ? Theme.signal : Theme.hairline, lineWidth: isActive ? 1.5 : 1)
-                    .shadow(color: isActive ? Theme.signal.opacity(0.6) : .clear, radius: 6)
-            )
-            .offset(y: pressed ? 2 : 0)
+            .shadow(color: isActive && kind == .dark ? Theme.signal.opacity(0.7) : .clear, radius: 4)
+            .frame(minWidth: height < Theme.minTouch ? 34 : Theme.minTouch, minHeight: height)
+            .padding(.horizontal, height < Theme.minTouch ? 6 : 10)
+            .offset(y: pressed ? 1.5 : 0)
+            .background(KeyCap(kind: kind, isLit: isActive, isPressed: pressed, compact: height < Theme.minTouch))
             .opacity(isEnabled ? 1 : 0.4)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.08), value: pressed)
             .onChange(of: pressed) { _, isDown in
                 if isDown { Haptics.press() }
             }
-    }
-
-    private var fill: LinearGradient {
-        switch kind {
-        case .key:
-            return LinearGradient(colors: [Theme.ivory, Theme.aluminum], startPoint: .top, endPoint: .bottom)
-        case .prominent:
-            return LinearGradient(
-                colors: [Theme.signal, Theme.signal.opacity(0.8)], startPoint: .top, endPoint: .bottom)
-        case .dark:
-            return LinearGradient(
-                colors: [Theme.instrument.opacity(1.0), Theme.obsidian], startPoint: .top, endPoint: .bottom)
-        }
     }
 
     private var foreground: Color {
@@ -57,9 +38,132 @@ struct InstrumentButtonStyle: ButtonStyle {
     }
 }
 
+/// A machined key: a cap seated in a dark well, bevelled light on top and shadowed below, that
+/// sinks when pressed. Dark caps are graphite, `.key` caps brushed aluminum, `.prominent` Signal.
+/// A lit cap shows an LED and a Signal ring.
+struct KeyCap: View {
+    var kind: InstrumentButtonStyle.Kind = .dark
+    var isLit = false
+    var isPressed = false
+    var compact = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: compact ? 8 : Theme.cornerRadius, style: .continuous)
+        ZStack {
+            // The well the key sits in, with a faint lit lip below it.
+            shape.fill(Color.black.opacity(0.75)).padding(-2).offset(y: 1.5)
+            shape.stroke(Color.white.opacity(0.07), lineWidth: 1).padding(-2.5).offset(y: 2.5)
+            shape.fill(fill)
+                .overlay {
+                    if kind == .key { BrushedMetal(strength: 0.6).clipShape(shape).blendMode(.multiply) }
+                }
+                .overlay(Grain(opacity: kind == .dark ? 0.45 : 0.3).clipShape(shape))
+                // A domed top: light pools in the upper middle of the cap.
+                .overlay(
+                    shape.fill(
+                        EllipticalGradient(
+                            colors: [Color.white.opacity(isPressed ? 0.02 : (kind == .dark ? 0.13 : 0.35)), .clear],
+                            center: UnitPoint(x: 0.5, y: 0.05), startRadiusFraction: 0, endRadiusFraction: 0.75))
+                )
+                .overlay(
+                    // Bevel: catches light along the top, falls into shadow along the bottom.
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(isPressed ? 0.05 : (kind == .dark ? 0.24 : 0.75)),
+                                Color.white.opacity(0.02), Color.black.opacity(0.55),
+                            ], startPoint: .top, endPoint: .bottom),
+                        lineWidth: 1.3)
+                )
+                .overlay(
+                    shape.strokeBorder(isLit ? Theme.signal : .clear, lineWidth: 1.4)
+                        .shadow(color: isLit ? Theme.signal.opacity(0.75) : .clear, radius: 7)
+                )
+                .overlay(alignment: compact ? .leading : .topTrailing) {
+                    if isLit {
+                        LED(isOn: true).padding(compact ? 8 : 5)
+                    }
+                }
+                .shadow(
+                    color: .black.opacity(isPressed ? 0.3 : 0.85), radius: isPressed ? 0.5 : 1, y: isPressed ? 0.5 : 1.5
+                )
+                .shadow(color: .black.opacity(isPressed ? 0 : 0.45), radius: 6, y: 4)
+                .offset(y: isPressed ? 1.5 : 0)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var fill: LinearGradient {
+        switch kind {
+        case .key:
+            LinearGradient(
+                colors: isPressed
+                    ? [Theme.aluminum, Theme.ivory] : [Theme.ivory, Theme.aluminum, Color(hex: 0x9C9E91)],
+                startPoint: .top, endPoint: .bottom)
+        case .prominent:
+            LinearGradient(
+                colors: [Color(hex: 0xE1EA80), Theme.signal, Color(hex: 0x9EA83E)], startPoint: .top, endPoint: .bottom)
+        case .dark:
+            LinearGradient(
+                colors: isPressed
+                    ? [Theme.obsidian, Color(hex: 0x262C25)]
+                    : [Color(hex: 0x434C40), Theme.instrument, Color(hex: 0x1B201A)],
+                startPoint: .top, endPoint: .bottom)
+        }
+    }
+}
+
+/// Fine horizontal grain, like brushed metal. Deterministic, so it never shimmers on redraw.
+struct BrushedMetal: View {
+    var strength: Double = 1
+
+    var body: some View {
+        Canvas { context, size in
+            var y: CGFloat = 0
+            var i: UInt32 = 0
+            while y < size.height {
+                i &+= 1
+                // A cheap hash gives each line its own steady brightness.
+                let h = (i &* 2_654_435_761) >> 24
+                let shade = Double(h) / 255
+                let color = shade > 0.5 ? Color.white : Color.black
+                context.fill(
+                    Path(CGRect(x: 0, y: y, width: size.width, height: 0.6)),
+                    with: .color(color.opacity(abs(shade - 0.5) * 0.12 * strength)))
+                y += 1
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    /// Sets the view into the panel like a screen: a dark well with an inner shadow along its
+    /// top and a faint lit lip along the bottom.
+    func recessed(cornerRadius: CGFloat = Theme.cornerRadius, padding: CGFloat = 0) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        return self.padding(padding)
+            .background(
+                shape.fill(Theme.obsidian.shadow(.inner(color: .black.opacity(0.9), radius: 4, y: 2)))
+            )
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.6), .clear, Color.white.opacity(0.09)], startPoint: .top,
+                        endPoint: .bottom),
+                    lineWidth: 1
+                )
+                .allowsHitTesting(false)
+            )
+    }
+}
+
 extension ButtonStyle where Self == InstrumentButtonStyle {
-    static func instrument(_ kind: InstrumentButtonStyle.Kind = .dark, active: Bool = false) -> InstrumentButtonStyle {
-        InstrumentButtonStyle(kind: kind, isActive: active)
+    static func instrument(
+        _ kind: InstrumentButtonStyle.Kind = .dark, active: Bool = false, height: CGFloat = Theme.minTouch
+    ) -> InstrumentButtonStyle {
+        InstrumentButtonStyle(kind: kind, isActive: active, height: height)
     }
 }
 
@@ -105,13 +209,14 @@ struct LED: View {
     }
 }
 
-/// A jog/shuttle wheel seen edge-on. Near where the finger lands it jogs: a frame per detent,
-/// right is forward. With `onShuttle`, pushing further out plays: the speed steps up the
-/// further out it goes (¼×, ½×, 1×, 2×, 4× at the edge, backwards to the left) and letting go
-/// stops. Without it (moving a curve point), the whole travel jogs, gathering frames faster on
-/// quick drags. The wheel never edits anything itself.
+/// A jog/shuttle wheel: a fat knurled aluminum drum seen edge-on in a recessed slot, turned by
+/// dragging sideways (right is forward). It follows the finger one to one. Near where the finger
+/// lands it jogs, a frame per detent. With `onShuttle`, pushing further out plays: the speed steps
+/// up quickly the further out it goes (¼×, ½×, 1×, 2×, 4×, backwards to the left), lit on the
+/// LED meter above the drum, and letting go stops. Without it (moving a curve point), the whole
+/// travel jogs, gathering frames faster on quick drags. The wheel never edits by itself.
 struct JogDial: View {
-    /// What a turn moves, shown on the wheel (e.g. "JOG", "POINT").
+    /// What a turn moves, shown above the drum (e.g. "JOG", "POINT").
     var title: String
     var onStep: (Int) -> Void
     /// Pushed out of the middle: the speed to play at; nil back in the middle or when let go.
@@ -119,15 +224,19 @@ struct JogDial: View {
     var onEnd: () -> Void = {}
 
     /// Points of travel per frame while jogging.
-    private static let pointsPerFrame: CGFloat = 9
+    private static let pointsPerFrame: CGFloat = 6
     /// How far either side of the touch-down point still jogs.
-    private static let jogZone: CGFloat = 30
-    /// Shuttle speeds, slowest first; the last is reached near the dial's edge.
+    private static let jogZone: CGFloat = 22
+    /// Travel beyond the jog zone to reach the fastest shuttle speed.
+    private static let shuttleReach: CGFloat = 80
+    /// Shuttle speeds, slowest first.
     static let shuttleRates: [Float] = [0.25, 0.5, 1, 2, 4]
-    /// How fast the ticks spin per unit of shuttle speed (points per second).
-    private static let spinSpeed: CGFloat = 45
+    /// How fast the drum spins per unit of shuttle speed (points per second).
+    private static let spinSpeed: CGFloat = 60
+    /// Spacing of the knurled ridges round the drum.
+    private static let ridgeSpacing: CGFloat = 11
+    static let drumHeight: CGFloat = 58
 
-    @State private var width: CGFloat = 300
     @State private var turn: CGFloat = 0
     @State private var last: (translation: CGFloat, time: Date)?
     @State private var pending: CGFloat = 0
@@ -142,72 +251,131 @@ struct JogDial: View {
     }
 
     var body: some View {
-        TimelineView(.animation(paused: level == 0)) { timeline in
-            let spin = CGFloat(rate ?? 0) * Self.spinSpeed * CGFloat(timeline.date.timeIntervalSince(spinStart))
-            wheel(turn: turn + spin)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Theme.obsidian, Theme.instrument, Theme.obsidian], startPoint: .leading,
-                        endPoint: .trailing))
-        )
-        .overlay(alignment: .leading) { tag(title, color: Theme.secondaryLabel) }
-        .overlay(alignment: .trailing) {
-            if let rate { tag(Self.label(rate), color: Theme.signal) }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                .strokeBorder(last == nil ? Theme.hairline : Theme.signal.opacity(0.7))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-        .frame(height: Theme.minTouch)
-        .onGeometryChange(for: CGFloat.self) {
-            $0.size.width
-        } action: {
-            width = $0
+        VStack(spacing: 5) {
+            meter
+            TimelineView(.animation(paused: level == 0)) { timeline in
+                let spin = CGFloat(rate ?? 0) * Self.spinSpeed * CGFloat(timeline.date.timeIntervalSince(spinStart))
+                drum(turn: turn + spin)
+            }
+            .frame(height: Self.drumHeight)
+            .padding(4)
+            .recessed(cornerRadius: 14, padding: 0)
+            .overlay(alignment: .top) {
+                // The fixed index: a Signal notch in the slot's top lip.
+                Triangle().fill(Theme.signal)
+                    .frame(width: 10, height: 6)
+                    .shadow(color: Theme.signal.opacity(0.9), radius: 3)
+                    .offset(y: -1)
+            }
+            .contentShape(Rectangle())
+            .gesture(isEnabled ? turnGesture : nil)
+            .accessibilityElement()
+            .accessibilityLabel("Jog dial")
+            .accessibilityValue(rate.map(Self.label) ?? title.capitalized)
+            .accessibilityHint("Swipe up or down to move one frame.")
+            .accessibilityAdjustableAction { direction in onStep(direction == .increment ? 1 : -1) }
         }
         .opacity(isEnabled ? 1 : 0.4)
-        .contentShape(Rectangle())
-        .gesture(isEnabled ? turnGesture : nil)
-        .accessibilityElement()
-        .accessibilityLabel("Jog dial")
-        .accessibilityValue(rate.map(Self.label) ?? title.capitalized)
-        .accessibilityHint("Swipe up or down to move one frame.")
-        .accessibilityAdjustableAction { direction in onStep(direction == .increment ? 1 : -1) }
     }
 
-    private func wheel(turn: CGFloat) -> some View {
-        Canvas { context, size in
-            let radius = size.width / 2
-            let spacing = Self.pointsPerFrame
-            let phase = turn.truncatingRemainder(dividingBy: spacing)
-            let count = Int(radius * .pi / 2 / spacing) + 2
-            for k in -count...count {
-                let angle = (CGFloat(k) * spacing + phase) / radius
-                guard abs(angle) < .pi / 2 else { continue }
-                let x = radius + radius * sin(angle)
-                let depth = cos(angle)
-                let height = size.height * (0.32 + 0.3 * depth)
-                let rect = CGRect(
-                    x: x - 1, y: (size.height - height) / 2, width: max(1, 2.2 * depth), height: height)
-                context.fill(Path(rect), with: .color(Theme.aluminum.opacity(0.15 + 0.6 * Double(depth))))
+    /// The title, an LED meter of the shuttle speed either side of centre, and the speed.
+    private var meter: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(Theme.mono(9, weight: .bold))
+                .foregroundStyle(Theme.secondaryLabel)
+                .frame(width: 40, alignment: .leading)
+            HStack(spacing: 3) {
+                ForEach((1...Self.shuttleRates.count).reversed(), id: \.self) { segment(lit: level <= -$0) }
+                Circle().fill(level == 0 && last != nil ? Theme.signal : Theme.ivory.opacity(0.35))
+                    .frame(width: 5, height: 5)
+                ForEach(1...Self.shuttleRates.count, id: \.self) { segment(lit: level >= $0) }
             }
-            let index = CGRect(x: radius - 1, y: 4, width: 2, height: size.height - 8)
-            context.fill(Path(roundedRect: index, cornerRadius: 1), with: .color(Theme.signal))
+            .frame(maxWidth: .infinity)
+            Text(rate.map(Self.label) ?? "")
+                .font(Theme.mono(9, weight: .bold))
+                .foregroundStyle(Theme.signal)
+                .frame(width: 40, alignment: .trailing)
         }
+        .padding(.horizontal, 6)
+        .accessibilityHidden(true)
     }
 
-    private func tag(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(Theme.mono(9))
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(Theme.obsidian))
-            .padding(.horizontal, 6)
-            .allowsHitTesting(false)
+    private func segment(lit: Bool) -> some View {
+        Capsule()
+            .fill(lit ? Theme.signal : Color.black.opacity(0.55))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(lit ? 0 : 0.08), lineWidth: 0.5))
+            .frame(minWidth: 6, maxWidth: 14, minHeight: 4, maxHeight: 4)
+            .shadow(color: lit ? Theme.signal.opacity(0.9) : .clear, radius: 3)
+    }
+
+    /// The drum: brushed aluminum shaded round a vertical axis, its knurled ridges sliding past
+    /// with the turn and crowding together towards the ends.
+    private func drum(turn: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return ZStack {
+            shape.fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: Color(hex: 0x2A2D26), location: 0),
+                        .init(color: Color(hex: 0x8E9185), location: 0.14),
+                        .init(color: Theme.ivory, location: 0.4),
+                        .init(color: Theme.aluminum, location: 0.6),
+                        .init(color: Color(hex: 0x7C7F73), location: 0.86),
+                        .init(color: Color(hex: 0x23261F), location: 1),
+                    ], startPoint: .leading, endPoint: .trailing))
+            BrushedMetal(strength: 1.4).clipShape(shape).blendMode(.multiply)
+            Canvas { context, size in
+                let radius = size.width / 2
+                let spacing = Self.ridgeSpacing
+                let phase = turn.truncatingRemainder(dividingBy: spacing)
+                let count = Int(radius * .pi / 2 / spacing) + 2
+                for k in -count...count {
+                    let angle = (CGFloat(k) * spacing + phase) / radius
+                    guard abs(angle) < .pi / 2 * 0.97 else { continue }
+                    let x = radius + radius * sin(angle)
+                    let depth = cos(angle)
+                    let groove = max(0.8, 4 * depth)
+                    // A dark groove with a lit edge on the side facing the light.
+                    context.fill(
+                        Path(CGRect(x: x - groove / 2, y: 5, width: groove, height: size.height - 10)),
+                        with: .color(Color.black.opacity(0.22 + 0.33 * Double(depth))))
+                    context.fill(
+                        Path(CGRect(x: x + groove / 2, y: 5, width: max(0.5, 1.6 * depth), height: size.height - 10)),
+                        with: .color(Color.white.opacity(0.12 + 0.5 * Double(depth))))
+                }
+            }
+            .clipShape(shape)
+            Grain(opacity: 0.35).clipShape(shape)
+            // A hot spot where the light catches the drum's curve.
+            shape.fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.28), .init(color: .white.opacity(0.45), location: 0.38),
+                        .init(color: .clear, location: 0.5),
+                    ], startPoint: .leading, endPoint: .trailing)
+            )
+            .blendMode(.screen)
+            // Light along the top lip, shade along the bottom: the drum's rim.
+            shape.fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.white.opacity(0.35), location: 0),
+                        .init(color: .clear, location: 0.18),
+                        .init(color: .clear, location: 0.75),
+                        .init(color: Color.black.opacity(0.45), location: 1),
+                    ], startPoint: .top, endPoint: .bottom))
+            if level != 0 {
+                shape.strokeBorder(Theme.signal.opacity(0.8), lineWidth: 1.5)
+                    .shadow(color: Theme.signal.opacity(0.8), radius: 5)
+            }
+            Rectangle().fill(Theme.signal.opacity(0.85))
+                .frame(width: 1.5)
+                .padding(.vertical, 2)
+                .blendMode(.plusLighter)
+        }
+        .shadow(color: .black.opacity(0.7), radius: 2, y: 2)
+        .accessibilityHidden(true)
     }
 
     /// "▶ 2×", "◀ ½×" and so on.
@@ -225,10 +393,8 @@ struct JogDial: View {
     private func shuttleLevel(_ offset: CGFloat) -> Int {
         let distance = abs(offset)
         guard distance > Self.jogZone else { return 0 }
-        // From the edge of the jog zone to near the dial's edge (for a touch in the middle).
-        let reach = max(width * 0.45 - Self.jogZone, 40)
         let steps = Self.shuttleRates.count
-        let step = min(steps, 1 + Int((distance - Self.jogZone) / reach * CGFloat(steps)))
+        let step = min(steps, 1 + Int((distance - Self.jogZone) / Self.shuttleReach * CGFloat(steps)))
         return offset > 0 ? step : -step
     }
 
@@ -277,5 +443,158 @@ struct JogDial: View {
                 pending = 0
                 onEnd()
             }
+    }
+}
+
+/// A small triangle pointing down, for index marks.
+struct Triangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+            p.closeSubpath()
+        }
+    }
+}
+
+/// Spun metal, as on a machined knob or round key: a conical sheen turning about the centre,
+/// fine concentric rings, and grain.
+struct SpunMetal: View {
+    var tint: Color = Theme.aluminum
+    var rings = true
+
+    var body: some View {
+        ZStack {
+            Circle().fill(tint)
+            Circle().fill(
+                AngularGradient(
+                    colors: [
+                        .white.opacity(0.55), .black.opacity(0.25), .white.opacity(0.35), .black.opacity(0.3),
+                        .white.opacity(0.55), .black.opacity(0.25), .white.opacity(0.35), .black.opacity(0.3),
+                        .white.opacity(0.55),
+                    ], center: .center)
+            )
+            .blendMode(.overlay)
+            if rings {
+                Canvas { context, size in
+                    let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                    var r: CGFloat = 2
+                    var i = 0
+                    while r < size.width / 2 {
+                        i += 1
+                        let shade = (i * 7919) % 5 == 0 ? Color.white : Color.black
+                        context.stroke(
+                            Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
+                            with: .color(shade.opacity(0.06)), lineWidth: 0.6)
+                        r += 1.2
+                    }
+                }
+            }
+            Grain(opacity: 0.35).clipShape(Circle())
+        }
+        .compositingGroup()
+        .accessibilityHidden(true)
+    }
+}
+
+/// A round machined key, like a transport button on a deck: a spun-metal cap in a dark bezel
+/// ring, domed, sinking when pressed. Lit keys glow Signal; `prominent` is a Signal cap.
+struct RoundKeyStyle: ButtonStyle {
+    var diameter: CGFloat = 48
+    var isLit = false
+    var prominent = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed
+        RoundKeyFace(diameter: diameter, isLit: isLit, prominent: prominent, isPressed: pressed) {
+            configuration.label
+        }
+        .opacity(isEnabled ? 1 : 0.4)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.08), value: pressed)
+        .onChange(of: pressed) { _, isDown in
+            if isDown { Haptics.press() }
+        }
+    }
+}
+
+/// The look of a round key, for places a button style can't reach (a menu's label).
+struct RoundKeyFace<Label: View>: View {
+    var diameter: CGFloat = 48
+    var isLit = false
+    var prominent = false
+    var isPressed = false
+    @ViewBuilder var label: Label
+
+    var body: some View {
+        let pressed = isPressed
+        let face = prominent ? Theme.signal : Theme.aluminum
+        label
+            .font(.system(size: diameter * 0.32, weight: .bold))
+            .foregroundStyle(prominent ? Theme.obsidian : (isLit ? Theme.signal : Color(hex: 0x23281F)))
+            .shadow(color: .white.opacity(prominent ? 0.25 : 0.45), radius: 0, y: 1)
+            .offset(y: pressed ? 1.5 : 0)
+            .frame(width: diameter, height: diameter)
+            .background {
+                ZStack {
+                    // Bezel ring set into the panel.
+                    Circle().fill(Color.black.opacity(0.8)).padding(-5).offset(y: 1)
+                    Circle()
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [Color.black.opacity(0.7), Color.white.opacity(0.12)], startPoint: .top,
+                                endPoint: .bottom), lineWidth: 1.5
+                        )
+                        .padding(-5)
+                    if isLit || prominent {
+                        Circle().strokeBorder(Theme.signal.opacity(isLit ? 0.9 : 0.4), lineWidth: 2)
+                            .padding(-4)
+                            .shadow(color: Theme.signal.opacity(0.8), radius: isLit ? 8 : 4)
+                    }
+                    SpunMetal(tint: pressed ? face.opacity(0.85) : face)
+                        .overlay(
+                            Circle().fill(
+                                RadialGradient(
+                                    colors: [.white.opacity(pressed ? 0.05 : 0.3), .clear],
+                                    center: UnitPoint(x: 0.5, y: 0.15), startRadius: 0, endRadius: diameter * 0.6))
+                        )
+                        .overlay(
+                            Circle().strokeBorder(
+                                LinearGradient(
+                                    colors: [.white.opacity(0.8), .black.opacity(0.5)], startPoint: .top,
+                                    endPoint: .bottom),
+                                lineWidth: 1)
+                        )
+                        .shadow(
+                            color: .black.opacity(pressed ? 0.3 : 0.8), radius: pressed ? 0.5 : 2, y: pressed ? 0.5 : 2
+                        )
+                        .offset(y: pressed ? 1.5 : 0)
+                }
+            }
+            .frame(width: diameter + 10, height: diameter + 10)
+            .contentShape(Circle())
+    }
+}
+
+extension ButtonStyle where Self == RoundKeyStyle {
+    static func round(_ diameter: CGFloat = 48, lit: Bool = false, prominent: Bool = false) -> RoundKeyStyle {
+        RoundKeyStyle(diameter: diameter, isLit: lit, prominent: prominent)
+    }
+}
+
+/// A slotted screw head, for panel corners.
+struct Screw: View {
+    var angle: Double = 30
+
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.black.opacity(0.6)).padding(-1).offset(y: 0.5)
+            SpunMetal(tint: Theme.aluminum.opacity(0.9), rings: false)
+            Capsule().fill(Color.black.opacity(0.65)).frame(width: 7, height: 1.6).rotationEffect(.degrees(angle))
+        }
+        .frame(width: 9, height: 9)
+        .accessibilityHidden(true)
     }
 }

@@ -21,17 +21,20 @@ struct MixDeck: View {
         VStack(spacing: 10) {
             SequenceLane(model: model, waveformDrag: .slideMusic, showsAutomation: true)
             if model.curveEditTarget != nil {
-                curveJog
+                // Editing a curve, the lane grows; the music's alignment steps aside to make room.
+                EmptyView()
             } else if let music = model.project.referenceAudio {
                 alignment(music)
             } else {
                 emptyMusic
             }
-            MixClipPicker(model: model)
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 WriteKey(model: model)
                 EditKey(model: model)
                 ClearKey(model: model)
+                MixClipPicker(model: model)
+            }
+            HStack(spacing: 14) {
                 Fader(
                     title: faderTitle(clipFaderTitle, .clipAudio), value: model.faderLevel(.clipAudio),
                     onChange: { model.faderMoved(.clipAudio, to: $0) },
@@ -48,26 +51,24 @@ struct MixDeck: View {
                 )
                 .disabled(model.project.referenceAudio == nil)
             }
-            TransportRow(model: model) {
-                musicMenu
+            .padding(.horizontal, 4)
+            TransportRow(
+                model: model, jogTitle: movesPoint ? "POINT" : "JOG",
+                onJog: movesPoint ? { model.jogCurvePoint(by: $0) } : nil, shuttles: !movesPoint,
+                onJogEnd: { model.endJog() }
+            ) {
+                HStack(spacing: 8) {
+                    musicMenu
+                    LaneZoomKey(model: model)
+                }
             } trailing: {
                 LoopButton(model: model)
             }
         }
     }
 
-    /// While editing a curve the music's alignment gives way to the jog dial: it moves the
-    /// selected point a frame at a time, or jogs and shuttles the playhead when no point is selected.
-    private var curveJog: some View {
-        let movesPoint = model.selectedCurveHandle != nil
-        return JogDial(
-            title: movesPoint ? "POINT" : "JOG",
-            onStep: { movesPoint ? model.jogCurvePoint(by: $0) : model.jog(by: $0) },
-            onShuttle: movesPoint ? nil : { model.shuttle($0) },
-            onEnd: { model.endJog() }
-        )
-        .frame(minHeight: 70)
-    }
+    /// Editing a curve with a point tapped, the wheel slides that point instead of the playhead.
+    private var movesPoint: Bool { model.curveEditTarget != nil && model.selectedCurveHandle != nil }
 
     private func faderTitle(_ title: String, _ target: AutomationTarget) -> String {
         model.isAutomated(target) ? "\(title) · AUTO" : title
@@ -96,50 +97,44 @@ struct MixDeck: View {
         .frame(maxWidth: .infinity, minHeight: 100)
     }
 
-    /// Where the song sits relative to the video, with frame and 10 ms nudges, and the lock
-    /// that keeps it there once lined up.
+    /// Where the song sits relative to the video, in one row: frame and 10 ms nudges either side
+    /// of the lock, which shows the song's position and keeps it there once lined up.
     private func alignment(_ music: AudioTrack) -> some View {
         let startsBefore = music.offset <= .zero
         let frame = model.sequenceFrame
         let fine = WorkspaceModel.tenMilliseconds
-        return VStack(spacing: 6) {
-            HStack {
-                Text(startsBefore ? "SONG AT VIDEO START" : "SONG ENTERS AT")
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.secondaryLabel)
-                Spacer()
-                if music.isLocked {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 11, weight: .semibold))
+        let clock = MusicSyncNote.clock(abs(music.offset.seconds))
+        return HStack(spacing: 6) {
+            nudge("−1F", by: MediaTime.zero - frame, label: "Music one frame earlier")
+            nudge("−10MS", by: MediaTime.zero - fine, label: "Music 10 milliseconds earlier")
+            Button {
+                model.toggleMusicLock()
+            } label: {
+                VStack(spacing: 1) {
+                    HStack(spacing: 4) {
+                        Image(systemName: music.isLocked ? "lock.fill" : "lock.open")
+                            .font(.system(size: 10, weight: .bold))
+                        Text(startsBefore ? "SONG AT 0" : "SONG IN")
+                            .font(Theme.mono(8, weight: .bold))
+                    }
+                    Text(clock)
+                        .font(Theme.mono(13, weight: .semibold))
+                        .monospacedDigit()
                         .foregroundStyle(Theme.signal)
-                        .accessibilityLabel("Locked")
                 }
-                Text(MusicSyncNote.clock(abs(music.offset.seconds)))
-                    .font(Theme.mono(15))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.signal)
+                .frame(maxWidth: .infinity)
             }
-            .accessibilityElement(children: .combine)
-            HStack(spacing: 6) {
-                nudge("−1F", by: MediaTime.zero - frame, label: "Music one frame earlier")
-                nudge("−10MS", by: MediaTime.zero - fine, label: "Music 10 milliseconds earlier")
-                Spacer(minLength: 0)
-                Button {
-                    model.toggleMusicLock()
-                } label: {
-                    Image(systemName: music.isLocked ? "lock.fill" : "lock.open")
-                        .font(.system(size: 16, weight: .semibold))
-                }
-                .buttonStyle(.instrument(active: music.isLocked))
-                .accessibilityLabel("Lock music")
-                .accessibilityValue(music.isLocked ? "Locked" : "Unlocked")
-                .accessibilityHint("Keeps the song lined up: no sliding or nudging until unlocked.")
-                Spacer(minLength: 0)
-                nudge("+10MS", by: fine, label: "Music 10 milliseconds later")
-                nudge("+1F", by: frame, label: "Music one frame later")
-            }
+            .buttonStyle(.instrument(active: music.isLocked))
+            .accessibilityLabel("Lock music")
+            .accessibilityValue(
+                (music.isLocked ? "Locked" : "Unlocked")
+                    + (startsBefore ? ", song at video start, " : ", song enters at ") + clock
+            )
+            .accessibilityHint("Keeps the song lined up: no sliding or nudging until unlocked.")
+            nudge("+10MS", by: fine, label: "Music 10 milliseconds later")
+            nudge("+1F", by: frame, label: "Music one frame later")
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 4)
     }
 
     private func nudge(_ title: String, by step: MediaTime, label: String) -> some View {
@@ -317,17 +312,9 @@ private struct KeyFace: View {
         Image(systemName: systemImage)
             .font(.system(size: 18, weight: .semibold))
             .foregroundStyle(isLit ? Theme.signal : Theme.ivory)
+            .shadow(color: isLit ? Theme.signal.opacity(0.7) : .clear, radius: 4)
             .frame(width: Theme.minTouch, height: Theme.minTouch)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [Theme.instrument, Theme.obsidian], startPoint: .top, endPoint: .bottom))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                    .strokeBorder(isLit ? Theme.signal : Theme.hairline, lineWidth: isLit ? 1.5 : 1)
-            )
+            .background(KeyCap(isLit: isLit))
     }
 }
 

@@ -11,6 +11,11 @@ enum Theme {
     static let aluminum = Color(hex: 0xBFC1B4)
     static let ivory = Color(hex: 0xECE9DD)
 
+    /// Vintage accent for name plates and rivets only.
+    static let brass = Color(hex: 0xB59A62)
+    /// Vintage accent: the sage enamel of an old table viewer, for the library's machine.
+    static let enamel = Color(hex: 0x8A9774)
+
     static let label = ivory
     static let secondaryLabel = aluminum.opacity(0.85)
     static let hairline = ivory.opacity(0.14)
@@ -24,6 +29,42 @@ enum Theme {
 
     /// Small uppercase technical label.
     static let caption = Font.system(size: 11, weight: .semibold, design: .monospaced)
+}
+
+extension Theme {
+    /// A small tile of fine, seeded noise, tiled over metal and enamel for a cast, tactile surface.
+    /// Made once; mid-grey so it can lighten and darken through `.overlay` blending.
+    static let grain: UIImage = {
+        let side = 96
+        var state: UInt32 = 0x9E37_79B9
+        var pixels = [UInt8](repeating: 0, count: side * side)
+        for i in pixels.indices {
+            state ^= state << 13
+            state ^= state >> 17
+            state ^= state << 5
+            pixels[i] = UInt8(truncatingIfNeeded: 96 + Int(state % 64))
+        }
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        let image = CGImage(
+            width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 8, bytesPerRow: side,
+            space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGBitmapInfo(rawValue: 0), provider: provider,
+            decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        return UIImage(cgImage: image, scale: 2, orientation: .up)
+    }()
+}
+
+/// The grain tiled across a surface.
+struct Grain: View {
+    var opacity: Double = 0.35
+
+    var body: some View {
+        Image(uiImage: Theme.grain)
+            .resizable(resizingMode: .tile)
+            .blendMode(.softLight)
+            .opacity(opacity)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
 }
 
 extension Color {

@@ -23,11 +23,39 @@ final class WorkspaceTourTests: XCTestCase {
     }
 
     func testTourOfStates() {
+        XCTAssertTrue(button("New").waitForExistence(timeout: 10))
+        sleep(1)
+        shot("0 Library")
         button("New").tap()
         button("Demo clips").tap()
         XCTAssertTrue(button("Mix").waitForExistence(timeout: 60), "demo clips never arrived")
         sleep(2)
         shot("1 Arrange, no music")
+
+        // The viewfinder turns the picture to 16:9 and back.
+        let shape = button("Picture shape")
+        shape.tap()
+        XCTAssertEqual(shape.value as? String, "16:9 horizontal")
+        sleep(2)
+        shot("1b Arrange, 16:9")
+        shape.tap()
+        XCTAssertEqual(shape.value as? String, "9:16 vertical")
+
+        // Crop pushes in on the selected clip: pinch its frame over the picture, then drag it.
+        button("Crop").tap()
+        let crop = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Crop frame'")).firstMatch
+        XCTAssertTrue(crop.waitForExistence(timeout: 5))
+        crop.pinch(withScale: 2, velocity: 1)
+        XCTAssertTrue(button("Undo Crop Clip").waitForExistence(timeout: 5))
+        let middle = crop.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        middle.press(forDuration: 0.1, thenDragTo: middle.withOffset(CGVector(dx: 20, dy: 30)))
+        sleep(1)
+        shot("1c Cropping clip 1")
+        button("Done cropping").tap()
+        XCTAssertFalse(crop.exists)
+        XCTAssertTrue((button("Crop").value as? String ?? "").hasSuffix("times"), "the clip kept no crop")
+        sleep(2)
+        shot("1d Clip 1 pushed in")
 
         button("Mix").tap()
         button("Demo click track").tap()
@@ -63,18 +91,19 @@ final class WorkspaceTourTests: XCTestCase {
         let clock = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH ' seconds'")).firstMatch
         let seconds = { Double(clock.label.components(separatedBy: " ")[0]) ?? -1 }
         let before = seconds()
-        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).press(
-            forDuration: 0.05, thenDragTo: dial.coordinate(withNormalizedOffset: CGVector(dx: 0.46, dy: 0.5)),
-            withVelocity: 80, thenHoldForDuration: 0.2)
+        let centre = dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        centre.press(
+            forDuration: 0.05, thenDragTo: centre.withOffset(CGVector(dx: 16, dy: 0)), withVelocity: 80,
+            thenHoldForDuration: 0.2)
         sleep(1)
         let jogged = seconds()
         XCTAssertGreaterThan(jogged, before, "the dial didn't jog")
         XCTAssertLessThan(jogged - before, 0.5, "a small drag should only move a few frames")
         shot("6b Trim after jogging")
         // …and pushed out to the edge and held, it plays fast, stopping when let go.
-        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
-            forDuration: 0.05, thenDragTo: dial.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)),
-            withVelocity: 600, thenHoldForDuration: 1.0)
+        centre.press(
+            forDuration: 0.05, thenDragTo: centre.withOffset(CGVector(dx: 120, dy: 0)), withVelocity: 600,
+            thenHoldForDuration: 1.0)
         sleep(1)
         let shuttled = seconds()
         XCTAssertGreaterThan(shuttled - jogged, 1.5, "holding the dial out didn't shuttle")
@@ -183,12 +212,12 @@ final class WorkspaceTourTests: XCTestCase {
         swipeStrip(left: true, until: tile(12))
         swipeStrip(left: false, until: tile(1))
 
-        // Playback keeps the clip under the playhead in view: clip 7 starts off-screen.
+        // Playback keeps the clip under the playhead in view: clip 8 starts off-screen, 10 s on.
         tile(6).tap()
-        XCTAssertFalse(tile(7).isHittable)
+        XCTAssertFalse(tile(8).isHittable)
         button("Play").tap()
-        let followed = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: tile(7))
-        wait(for: [followed], timeout: 10)
+        let followed = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: tile(8))
+        wait(for: [followed], timeout: 16)
         button("Pause").tap()
     }
 
@@ -243,7 +272,7 @@ final class WorkspaceTourTests: XCTestCase {
         // Locked music can't be nudged; unlocking frees it again.
         let lock = button("Lock music")
         lock.tap()
-        XCTAssertEqual((lock.value as? String)?.lowercased(), "locked")
+        XCTAssertTrue((lock.value as? String)?.lowercased().hasPrefix("locked") ?? false)
         XCTAssertFalse(button("Music one frame later").isEnabled)
         XCTAssertTrue(button("Undo Lock Music").exists)
         lock.tap()
@@ -286,9 +315,10 @@ final class WorkspaceTourTests: XCTestCase {
         points.element(boundBy: 0).tap()
         let dial = labelled("Jog dial").firstMatch
         XCTAssertEqual(dial.value as? String, "Point")
-        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).press(
-            forDuration: 0.05, thenDragTo: dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
-            withVelocity: 120, thenHoldForDuration: 0.2)
+        let knob = dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        knob.press(
+            forDuration: 0.05, thenDragTo: knob.withOffset(CGVector(dx: 25, dy: 0)), withVelocity: 120,
+            thenHoldForDuration: 0.2)
         XCTAssertTrue(button("Undo Move Curve Point").waitForExistence(timeout: 5))
         edit.tap()
         XCTAssertFalse(band.waitForExistence(timeout: 1))

@@ -113,7 +113,7 @@ enum CompositionBuilder {
             layer.setTransform(
                 framingTransform(
                     naturalSize: naturalSize, preferred: preferred,
-                    renderSize: renderSize, framing: clip.framing),
+                    renderSize: renderSize, framing: clip.framing, crop: clip.crop),
                 at: cursor)
             cursor = cursor + compDuration
         }
@@ -209,10 +209,10 @@ enum CompositionBuilder {
     }
 
     /// Orients the source with its preferred transform, then scales it to fill
-    /// (crop) or fit (letterbox) the render frame, centred.
+    /// (crop) or fit (letterbox) the render frame, centred, then pushes in on `crop`.
     static func framingTransform(
         naturalSize: CGSize, preferred: CGAffineTransform,
-        renderSize: CGSize, framing: Framing
+        renderSize: CGSize, framing: Framing, crop: Crop? = nil
     ) -> CGAffineTransform {
         let oriented = CGRect(origin: .zero, size: naturalSize).applying(preferred)
         let w = abs(oriented.width)
@@ -221,7 +221,8 @@ enum CompositionBuilder {
         let sx = renderSize.width / w
         let sy = renderSize.height / h
         let scale = framing == .fill ? max(sx, sy) : min(sx, sy)
-        return
+        let push = crop ?? .full
+        let framed =
             preferred
             .concatenating(CGAffineTransform(translationX: -oriented.minX, y: -oriented.minY))
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
@@ -229,5 +230,11 @@ enum CompositionBuilder {
                 CGAffineTransform(
                     translationX: (renderSize.width - w * scale) / 2,
                     y: (renderSize.height - h * scale) / 2))
+        return
+            framed
+            .concatenating(
+                CGAffineTransform(translationX: -push.x * renderSize.width, y: -push.y * renderSize.height)
+            )
+            .concatenating(CGAffineTransform(scaleX: 1 / push.size, y: 1 / push.size))
     }
 }

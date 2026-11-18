@@ -17,32 +17,38 @@ struct ExploreDeck: View {
                     TrimMusicStrip(model: model, clip: clip, source: source, music: music, waveform: waveform)
                 }
                 readouts(range: model.draftRange ?? clip.sourceRange, frameRate: source.frameRate)
-                JogDial(title: "JOG", onStep: { model.jog(by: $0) }, onShuttle: { model.shuttle($0) })
             }
+            // In and Zoom on the left of play, Loop and Out on the right.
             TransportRow(model: model) {
-                Button("In") { model.markIn() }
-                    .buttonStyle(.instrument(.key))
-                    .accessibilityLabel("Mark in at playhead")
-            } trailing: {
-                Button("Out") { model.markOut() }
-                    .buttonStyle(.instrument(.key))
-                    .accessibilityLabel("Mark out at playhead")
-            }
-            HStack(spacing: 8) {
-                Button {
-                    model.trimZoom.toggle()
-                    Haptics.detent()
-                } label: {
-                    Label("Zoom", systemImage: model.trimZoom ? "minus.magnifyingglass" : "plus.magnifyingglass")
+                HStack(spacing: 8) {
+                    Button("In") { model.markIn() }
+                        .buttonStyle(.instrument(.key))
+                        .accessibilityLabel("Mark in at playhead")
+                    zoomKey
                 }
-                .buttonStyle(.instrument(active: model.trimZoom))
-                .accessibilityLabel("Zoom to clip")
-                .accessibilityValue(model.trimZoom ? "On" : "Off")
-                .accessibilityHint("Fits the filmstrip to the clip's in and out points, for finer trims.")
-                Spacer()
-                LoopButton(model: model)
+            } trailing: {
+                HStack(spacing: 8) {
+                    LoopButton(model: model)
+                    Button("Out") { model.markOut() }
+                        .buttonStyle(.instrument(.key))
+                        .accessibilityLabel("Mark out at playhead")
+                }
             }
         }
+    }
+
+    private var zoomKey: some View {
+        Button {
+            model.trimZoom.toggle()
+            Haptics.detent()
+        } label: {
+            Image(systemName: model.trimZoom ? "minus.magnifyingglass" : "plus.magnifyingglass")
+                .font(.system(size: 14, weight: .bold))
+        }
+        .buttonStyle(.round(40, lit: model.trimZoom))
+        .accessibilityLabel("Zoom to clip")
+        .accessibilityValue(model.trimZoom ? "On" : "Off")
+        .accessibilityHint("Fits the filmstrip to the clip's in and out points, for finer trims.")
     }
 
     private func readouts(range: MediaTimeRange, frameRate: Double) -> some View {
