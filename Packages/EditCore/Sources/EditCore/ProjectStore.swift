@@ -52,8 +52,7 @@ public final class ProjectStore: @unchecked Sendable {
     }
 
     public func waveformCacheURL(for track: AudioTrack, projectID: UUID) -> URL {
-        directory(for: projectID).appendingPathComponent("Cache", isDirectory: true)
-            .appendingPathComponent("\(track.fileName).waveform")
+        cacheDirectory(for: projectID).appendingPathComponent("\(track.fileName).waveform")
     }
 
     private func fileURL(for projectID: UUID) -> URL {
@@ -105,6 +104,58 @@ public final class ProjectStore: @unchecked Sendable {
         if fm.fileExists(atPath: dir.path) { try fm.removeItem(at: dir) }
     }
 
+    // MARK: Storage
+
+    /// Past this, the library suggests clearing space (10 GB).
+    public static let storageWarningBytes: Int64 = 10_000_000_000
+
+    /// How much space a project takes on disk.
+    public func usage(for projectID: UUID) -> StorageUsage {
+        let dir = directory(for: projectID)
+        let media = Self.size(of: mediaDirectory(for: projectID))
+        let exports = Self.size(of: exportsDirectory(for: projectID))
+        let cache = Self.size(of: cacheDirectory(for: projectID))
+        let total = Self.size(of: dir)
+        return StorageUsage(
+            media: media, exports: exports, cache: cache, other: max(0, total - media - exports - cache))
+    }
+
+    /// Deletes a project's rendered files. The project itself is untouched.
+    public func clearExports(for projectID: UUID) throws {
+        try removeIfPresent(exportsDirectory(for: projectID))
+    }
+
+    /// Deletes a project's derived data (waveforms); it is rebuilt when needed.
+    public func clearCache(for projectID: UUID) throws {
+        try removeIfPresent(cacheDirectory(for: projectID))
+    }
+
+    private func cacheDirectory(for projectID: UUID) -> URL {
+        directory(for: projectID).appendingPathComponent("Cache", isDirectory: true)
+    }
+
+    private func removeIfPresent(_ url: URL) throws {
+        if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
+    }
+
+    /// Bytes on disk under `url` (a file or a folder); 0 when it doesn't exist.
+    public static func size(of url: URL) -> Int64 {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .totalFileAllocatedSizeKey, .fileSizeKey]
+        func bytes(_ url: URL) -> Int64 {
+            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else {
+                return 0
+            }
+            return Int64(values.totalFileAllocatedSize ?? values.fileSize ?? 0)
+        }
+        guard
+            let items = FileManager.default.enumerator(
+                at: url, includingPropertiesForKeys: keys, options: [], errorHandler: { _, _ in true })
+        else { return bytes(url) }
+        var total = bytes(url)
+        for case let item as URL in items { total += bytes(item) }
+        return total
+    }
+
     /// Moves (not copies) a file into the project's Media folder under a unique name.
     public func adoptMedia(at url: URL, projectID: UUID) throws -> String {
         let media = mediaDirectory(for: projectID)
@@ -114,4 +165,27 @@ public final class ProjectStore: @unchecked Sendable {
         try fm.moveItem(at: url, to: media.appendingPathComponent(name))
         return name
     }
+}
+
+/// A project's footprint on disk, in bytes.
+public struct StorageUsage: Equatable, Sendable {
+    /// Its own copies of the imported footage and music; they go only with the project.
+    public var media: Int64
+    /// Rendered videos and their sync files.
+    public var exports: Int64
+    /// Derived data, rebuilt when needed.
+    public var cache: Int64
+    /// The project file and anything else.
+    public var other: Int64
+
+    public init(media: Int64 = 0, exports: Int64 = 0, cache: Int64 = 0, other: Int64 = 0) {
+        self.media = media
+        self.exports = exports
+        self.cache = cache
+        self.other = other
+    }
+
+    public var total: Int64 { media + exports + cache + other }
+    /// What can be cleared without touching the project.
+    public var clearable: Int64 { exports + cache }
 }

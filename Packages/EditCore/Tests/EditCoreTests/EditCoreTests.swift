@@ -205,6 +205,36 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertEqual([turned.outputWidth, turned.outputHeight], [1920, 1080])
     }
 
+    func testStorageCountsAndClearsRendersAndCache() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try ProjectStore(rootURL: root)
+        let project = try store.create(name: "Space")
+        let exports = store.exportsDirectory(for: project.id)
+        try FileManager.default.createDirectory(at: exports, withIntermediateDirectories: true)
+        try Data(count: 200_000).write(to: exports.appendingPathComponent("a.mp4"))
+        try Data(count: 50_000).write(to: store.mediaDirectory(for: project.id).appendingPathComponent("b.mov"))
+        let track = AudioTrack(fileName: "m.m4a", duration: MediaTime(seconds: 1))
+        let cache = store.waveformCacheURL(for: track, projectID: project.id)
+        try FileManager.default.createDirectory(
+            at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(count: 10_000).write(to: cache)
+
+        let before = store.usage(for: project.id)
+        XCTAssertGreaterThanOrEqual(before.exports, 200_000)
+        XCTAssertGreaterThanOrEqual(before.media, 50_000)
+        XCTAssertGreaterThanOrEqual(before.cache, 10_000)
+        XCTAssertEqual(before.total, before.media + before.exports + before.cache + before.other)
+
+        try store.clearExports(for: project.id)
+        try store.clearCache(for: project.id)
+        let after = store.usage(for: project.id)
+        XCTAssertEqual(after.exports, 0)
+        XCTAssertEqual(after.cache, 0)
+        XCTAssertEqual(after.media, before.media, "footage stays with the project")
+        XCTAssertNoThrow(try store.load(id: project.id))
+    }
+
     func testOlderFileWithMissingFieldsDecodes() throws {
         let json = """
             {"id":"\(UUID().uuidString)","name":"Old","createdAt":0}

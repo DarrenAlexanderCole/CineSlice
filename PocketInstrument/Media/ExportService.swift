@@ -90,7 +90,13 @@ enum ExportService {
         }
         defer { poller.cancel() }
 
-        try await run(session)
+        do {
+            try await run(session)
+        } catch {
+            // A cancelled or failed render leaves no half-written file behind.
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
 
         // Only report success if the file really exists and is non-empty.
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0

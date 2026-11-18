@@ -17,7 +17,65 @@ final class LibraryModel {
         }
     }
 
-    func reload() { projects = store?.listProjects() ?? [] }
+    func reload() {
+        projects = store?.listProjects() ?? []
+        measure()
+    }
+
+    // MARK: Storage
+
+    /// Each project's footprint, measured off the main thread after every reload.
+    private(set) var usage: [UUID: StorageUsage] = [:]
+    /// Leftovers in the app's temporary and caches folders (interrupted imports and the like).
+    private(set) var temporaryBytes: Int64 = 0
+    @ObservationIgnored private var measureTask: Task<Void, Never>?
+
+    var totalBytes: Int64 { usage.values.reduce(0) { $0 + $1.total } + temporaryBytes }
+    var isOverStorageLimit: Bool { totalBytes >= ProjectStore.storageWarningBytes }
+
+    nonisolated private static var temporaryFolders: [URL] {
+        [FileManager.default.temporaryDirectory]
+            + FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+    }
+
+    func measure() {
+        guard let store else { return }
+        let ids = projects.map(\.id)
+        measureTask?.cancel()
+        measureTask = Task {
+            let (usage, temporary) = await Task.detached(priority: .utility) {
+                (
+                    Dictionary(uniqueKeysWithValues: ids.map { ($0, store.usage(for: $0)) }),
+                    Self.temporaryFolders.reduce(Int64(0)) { $0 + ProjectStore.size(of: $1) }
+                )
+            }.value
+            guard !Task.isCancelled else { return }
+            self.usage = usage
+            self.temporaryBytes = temporary
+        }
+    }
+
+    func clearRenders(_ project: Project) {
+        do { try store?.clearExports(for: project.id) } catch { errorMessage = error.localizedDescription }
+        measure()
+    }
+
+    func clearCache(_ project: Project) {
+        do { try store?.clearCache(for: project.id) } catch { errorMessage = error.localizedDescription }
+        measure()
+    }
+
+    /// Empties the app's temporary and caches folders. Only offered from the library, where no
+    /// project is open and nothing is importing.
+    func clearTemporaryFiles() {
+        let fm = FileManager.default
+        for folder in Self.temporaryFolders {
+            for item in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
+                try? fm.removeItem(at: item)
+            }
+        }
+        measure()
+    }
 
     func create() -> Project? {
         guard let store else { return nil }
@@ -64,6 +122,7 @@ struct LibraryView: View {
     @State private var deleting: Project?
     /// The project at the gate (the top of the strip), shown in the viewer.
     @State private var atGate: UUID?
+    @State private var showsStorage = false
 
     private let frameHeight: CGFloat = 66
 
@@ -75,6 +134,7 @@ struct LibraryView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 viewer
+                if library.isOverStorageLimit { storageBanner }
                 strip
             }
             .background(
@@ -97,6 +157,13 @@ struct LibraryView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showsStorage) {
+            StorageSheet(library: library) { project in
+                showsStorage = false
+                deleting = project
+            }
+            .presentationDetents([.medium, .large])
+        }
         .alert("Rename project", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $renameText)
             Button("Cancel", role: .cancel) {}
@@ -271,7 +338,7 @@ struct LibraryView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Pocket Instrument")
                         .font(.system(size: 17, weight: .semibold, design: .serif).italic())
-                    Text("9:16 TABLE VIEWER · \(library.projects.count) REELS")
+                    Text("\(library.projects.count) REELS · \(bytes(library.totalBytes))")
                         .font(Theme.mono(9, weight: .semibold))
                 }
                 .foregroundStyle(Color(hex: 0x2B2F27))
@@ -293,6 +360,16 @@ struct LibraryView: View {
                     .shadow(color: .black.opacity(0.6), radius: 2, y: 2)
             )
             Button {
+                showsStorage = true
+            } label: {
+                Image(systemName: "internaldrive")
+            }
+            .buttonStyle(.round(30, lit: library.isOverStorageLimit))
+            .disabled(library.store == nil)
+            .accessibilityLabel("Storage")
+            .accessibilityValue(bytes(library.totalBytes))
+            .accessibilityHint("Shows the space each project takes, and clears renders and caches.")
+            Button {
                 if let p = library.create() { openProject = p }
             } label: {
                 Image(systemName: "plus")
@@ -302,6 +379,29 @@ struct LibraryView: View {
             .accessibilityLabel("New")
             .accessibilityHint("Starts a new project")
         }
+    }
+
+    /// Past the storage limit: a lit strip under the machine that opens Storage.
+    private var storageBanner: some View {
+        Button {
+            showsStorage = true
+        } label: {
+            HStack(spacing: 8) {
+                LED(isOn: true)
+                Text("USING \(bytes(library.totalBytes)) · FREE UP SPACE")
+                    .font(Theme.mono(11, weight: .bold))
+                    .foregroundStyle(Theme.signal)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").foregroundStyle(Theme.signal)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: Theme.minTouch)
+            .recessed(padding: 0)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
     }
 
     // MARK: The strip
@@ -468,5 +568,133 @@ private struct FocusChart: View {
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+private func bytes(_ count: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+}
+
+/// Where the space goes: the total against the 10 GB mark, leftover temporary files, and each
+/// project, biggest first, split into its footage, renders and cache. Renders, cache and
+/// temporary files can be cleared on the spot; footage goes only with its project.
+private struct StorageSheet: View {
+    var library: LibraryModel
+    var onDelete: (Project) -> Void
+
+    private var projects: [Project] {
+        library.projects.sorted { (library.usage[$0.id]?.total ?? 0) > (library.usage[$1.id]?.total ?? 0) }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Storage").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.label)
+                gauge
+                temporary
+                Text("PROJECTS").font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
+                ForEach(projects) { project in
+                    row(project, library.usage[project.id] ?? StorageUsage())
+                }
+                Text(
+                    "Footage is each project's own copy of its clips and music, so your originals in Photos or Files are never touched. It goes only when you delete the project."
+                )
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondaryLabel)
+            }
+            .padding(20)
+        }
+        .background(Theme.obsidian)
+        .preferredColorScheme(.dark)
+        .onAppear { library.measure() }
+    }
+
+    /// The total as a lit bar against the 10 GB mark.
+    private var gauge: some View {
+        let limit = Double(ProjectStore.storageWarningBytes)
+        let share = min(Double(library.totalBytes) / limit, 1)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(bytes(library.totalBytes))
+                    .font(Theme.mono(26, weight: .bold))
+                    .foregroundStyle(library.isOverStorageLimit ? Theme.signal : Theme.label)
+                Text("of \(bytes(ProjectStore.storageWarningBytes))")
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.secondaryLabel)
+            }
+            GeometryReader { geo in
+                Capsule().fill(Theme.signal)
+                    .frame(width: max(6, geo.size.width * share))
+                    .shadow(color: Theme.signal.opacity(0.7), radius: 4)
+            }
+            .frame(height: 6)
+            .padding(3)
+            .recessed(cornerRadius: 6, padding: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Using \(bytes(library.totalBytes)) of \(bytes(ProjectStore.storageWarningBytes))")
+    }
+
+    private var temporary: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Temporary files").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.label)
+                Text("Left over from imports and previews. \(bytes(library.temporaryBytes)).")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.secondaryLabel)
+            }
+            Spacer(minLength: 8)
+            Button("Clear") {
+                library.clearTemporaryFiles()
+                Haptics.success()
+            }
+            .buttonStyle(.instrument(height: 32))
+            .disabled(library.temporaryBytes == 0)
+            .accessibilityLabel("Clear temporary files")
+        }
+    }
+
+    private func row(_ project: Project, _ usage: StorageUsage) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(project.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.label)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text(bytes(usage.total)).font(Theme.mono(13, weight: .bold)).foregroundStyle(Theme.label)
+            }
+            Text(
+                "Footage \(bytes(usage.media)) · Renders \(bytes(usage.exports)) · Cache \(bytes(usage.cache))"
+            )
+            .font(Theme.mono(10))
+            .foregroundStyle(Theme.secondaryLabel)
+            HStack(spacing: 8) {
+                Button("Clear renders") {
+                    library.clearRenders(project)
+                    Haptics.success()
+                }
+                .buttonStyle(.instrument(height: 32))
+                .disabled(usage.exports == 0)
+                .accessibilityLabel("Clear renders of \(project.name)")
+                Button("Clear cache") {
+                    library.clearCache(project)
+                    Haptics.success()
+                }
+                .buttonStyle(.instrument(height: 32))
+                .disabled(usage.cache == 0)
+                .accessibilityLabel("Clear cache of \(project.name)")
+                Spacer(minLength: 0)
+                Button(role: .destructive) {
+                    onDelete(project)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.instrument(height: 32))
+                .accessibilityLabel("Delete \(project.name)")
+            }
+        }
+        .padding(12)
+        .recessed(padding: 0)
     }
 }
