@@ -105,6 +105,7 @@ final class WorkspaceTourTests: XCTestCase {
         button("Faster").tap()
         button("Faster").tap()
         XCTAssertEqual(app.descendants(matching: .any)["Tempo"].value as? String, "122 beats per minute")
+        button("Three four time").tap()
         button("Eighth").tap()
         sleep(1)
         shot("2b Quick Click")
@@ -112,6 +113,12 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertTrue(button("Undo Set Quick Click").waitForExistence(timeout: 30))
         sleep(1)
         shot("2c Mix with a Quick Click guide")
+        // With a guide, Snap catches scrubs on its beats.
+        let snap = button("Snap to beats")
+        XCTAssertTrue(snap.exists)
+        snap.tap()
+        XCTAssertEqual(snap.value as? String, "On")
+        snap.tap()
         // Zoomed, the guide's bars and beats spread out; zooming never moves them in time.
         let laneZoom = button("Zoom sequence")
         laneZoom.tap()

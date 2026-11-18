@@ -23,6 +23,21 @@ final class RhythmTests: XCTestCase {
             ClickGuide(bpm: 120, accentsDownbeat: false).clicks(upTo: MediaTime(seconds: 1))[0].weight, .beat)
     }
 
+    func testTimeSignaturesSetTheBarAndItsAccents() throws {
+        let waltz = ClickGuide(bpm: 120, meter: .threeFour).clicks(upTo: MediaTime(seconds: 3))
+        XCTAssertEqual(waltz.map(\.weight), [.accent, .beat, .beat, .accent, .beat, .beat])
+        XCTAssertEqual(ClickGuide(bpm: 120, meter: .threeFour).barDuration, MediaTime(seconds: 1.5))
+        // 6/8 counts eighths in two groups of three, and ignores the eighth subdivision.
+        let jig = ClickGuide(bpm: 180, meter: .sixEight, subdivision: .eighth).clicks(upTo: MediaTime(seconds: 2))
+        XCTAssertEqual(jig.map(\.weight), [.accent, .subdivision, .subdivision, .beat, .subdivision, .subdivision])
+        XCTAssertEqual(jig[1].time, MediaTime(seconds: 1.0 / 3))
+        // A guide saved before meters (a count of beats) reads as 4/4.
+        let old = #"{"bpm":100,"beatsPerBar":4,"subdivision":"quarter","accentsDownbeat":true}"#
+        XCTAssertEqual(try JSONDecoder().decode(ClickGuide.self, from: Data(old.utf8)).meter, .fourFour)
+        let three = #"{"bpm":100,"beatsPerBar":3}"#
+        XCTAssertEqual(try JSONDecoder().decode(ClickGuide.self, from: Data(three.utf8)).meter, .threeFour)
+    }
+
     func testTapTempoTakesTheMedianAndIgnoresAMissedBeat() {
         var capture = TapCapture()
         // Steady 0.5 s with a little jitter, one missed beat (1.0 s gap) and one rushed tap.

@@ -9,7 +9,7 @@ import SwiftUI
 /// and slides the music against the picture in Mix (unless the music is locked, when it
 /// scrubs), so the two never share a gesture in the same state. The bracket's Signal handles set the loop (snapping to clip edges).
 ///
-/// Pinch or the zoom key (`LaneZoomKey`, on the transport) magnifies the lane around the playhead, for lining music up
+/// Pinch or the zoom key (`LaneZoomKey`, on the transport) magnifies the lane, for lining music up
 /// closer than a frame-sized sliver of the whole sequence. Zoomed, scrubbing drags the
 /// sequence under a fixed view like tape, and every drag moves time in finer steps.
 ///
@@ -35,6 +35,11 @@ struct SequenceLane: View {
     @State private var offsetDragBase: MediaTime = .zero
     @State private var scrubBase: MediaTime?
     @State private var pinchBase: Double?
+    /// The time under the fingers when a pinch began, and its share of the lane's width.
+    @State private var pinchAnchor: (time: Double, fraction: Double)?
+    @State private var laneWidth: CGFloat = 1
+    /// Padding between the pinch's view and the lane itself.
+    private static let laneInset: CGFloat = 10
     /// Whether the person has ever scrubbed the lane; until then a hint says it can be dragged.
     @AppStorage("hint.laneScrubbed") private var hasScrubbed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -84,12 +89,21 @@ struct SequenceLane: View {
             // Zoomed, content runs past the sides and is cut at them; whole, the loop handles may poke out.
             .mask(Rectangle().padding(.horizontal, zoom > 1 ? 0 : -8).padding(.vertical, -12))
             .coordinateSpace(name: "lane")
+            .onGeometryChange(for: CGFloat.self) {
+                $0.size.width
+            } action: {
+                laneWidth = $0
+            }
         }
         .frame(height: totalHeight)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .recessed(padding: 2)
         .simultaneousGesture(pinchGesture)
+        .onChange(of: model.engine.isPlaying) { _, playing in
+            // Playing, the zoomed lane follows the playhead again.
+            if playing { model.laneFocus = nil }
+        }
         .accessibilityElement(children: .contain)
     }
 
@@ -98,14 +112,28 @@ struct SequenceLane: View {
     private var maxZoom: Double { LaneZoomKey.maxZoom(model) }
     private var zoom: Double { LaneZoomKey.zoom(model) }
 
+    /// Zooms about the point between the fingers: the time there stays under them. Zoom changes
+    /// only how many points a second takes, never any time.
     private var pinchGesture: some Gesture {
         MagnifyGesture()
             .onChanged { g in
-                if pinchBase == nil { pinchBase = zoom }
-                model.laneZoom = min(max((pinchBase ?? 1) * g.magnification, 1), maxZoom)
+                if pinchBase == nil {
+                    pinchBase = zoom
+                    let w = window
+                    let fx = Double(min(max((g.startLocation.x - Self.laneInset) / max(laneWidth, 1), 0), 1))
+                    pinchAnchor = (w.start + fx * w.span, fx)
+                }
+                let newZoom = min(max((pinchBase ?? 1) * g.magnification, 1), maxZoom)
+                model.laneZoom = newZoom
+                if let anchor = pinchAnchor, newZoom > 1 {
+                    let span = duration / newZoom
+                    let start = min(max(anchor.time - anchor.fraction * span, 0), duration - span)
+                    model.laneFocus = start + span / 2
+                }
             }
             .onEnded { _ in
                 pinchBase = nil
+                pinchAnchor = nil
                 if model.laneZoom < 1.1 { model.laneZoom = 1 }
                 Haptics.detent()
             }
@@ -120,7 +148,8 @@ struct SequenceLane: View {
     private var window: (start: Double, span: Double) {
         guard zoom > 1 else { return (0, duration) }
         let span = duration / zoom
-        let start = min(max(model.currentTime.seconds - span / 2, 0), duration - span)
+        let centre = model.laneFocus ?? model.currentTime.seconds
+        let start = min(max(centre - span / 2, 0), duration - span)
         return (start, span)
     }
 
@@ -291,10 +320,10 @@ struct SequenceLane: View {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if model.engine.isPlaying { model.engine.pause() }
-                model.scrub(to: scrubTime(value, width), precise: false)
+                model.scrub(to: beatSnapped(scrubTime(value, width), width), precise: false)
             }
             .onEnded { value in
-                model.scrub(to: scrubTime(value, width), precise: true)
+                model.scrub(to: beatSnapped(scrubTime(value, width), width), precise: true)
                 scrubBase = nil
                 if !hasScrubbed {
                     withAnimation(.easeOut(duration: 0.4)) { hasScrubbed = true }
@@ -302,8 +331,16 @@ struct SequenceLane: View {
             }
     }
 
+    /// Snapping to beats, a scrub catches on the nearest beat within reach.
+    private func beatSnapped(_ t: MediaTime, _ width: CGFloat) -> MediaTime {
+        let tx = x(for: t, width)
+        return nearbyBeats(t, width: width).min { abs(x(for: $0, width) - tx) < abs(x(for: $1, width) - tx) } ?? t
+    }
+
     private func scrubTime(_ value: DragGesture.Value, _ width: CGFloat) -> MediaTime {
-        guard zoom > 1 else { return time(at: value.location.x, width) }
+        // Whole, or held where a pinch left it: the playhead goes under the finger. Following the
+        // playhead, the sequence slides under it like tape.
+        guard zoom > 1, model.laneFocus == nil else { return time(at: value.location.x, width) }
         if scrubBase == nil { scrubBase = model.currentTime }
         let base = scrubBase ?? model.currentTime
         return frameTime(base.seconds - Double(value.translation.width / max(width, 1)) * window.span)
@@ -535,10 +572,18 @@ struct SequenceLane: View {
 
     private func isClipEdge(_ t: MediaTime) -> Bool { clipEdges.contains(t) }
 
-    /// Pulls a time onto the nearest clip edge when it's within `snapDistance` points.
+    /// Beats within `snapDistance` points of `t`, when snapping to beats is on.
+    private func nearbyBeats(_ t: MediaTime, width: CGFloat) -> [MediaTime] {
+        guard model.snapsToBeats, width > 0 else { return [] }
+        let reach = Double(snapDistance / width) * window.span
+        return model.beatTimes(from: t.seconds - reach, to: t.seconds + reach)
+    }
+
+    /// Pulls a time onto the nearest clip edge (or beat, snapping to beats) within `snapDistance` points.
     private func snapped(_ t: MediaTime, width: CGFloat) -> MediaTime {
         let tx = x(for: t, width)
-        guard let nearest = clipEdges.min(by: { abs(x(for: $0, width) - tx) < abs(x(for: $1, width) - tx) }),
+        let targets = clipEdges + nearbyBeats(t, width: width)
+        guard let nearest = targets.min(by: { abs(x(for: $0, width) - tx) < abs(x(for: $1, width) - tx) }),
             abs(x(for: nearest, width) - tx) <= snapDistance
         else { return t }
         return nearest
@@ -647,6 +692,7 @@ struct LaneZoomKey: View {
         let maxZoom = Self.maxZoom(model)
         let key = Button {
             model.laneZoom = Self.steps.first { $0 > zoom + 0.01 && $0 <= maxZoom } ?? 1
+            model.laneFocus = nil  // the key zooms about the playhead
             Haptics.detent()
         } label: {
             if compact {

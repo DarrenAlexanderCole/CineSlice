@@ -32,6 +32,12 @@ public struct UndoStack: Sendable {
         project = working
     }
 
+    /// Applies a follow-on change as part of the last step: no entry of its own, so undo takes it
+    /// back together with that step (its snapshot is from before both), and redo restores both.
+    public mutating func amend(_ command: EditingCommand, on project: inout Project) throws {
+        try command.apply(to: &project)
+    }
+
     @discardableResult
     public mutating func undo(_ project: inout Project) -> String? {
         guard let entry = undoEntries.popLast() else { return nil }

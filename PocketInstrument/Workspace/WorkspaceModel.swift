@@ -46,7 +46,12 @@ final class WorkspaceModel {
     var draftRange: MediaTimeRange?
 
     /// How far the sequence lane is magnified (1 = whole sequence). Zoomed, it follows the playhead.
-    var laneZoom: Double = 1
+    var laneZoom: Double = 1 {
+        didSet { if laneZoom <= 1 { laneFocus = nil } }
+    }
+    /// Zoomed by a pinch: the time at the centre of the lane, so what was under the fingers stays
+    /// there. Nil follows the playhead (the zoom key, and whenever playback starts).
+    var laneFocus: Double?
     /// Explore: the filmstrip shows just around the clip's In–Out instead of the whole source.
     var trimZoom = false
 
@@ -150,6 +155,7 @@ final class WorkspaceModel {
         if mode == .explore, selectedClip == nil { mode = .arrange }
         if previous.referenceAudio?.fileName != project.referenceAudio?.fileName { loadWaveform() }
         scheduleSave()
+        extendGuideIfNeeded()
         if selectedClip == nil { isCropping = false }
         if mode != .explore, Self.playbackShape(previewed(previous)) == Self.playbackShape(previewed(project)) {
             // Levels or loop only: adjust the live item instead of reloading it, so playback doesn't stutter.
@@ -883,18 +889,9 @@ final class WorkspaceModel {
     /// reference track, as one undoable step. Re-saving a guide of the same kind keeps where it
     /// was placed, its level and its lock; `beatOneAt` places its beat one there instead.
     func saveGuide(_ reference: MusicReference, named name: String, beatOneAt: MediaTime? = nil) async {
-        let bar = reference.rhythm?.grid.barDuration ?? reference.click?.barDuration ?? MediaTime(seconds: 2)
-        let length = guideLength(bar: bar)
-        let clicks =
-            reference.rhythm?.clicks(upTo: length) ?? reference.click?.clicks(upTo: length) ?? []
         importStatus = "Building guide…"
-        let temp = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
         do {
-            try GuideRenderer.write(clicks, duration: length, to: temp)
-            var track = try await MediaImporter.adoptAudio(
-                tempURL: temp, originalName: name, store: store, projectID: project.id)
-            track.reference = reference
+            var track = try await renderGuide(reference, named: name)
             if let previous = project.referenceAudio, previous.kind == reference.kind {
                 track.offset = previous.offset
                 track.volume = previous.volume
@@ -906,9 +903,82 @@ final class WorkspaceModel {
             }
             finishMusicImport(track)
         } catch {
-            try? FileManager.default.removeItem(at: temp)
             finishMusicImport(error)
         }
+    }
+
+    /// Mix: scrubbing and the loop handles catch on the guide's beats.
+    var snapsToBeats = false
+
+    /// The reference track's beat grid, when it's a Quick Click or Billboards guide.
+    var beatGrid: (guide: ClickGuide, offset: MediaTime)? {
+        guard let music = project.referenceAudio,
+            let grid = music.reference?.click ?? music.reference?.rhythm?.grid
+        else { return nil }
+        return (grid, music.offset)
+    }
+
+    /// The guide's beats (composition time) from `from` to `to` seconds; empty without a guide.
+    func beatTimes(from: Double, to: Double) -> [MediaTime] {
+        guard let (guide, offset) = beatGrid, to >= from else { return [] }
+        let beat = 60 / guide.bpm
+        let first = max(0, Int(((from - offset.seconds) / beat).rounded(.up)))
+        let last = Int(((to - offset.seconds) / beat).rounded(.down))
+        guard last >= first else { return [] }
+        return (first...min(last, first + 2000)).map { offset + guide.beatTime($0) }
+    }
+
+    /// Renders a guide long enough for the sequence (see `guideLength`) into the project's media.
+    private func renderGuide(_ reference: MusicReference, named name: String) async throws -> AudioTrack {
+        let bar = reference.rhythm?.grid.barDuration ?? reference.click?.barDuration ?? MediaTime(seconds: 2)
+        let length = guideLength(bar: bar)
+        let clicks = reference.rhythm?.clicks(upTo: length) ?? reference.click?.clicks(upTo: length) ?? []
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        do {
+            try GuideRenderer.write(clicks, duration: length, to: temp)
+            var track = try await MediaImporter.adoptAudio(
+                tempURL: temp, originalName: name, store: store, projectID: project.id)
+            track.reference = reference
+            return track
+        } catch {
+            try? FileManager.default.removeItem(at: temp)
+            throw error
+        }
+    }
+
+    @ObservationIgnored private var isExtendingGuide = false
+
+    /// A Quick Click or Billboards guide that the sequence has grown past (within 10 s of its end)
+    /// is rendered again, longer, and folded into the edit that grew it: the same undo step takes
+    /// both back. Everything else about the track (placement, level, lock) is kept.
+    private func extendGuideIfNeeded() {
+        guard !isExtendingGuide, let music = project.referenceAudio, let reference = music.reference,
+            music.kind != .myMusic
+        else { return }
+        let covered = music.offset + music.duration
+        guard project.duration + MediaTime(seconds: 10) > covered else { return }
+        isExtendingGuide = true
+        Task {
+            defer { isExtendingGuide = false }
+            guard var longer = try? await renderGuide(reference, named: music.originalFilename ?? "Guide") else {
+                return
+            }
+            // Only if nothing replaced the guide meanwhile.
+            guard let current = project.referenceAudio, current.fileName == music.fileName else { return }
+            longer.id = current.id
+            longer.offset = current.offset
+            longer.volume = current.volume
+            longer.isLocked = current.isLocked
+            amend(SetReferenceAudioCommand(track: longer))
+        }
+    }
+
+    /// Applies a follow-on change as part of the last edit, without an undo step of its own.
+    private func amend(_ command: EditingCommand) {
+        let previous = project
+        guard (try? undoStack.amend(command, on: &project)) != nil else { return }
+        didEdit(from: previous)
     }
 
     private func finishMusicImport(_ track: AudioTrack) {

@@ -522,6 +522,42 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertTrue(try String(contentsOf: sidecar, encoding: .utf8).contains("\"songArtist\" : \"The Reels\""))
     }
 
+    /// Cutting past the end of a guide stretches it, as part of the same edit: one undo takes
+    /// back both the new footage and the longer guide, and redo brings both back.
+    func testAGuideStretchesWithTheSequenceInTheSameUndoStep() async throws {
+        var project = try await makeProject()
+        try SetReferenceAudioCommand(track: nil).apply(to: &project)
+        try store.save(project)
+        let model = WorkspaceModel(project: project, store: store)
+        defer { model.close() }
+        await model.saveGuide(
+            MusicReference(kind: .quickClick, click: ClickGuide(bpm: 120, meter: .threeFour)), named: "Quick Click",
+            beatOneAt: MediaTime(seconds: 0.5))
+        let short = try XCTUnwrap(model.project.referenceAudio)
+        XCTAssertEqual(short.duration.seconds, 60, accuracy: 0.01)
+
+        // Snapping uses the guide's beats: 3/4 at 120 from 0.5 s.
+        XCTAssertEqual(model.beatTimes(from: 0, to: 2).map(\.seconds), [0.5, 1, 1.5, 2])
+
+        // Three more passes of the demo clips take the sequence to about 58 s.
+        let sources = project.sources
+        model.perform(AddClipsCommand(sources: sources + sources + sources))
+        let addName = model.undoName
+        for _ in 0..<100 where model.project.referenceAudio?.duration == short.duration {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let long = try XCTUnwrap(model.project.referenceAudio)
+        XCTAssertGreaterThan(long.duration.seconds, model.project.duration.seconds + 20)
+        XCTAssertEqual(long.offset, short.offset, "it stays where it was placed")
+        XCTAssertEqual(long.reference, short.reference)
+        XCTAssertEqual(model.undoName, addName, "no undo step of its own")
+
+        model.undo()
+        XCTAssertEqual(model.project.referenceAudio, short)
+        model.redo()
+        XCTAssertEqual(model.project.referenceAudio, long)
+    }
+
     // MARK: Crop
 
     /// A crop pushes in on the exported picture, not just the preview. The source is a still split

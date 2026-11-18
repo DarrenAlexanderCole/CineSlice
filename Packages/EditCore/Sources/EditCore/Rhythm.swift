@@ -88,25 +88,74 @@ public enum Subdivision: String, Codable, CaseIterable, Sendable {
     public var perBeat: Int { self == .quarter ? 1 : 2 }
 }
 
-/// A metronome: tempo, beats to the bar, subdivision and an accented downbeat. Beat one sits at
+/// Time signatures a guide can count in. In 6/8 the counted pulse is the eighth note: six to the
+/// bar, felt in two (1 and 4).
+public enum Meter: String, Codable, CaseIterable, Sendable {
+    case twoFour = "2/4"
+    case threeFour = "3/4"
+    case fourFour = "4/4"
+    case sixEight = "6/8"
+
+    public var beatsPerBar: Int {
+        switch self {
+        case .twoFour: 2
+        case .threeFour: 3
+        case .fourFour: 4
+        case .sixEight: 6
+        }
+    }
+
+    /// Compound time: beats grouped in threes, the second group's first beat a lighter accent.
+    public var isCompound: Bool { self == .sixEight }
+}
+
+/// A metronome: tempo, time signature, subdivision and an accented downbeat. Beat one sits at
 /// the guide's time 0; the track's offset places it on the timeline.
 public struct ClickGuide: Codable, Hashable, Sendable {
     public static let tempoRange: ClosedRange<Double> = 30...300
 
-    /// Beats per minute.
+    /// Counted pulses per minute (eighth notes in 6/8).
     public var bpm: Double
-    public var beatsPerBar: Int
+    public var meter: Meter
+    /// Quarter or eighth clicks; compound meters already count eighths, so they ignore it.
     public var subdivision: Subdivision
     public var accentsDownbeat: Bool
 
     public init(
-        bpm: Double = 120, beatsPerBar: Int = 4, subdivision: Subdivision = .quarter, accentsDownbeat: Bool = true
+        bpm: Double = 120, meter: Meter = .fourFour, subdivision: Subdivision = .quarter, accentsDownbeat: Bool = true
     ) {
         self.bpm = min(max(bpm, Self.tempoRange.lowerBound), Self.tempoRange.upperBound)
-        self.beatsPerBar = max(1, beatsPerBar)
+        self.meter = meter
         self.subdivision = subdivision
         self.accentsDownbeat = accentsDownbeat
     }
+
+    enum CodingKeys: String, CodingKey {
+        case bpm, meter, subdivision, accentsDownbeat
+        /// Before meters: a count of beats, always 4.
+        case beatsPerBar
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bpm = try c.decode(Double.self, forKey: .bpm)
+        let beats = try c.decodeIfPresent(Int.self, forKey: .beatsPerBar)
+        meter =
+            try c.decodeIfPresent(Meter.self, forKey: .meter)
+            ?? Meter.allCases.first { $0.beatsPerBar == beats && !$0.isCompound } ?? .fourFour
+        subdivision = try c.decodeIfPresent(Subdivision.self, forKey: .subdivision) ?? .quarter
+        accentsDownbeat = try c.decodeIfPresent(Bool.self, forKey: .accentsDownbeat) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(bpm, forKey: .bpm)
+        try c.encode(meter, forKey: .meter)
+        try c.encode(subdivision, forKey: .subdivision)
+        try c.encode(accentsDownbeat, forKey: .accentsDownbeat)
+    }
+
+    public var beatsPerBar: Int { meter.beatsPerBar }
 
     /// Start of beat `n` (0 is beat one), exact to the 48 kHz grid.
     public func beatTime(_ n: Int) -> MediaTime { guideTime(seconds: Double(n) * 60 / bpm) }
@@ -116,16 +165,21 @@ public struct ClickGuide: Codable, Hashable, Sendable {
     /// Every click from beat one up to (not including) `duration`.
     public func clicks(upTo duration: MediaTime) -> [GuideClick] {
         var clicks: [GuideClick] = []
-        let perBeat = subdivision.perBeat
+        let perBeat = meter.isCompound ? 1 : subdivision.perBeat
         var k = 0
         while true {
             let time = guideTime(seconds: Double(k) * 60 / bpm / Double(perBeat))
             guard time < duration else { break }
+            let beat = k / perBeat
+            let inBar = beat % beatsPerBar
             let weight: GuideClick.Weight
             if k % perBeat != 0 {
                 weight = .subdivision
-            } else if accentsDownbeat, (k / perBeat) % beatsPerBar == 0 {
-                weight = .accent
+            } else if inBar == 0 {
+                weight = accentsDownbeat ? .accent : .beat
+            } else if meter.isCompound {
+                // 6/8: beat 4 starts the second group; the rest are the lighter eighths between.
+                weight = inBar == 3 ? .beat : .subdivision
             } else {
                 weight = .beat
             }

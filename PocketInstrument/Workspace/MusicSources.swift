@@ -195,17 +195,19 @@ private struct QuickClickPanel: View {
                     }
                 }
                 PanelSection(title: "Meter") {
-                    HStack(spacing: 8) {
-                        VStack(spacing: 2) {
-                            Text("TIME").font(Theme.mono(8, weight: .bold)).foregroundStyle(Theme.secondaryLabel)
-                            Text("4/4").font(Theme.mono(16, weight: .bold)).foregroundStyle(Theme.label)
+                    HStack(spacing: 6) {
+                        ForEach(Meter.allCases, id: \.self) { meter in
+                            segment(meter.rawValue, isOn: guide.meter == meter, label: Self.spoken(meter)) {
+                                guide.meter = meter
+                            }
                         }
-                        .frame(width: 56)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel("Four four time")
+                    }
+                    HStack(spacing: 8) {
                         segment("♩ Quarter", isOn: guide.subdivision == .quarter) { guide.subdivision = .quarter }
                         segment("♪♪ Eighth", isOn: guide.subdivision == .eighth) { guide.subdivision = .eighth }
                     }
+                    // 6/8 already counts eighths.
+                    .disabled(guide.meter.isCompound)
                     segment("Accent beat one of each bar", isOn: guide.accentsDownbeat) {
                         guide.accentsDownbeat.toggle()
                     }
@@ -301,7 +303,16 @@ private struct QuickClickPanel: View {
         capture.reset()
     }
 
-    private func segment(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+    /// "Three four time" for VoiceOver.
+    static func spoken(_ meter: Meter) -> String {
+        let words = ["2": "Two", "3": "Three", "4": "four", "6": "Six", "8": "eight"]
+        let parts = meter.rawValue.split(separator: "/").map { words[String($0)] ?? String($0) }
+        return "\(parts[0]) \(parts[1].lowercased()) time"
+    }
+
+    private func segment(
+        _ title: String, isOn: Bool, label: String? = nil, action: @escaping () -> Void
+    ) -> some View {
         Button {
             action()
             Haptics.detent()
@@ -312,7 +323,7 @@ private struct QuickClickPanel: View {
         }
         .buttonStyle(OptionKeyStyle(isOn: isOn))
         // Read without the note symbols.
-        .accessibilityLabel(title.trimmingCharacters(in: .letters.inverted))
+        .accessibilityLabel(label ?? title.trimmingCharacters(in: .letters.inverted))
     }
 
     private func startPreview() {
@@ -611,6 +622,16 @@ private struct BillboardsPanel: View {
             .buttonStyle(.round(28))
             .accessibilityLabel("Grid faster")
             Spacer(minLength: 0)
+            Button {
+                let all = Meter.allCases
+                rhythm.grid.meter = all[((all.firstIndex(of: rhythm.grid.meter) ?? 0) + 1) % all.count]
+                Haptics.detent()
+            } label: {
+                Text(rhythm.grid.meter.rawValue).font(Theme.mono(11, weight: .bold))
+            }
+            .buttonStyle(.instrument(height: 32))
+            .accessibilityLabel("Grid meter")
+            .accessibilityValue(QuickClickPanel.spoken(rhythm.grid.meter))
             Button {
                 rhythm.grid.subdivision = rhythm.grid.subdivision == .quarter ? .eighth : .quarter
                 Haptics.detent()

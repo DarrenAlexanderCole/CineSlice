@@ -64,6 +64,7 @@ struct MixDeck: View {
                 HStack(spacing: 8) {
                     musicMenu
                     LaneZoomKey(model: model)
+                    if model.beatGrid != nil { snapKey }
                 }
             } trailing: {
                 LoopButton(model: model)
@@ -73,6 +74,20 @@ struct MixDeck: View {
             MusicSourceSheet(model: model) { pendingPick = $0 }
                 .presentationDetents([.large])
         }
+    }
+
+    /// With a click or tapped guide: catch scrubs and loop handles on its beats.
+    private var snapKey: some View {
+        Button {
+            model.snapsToBeats.toggle()
+            Haptics.detent()
+        } label: {
+            Text("SNAP").font(Theme.mono(9, weight: .heavy))
+        }
+        .buttonStyle(.round(40, lit: model.snapsToBeats))
+        .accessibilityLabel("Snap to beats")
+        .accessibilityValue(model.snapsToBeats ? "On" : "Off")
+        .accessibilityHint("Scrubbing and the loop handles catch on the guide's beats.")
     }
 
     /// Opens the system picker the source sheet asked for, now that it has closed.
