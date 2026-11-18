@@ -423,6 +423,61 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertNil(built.clipAudioTrackID)
     }
 
+    // MARK: Crop
+
+    /// A crop pushes in on the exported picture, not just the preview. The source is a still split
+    /// red | blue; cropping clip 1 to its left half and clip 2 to its right half turns each whole
+    /// frame one colour.
+    func testExportedClipsArePushedInOnTheirCrop() async throws {
+        let split = UIGraphicsImageRenderer(size: CGSize(width: 540, height: 960)).image { ctx in
+            UIColor.red.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 270, height: 960))
+            UIColor.blue.setFill()
+            ctx.fill(CGRect(x: 270, y: 0, width: 270, height: 960))
+        }
+        var project = try store.create(name: "Crop")
+        let source = try await MediaImporter.adoptStill(
+            imageData: try XCTUnwrap(split.pngData()), originalName: "Split", label: "Split", store: store,
+            projectID: project.id)
+        let add = AddClipsCommand(sources: [source, source])
+        try add.apply(to: &project)
+        try SetCropCommand(clipID: add.clipIDs[0], crop: Crop(x: 0, y: 0.25, size: 0.5)).apply(to: &project)
+        try SetCropCommand(clipID: add.clipIDs[1], crop: Crop(x: 0.5, y: 0.25, size: 0.5)).apply(to: &project)
+        try store.save(project)
+
+        let result = try await ExportService.export(project: project, store: store) { _ in }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: result.videoURL))
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        for (seconds, red) in [(1.5, true), (4.5, false)] {
+            let frame = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image
+            for x in [0.1, 0.9] {
+                let (r, _, b) = try pixel(frame, x: x, y: 0.5)
+                if red {
+                    XCTAssertGreaterThan(r, b + 100, "clip 1 at \(x) should be red")
+                } else {
+                    XCTAssertGreaterThan(b, r + 100, "clip 2 at \(x) should be blue")
+                }
+            }
+        }
+    }
+
+    /// The colour at a fraction of the way across and down an image.
+    private func pixel(_ image: CGImage, x: Double, y: Double) throws -> (Int, Int, Int) {
+        var rgba = [UInt8](repeating: 0, count: 4)
+        let context = try XCTUnwrap(
+            CGContext(
+                data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let px = CGFloat(x) * CGFloat(image.width)
+        let py = CGFloat(y) * CGFloat(image.height)
+        context.draw(
+            image,
+            in: CGRect(
+                x: -px, y: -(CGFloat(image.height) - py), width: CGFloat(image.width), height: CGFloat(image.height)))
+        return (Int(rgba[0]), Int(rgba[1]), Int(rgba[2]))
+    }
+
     private func build(_ project: Project, clipAudio: Bool, music: Bool) async throws -> BuiltComposition {
         let store = self.store!
         return try await CompositionBuilder.build(
