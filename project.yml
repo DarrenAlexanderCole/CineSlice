@@ -90,6 +90,7 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.studio4.cineslice.tests
+        DEVELOPMENT_TEAM: HF6H3Q6CJ2
 
   # Taps through the workspace states and attaches a screenshot of each (layout check).
   PocketInstrumentUITests:
@@ -103,5 +104,6 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.studio4.cineslice.uitests
+        DEVELOPMENT_TEAM: HF6H3Q6CJ2
 
 # Core logic tests run without Xcode: cd Packages/EditCore && swift test
