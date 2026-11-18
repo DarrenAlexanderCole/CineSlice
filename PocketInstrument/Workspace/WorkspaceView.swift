@@ -154,25 +154,25 @@ struct WorkspaceView: View {
             }
             VStack {
                 HStack {
-                    GlassChip {
-                        HStack(spacing: 6) {
+                    GlassChip(compact: true) {
+                        HStack(spacing: 4) {
                             LED(isOn: model.engine.isPlaying)
                             Text(model.mode.title.uppercased())
-                                .font(Theme.caption)
+                                .font(Theme.mono(9, weight: .bold))
                                 .foregroundStyle(Theme.label)
                         }
                     }
                     Spacer()
                     if !model.project.clips.isEmpty {
-                        // Stacked, so it fits on the gate beside a vertical picture.
-                        GlassChip {
+                        // Small and stacked, so it sits on the gate off the picture.
+                        GlassChip(compact: true) {
                             VStack(alignment: .trailing, spacing: 0) {
-                                TimecodeText(time: model.currentTime, frameRate: frameRate, size: 12)
+                                TimecodeText(time: model.currentTime, frameRate: frameRate, size: 10)
                                 TimecodeText(
-                                    time: MediaTime(model.engine.duration), frameRate: frameRate, size: 9,
+                                    time: MediaTime(model.engine.duration), frameRate: frameRate, size: 7,
                                     color: Theme.secondaryLabel)
                             }
-                            .padding(.vertical, 3)
+                            .padding(.vertical, 2)
                         }
                     }
                 }
@@ -192,12 +192,12 @@ struct WorkspaceView: View {
                         Button {
                             setWatching(true)
                         } label: {
-                            GlassChip {
+                            GlassChip(compact: true) {
                                 Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.system(size: 10, weight: .bold))
                                     .foregroundStyle(Theme.label)
                             }
-                            .frame(minWidth: Theme.minTouch, minHeight: Theme.minTouch)
+                            .frame(minWidth: Theme.minTouch, minHeight: Theme.minTouch, alignment: .bottomTrailing)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -206,7 +206,7 @@ struct WorkspaceView: View {
                     }
                 }
             }
-            .padding(10)
+            .padding(6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -242,16 +242,16 @@ struct WorkspaceView: View {
         Button {
             model.toggleOrientation()
         } label: {
-            GlassChip {
-                HStack(spacing: 6) {
+            GlassChip(compact: true) {
+                HStack(spacing: 4) {
                     Image(systemName: model.isLandscape ? "rectangle.portrait.rotate" : "rectangle.landscape.rotate")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 10, weight: .bold))
                     Text(model.project.exportSettings.aspectLabel)
-                        .font(Theme.mono(11, weight: .bold))
+                        .font(Theme.mono(9, weight: .bold))
                 }
                 .foregroundStyle(Theme.label)
             }
-            .frame(minHeight: Theme.minTouch)
+            .frame(minHeight: Theme.minTouch, alignment: .bottomLeading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

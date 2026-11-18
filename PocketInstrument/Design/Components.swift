@@ -185,11 +185,13 @@ struct TimecodeText: View {
 
 /// Smoked-glass chip for information overlaid on footage.
 struct GlassChip<Content: View>: View {
+    /// Small enough to sit on the viewer's gate, off the picture.
+    var compact = false
     @ViewBuilder var content: Content
     var body: some View {
         content
-            .padding(.horizontal, 12)
-            .frame(minHeight: 32)
+            .padding(.horizontal, compact ? 7 : 12)
+            .frame(minHeight: compact ? 22 : 32)
             .background(.ultraThinMaterial, in: Capsule())
             .background(Theme.obsidian.opacity(0.35), in: Capsule())
             .overlay(Capsule().strokeBorder(Theme.hairline))
