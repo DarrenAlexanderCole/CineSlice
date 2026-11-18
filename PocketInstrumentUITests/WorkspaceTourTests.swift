@@ -309,10 +309,18 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertFalse(button("Mix").waitForExistence(timeout: 1), "the deck should be hidden")
         sleep(1)
         shot("Watch")
+        // Tapping the left edge marks In on the clip that's playing, without stopping.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.5)).tap()
+        shot("Watch, marked In")
+        // A double tap in the middle clears that clip's In and Out again.
+        app.doubleTap()
+        shot("Watch, cleared")
+        sleep(1)
         app.tap()
-        XCTAssertTrue(button("Pause").waitForExistence(timeout: 3))
+        XCTAssertTrue(button("Pause").waitForExistence(timeout: 3), "marking should keep it playing")
         button("Done").tap()
         XCTAssertTrue(button("Mix").waitForExistence(timeout: 3))
+        XCTAssertTrue(button("Undo Trim Clip").exists)
         button("Pause").tap()
     }
 }

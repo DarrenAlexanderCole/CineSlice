@@ -844,6 +844,56 @@ final class WorkspaceModel {
         Haptics.press()
     }
 
+    /// Marks In or Out at the playhead on the clip playing there, in any state and without
+    /// stopping playback (Watch's edge taps). After an In the clip plays on from its new start;
+    /// after an Out the next clip follows on. Returns the clip's number, or nil when there's none.
+    @discardableResult
+    func markAtPlayhead(in isIn: Bool) -> Int? {
+        if mode == .explore {
+            guard let id = selectedClipID, let index = project.index(ofClip: id) else { return nil }
+            isIn ? markIn() : markOut()
+            return index + 1
+        }
+        guard let hit = sequenceMap.sourceTime(atComposition: currentTime),
+            let entry = sequenceMap.entry(for: hit.clipID), let clip = project.clip(id: hit.clipID)
+        else { return nil }
+        let t = hit.sourceTime
+        let range =
+            isIn
+            ? MediaTimeRange(start: t, end: max(clip.sourceRange.end, t + minimumClipDuration))
+            : MediaTimeRange(start: min(clip.sourceRange.start, t - minimumClipDuration), end: t)
+        perform(TrimClipCommand(clipID: clip.id, sourceRange: range))
+        // The clip now starts at the marked moment, so carry on from its (unchanged) start.
+        if isIn { rebuildSequence(keepingTime: entry.compositionRange.start) }
+        Haptics.press()
+        return entry.index + 1
+    }
+
+    /// Clears In and Out on the clip playing at the playhead, back to its whole source (a photo
+    /// to its usual length), and plays on from the same moment. Returns the clip's number, or nil
+    /// when there's no clip or nothing to clear.
+    @discardableResult
+    func clearMarksAtPlayhead() -> Int? {
+        let id: UUID
+        let sourceTime: MediaTime
+        if mode == .explore {
+            guard let selected = selectedClipID else { return nil }
+            (id, sourceTime) = (selected, currentTime)
+        } else {
+            guard let hit = sequenceMap.sourceTime(atComposition: currentTime) else { return nil }
+            (id, sourceTime) = (hit.clipID, hit.sourceTime)
+        }
+        guard let clip = project.clip(id: id), let source = project.source(for: clip),
+            let index = project.index(ofClip: id), clip.sourceRange != source.defaultClipRange
+        else { return nil }
+        perform(TrimClipCommand(clipID: id, sourceRange: source.defaultClipRange))
+        if mode != .explore, let resume = sequenceMap.compositionTime(clipID: id, sourceTime: sourceTime) {
+            rebuildSequence(keepingTime: resume)
+        }
+        Haptics.press()
+        return index + 1
+    }
+
     func updateDraft(_ range: MediaTimeRange, previewAt time: MediaTime) {
         guard let source = selectedSource else { return }
         draftRange = TrimClipCommand.clamp(range, toSourceDuration: source.duration)

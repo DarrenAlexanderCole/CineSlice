@@ -357,6 +357,41 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertEqual(model.project.automation.music.segments[0].points[1].value, 0.9)
     }
 
+    // MARK: Watch marks
+
+    /// Marking at the playhead trims the clip playing there: In from that moment, Out up to it.
+    func testMarkingAtThePlayheadTrimsTheClipPlaying() async throws {
+        let project = try await makeProject()
+        let model = WorkspaceModel(project: project, store: store)
+        model.open()
+        defer { model.close() }
+        model.setMode(.mix)
+        for _ in 0..<100 where model.engine.duration == .zero {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let second = project.clips[1]
+        // Clip 1 plays 0–4 s, so 5 s is one second into clip 2.
+        model.scrub(to: MediaTime(seconds: 5), precise: true)
+        XCTAssertEqual(model.markAtPlayhead(in: true), 2)
+        XCTAssertEqual(model.undoName, "Trim Clip")
+        XCTAssertEqual(
+            model.project.clip(id: second.id)?.sourceRange.start, second.sourceRange.start + MediaTime(seconds: 1))
+        XCTAssertEqual(model.project.clip(id: second.id)?.sourceRange.end, second.sourceRange.end)
+        // 2 s into clip 1 (source 2.5 s, since it starts at 0.5 s): Out there.
+        model.scrub(to: MediaTime(seconds: 2), precise: true)
+        XCTAssertEqual(model.markAtPlayhead(in: false), 1)
+        XCTAssertEqual(
+            model.project.clips[0].sourceRange,
+            MediaTimeRange(start: MediaTime(seconds: 0.5), end: MediaTime(seconds: 2.5)))
+        // The playhead now sits where clip 2 follows on. Back in clip 1, clearing puts it back to
+        // its whole source; with nothing left to clear, it declines.
+        model.scrub(to: MediaTime(seconds: 1), precise: true)
+        XCTAssertEqual(model.clearMarksAtPlayhead(), 1)
+        XCTAssertEqual(
+            model.project.clips[0].sourceRange, model.project.source(for: model.project.clips[0])?.defaultClipRange)
+        XCTAssertNil(model.clearMarksAtPlayhead())
+    }
+
     // MARK: Photos
 
     /// A rotated photo becomes an upright, silent 10 s movie at 30 fps that starts as a 3 s clip

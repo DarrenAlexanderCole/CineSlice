@@ -281,29 +281,78 @@ struct WorkspaceView: View {
 }
 
 /// Just the picture, edge to edge on black, with the status bar and home indicator out of the
-/// way. Tapping shows play/pause and Done for a few seconds; swiping down also leaves.
-/// With VoiceOver the controls stay up.
+/// way. Tapping the middle shows play/pause, In/Out and Done for a few seconds; swiping down
+/// also leaves. Tapping the left or right edge marks In or Out on the clip that's playing,
+/// without looking or stopping, flashed big on that side; double-tapping the middle clears that
+/// clip's In and Out. With VoiceOver the controls stay up.
 private struct WatchView: View {
     var model: WorkspaceModel
     var onDone: () -> Void
 
     @State private var showsControls = false
     @State private var hideTask: Task<Void, Never>?
+    /// The last mark, flashed big: In on the left, Out on the right, a clear in the middle.
+    @State private var flash: (mark: Mark, clip: Int)?
+    /// When the middle was last tapped, to catch a double tap without delaying single ones.
+    @State private var lastMiddleTap: (at: Date, showedControls: Bool)?
+
+    enum Mark {
+        case markIn, markOut, cleared
+
+        var title: String {
+            switch self {
+            case .markIn: "IN"
+            case .markOut: "OUT"
+            case .cleared: "CLEARED"
+            }
+        }
+
+        /// In flashes on the left, Out on the right, a clear in the middle.
+        var alignment: Alignment {
+            switch self {
+            case .markIn: .leading
+            case .markOut: .trailing
+            case .cleared: .center
+            }
+        }
+    }
+    @State private var flashTask: Task<Void, Never>?
+
+    /// Share of the width at each side where a tap marks In (left) or Out (right).
+    private static let edge: CGFloat = 0.22
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            PlayerView(player: model.engine.player)
-                .ignoresSafeArea()
-                .accessibilityHidden(true)
-            if showsControls || voiceOver {
-                controls.transition(.opacity)
+        GeometryReader { geo in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                PlayerView(player: model.engine.player)
+                    .ignoresSafeArea()
+                    .accessibilityHidden(true)
+                if let flash { flashView(flash) }
+                if showsControls || voiceOver {
+                    controls.transition(.opacity)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { location in
+                let x = location.x / max(geo.size.width, 1)
+                if x < Self.edge {
+                    mark(in: true)
+                } else if x > 1 - Self.edge {
+                    mark(in: false)
+                } else if let last = lastMiddleTap, Date().timeIntervalSince(last.at) < 0.35 {
+                    // A double tap: put the controls back as they were and clear the clip's marks.
+                    lastMiddleTap = nil
+                    setControls(last.showedControls)
+                    clearMarks()
+                } else {
+                    lastMiddleTap = (Date(), showsControls)
+                    setControls(!showsControls)
+                }
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { setControls(!showsControls) }
         .simultaneousGesture(
             DragGesture(minimumDistance: 30).onEnded { g in
                 if g.translation.height > 100, abs(g.translation.width) < g.translation.height { onDone() }
@@ -311,7 +360,52 @@ private struct WatchView: View {
         )
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
-        .onDisappear { hideTask?.cancel() }
+        .onDisappear {
+            hideTask?.cancel()
+            flashTask?.cancel()
+        }
+    }
+
+    private func mark(in isIn: Bool) {
+        show(isIn ? .markIn : .markOut, clip: model.markAtPlayhead(in: isIn))
+    }
+
+    private func clearMarks() {
+        show(.cleared, clip: model.clearMarksAtPlayhead())
+    }
+
+    private func show(_ mark: Mark, clip: Int?) {
+        guard let clip else {
+            Haptics.warning()
+            return
+        }
+        flashTask?.cancel()
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.1)) { flash = (mark, clip) }
+        flashTask = Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeIn(duration: 0.3)) { flash = nil }
+        }
+    }
+
+    /// The mark, big and on its own side of the screen (a clear in the middle).
+    private func flashView(_ flash: (mark: Mark, clip: Int)) -> some View {
+        VStack(spacing: 4) {
+            Text(flash.mark.title)
+                .font(.system(size: 44, weight: .heavy, design: .monospaced))
+                .foregroundStyle(Theme.signal)
+            Text(String(format: "CLIP %02d", flash.clip))
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.ivory)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.black.opacity(0.55)))
+        .frame(maxWidth: .infinity, alignment: flash.mark.alignment)
+        .padding(.horizontal, 24)
+        .allowsHitTesting(false)
+        .transition(.opacity)
+        .accessibilityHidden(true)
     }
 
     private var controls: some View {
@@ -327,18 +421,36 @@ private struct WatchView: View {
                     .accessibilityHint("Back to editing")
             }
             Spacer()
-            Button {
-                model.engine.togglePlay()
-                setControls(true)
-            } label: {
-                Image(systemName: model.engine.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 26, weight: .bold))
-                    .frame(width: 64, height: 56)
+            HStack {
+                markKey(in: true)
+                Spacer()
+                Button {
+                    model.engine.togglePlay()
+                    setControls(true)
+                } label: {
+                    Image(systemName: model.engine.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 26, weight: .bold))
+                        .frame(width: 64, height: 56)
+                }
+                .buttonStyle(.instrument(.key, active: model.engine.isPlaying))
+                .accessibilityLabel(model.engine.isPlaying ? "Pause" : "Play")
+                Spacer()
+                markKey(in: false)
             }
-            .buttonStyle(.instrument(.key, active: model.engine.isPlaying))
-            .accessibilityLabel(model.engine.isPlaying ? "Pause" : "Play")
         }
         .padding(16)
+    }
+
+    /// IN and OUT beside play: the same marks as tapping the screen's edges.
+    private func markKey(in isIn: Bool) -> some View {
+        Button(isIn ? "In" : "Out") {
+            mark(in: isIn)
+            setControls(true)
+        }
+        .buttonStyle(.instrument())
+        .accessibilityLabel(isIn ? "Mark in at playhead" : "Mark out at playhead")
+        .accessibilityHint("Trims the clip that's playing. You can also tap the screen's left or right edge.")
+        .accessibilityAction(named: "Clear in and out") { clearMarks() }
     }
 
     /// Shows or hides the controls; shown, they fade out again after a few seconds.
