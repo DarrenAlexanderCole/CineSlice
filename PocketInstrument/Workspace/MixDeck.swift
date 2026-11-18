@@ -17,6 +17,10 @@ struct MixDeck: View {
     var onAddMusicFile: () -> Void
     var onAddMusicFromVideo: () -> Void
 
+    @State private var showsSources = false
+    /// A picker asked for from the source sheet, opened once the sheet has closed.
+    @State private var pendingPick: MusicSourceSheet.Pick?
+
     var body: some View {
         VStack(spacing: 10) {
             SequenceLane(model: model, waveformDrag: .slideMusic, showsAutomation: true)
@@ -65,6 +69,20 @@ struct MixDeck: View {
                 LoopButton(model: model)
             }
         }
+        .sheet(
+            isPresented: $showsSources,
+            onDismiss: {
+                switch pendingPick {
+                case .files: onAddMusicFile()
+                case .video: onAddMusicFromVideo()
+                case nil: break
+                }
+                pendingPick = nil
+            }
+        ) {
+            MusicSourceSheet(model: model) { pendingPick = $0 }
+                .presentationDetents([.large])
+        }
     }
 
     /// Editing a curve with a point tapped, the wheel slides that point instead of the playhead.
@@ -82,17 +100,16 @@ struct MixDeck: View {
 
     private var emptyMusic: some View {
         VStack(spacing: 8) {
-            Text("Add a song to line up with your footage")
+            Text("Add a song or a click guide to cut against")
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.secondaryLabel)
-            HStack(spacing: 10) {
-                Button("Files", action: onAddMusicFile).buttonStyle(.instrument(.key))
-                Button("From a video", action: onAddMusicFromVideo).buttonStyle(.instrument())
-                Button("Click") { Task { await model.addDemoClickTrack() } }
-                    .buttonStyle(.instrument())
-                    .accessibilityLabel("Demo click track")
-                    .accessibilityHint("Generates a 30 second, 120 BPM metronome for testing sync")
+            Button {
+                showsSources = true
+            } label: {
+                Label("Choose music", systemImage: "music.note").frame(minWidth: 160)
             }
+            .buttonStyle(.instrument(.key))
+            .accessibilityHint("My Music, Quick Click or Billboards")
         }
         .frame(maxWidth: .infinity, minHeight: 100)
     }
@@ -145,43 +162,14 @@ struct MixDeck: View {
     }
 
     private var musicMenu: some View {
-        Menu {
-            Button(action: onAddMusicFile) {
-                Label(
-                    model.project.referenceAudio == nil ? "Song from Files" : "Replace from Files",
-                    systemImage: "folder")
-            }
-            Button(action: onAddMusicFromVideo) {
-                Label("Sound from a video", systemImage: "film")
-            }
-            Button {
-                Task { await model.addDemoClickTrack() }
-            } label: {
-                Label("Demo click track", systemImage: "metronome")
-            }
-            if model.project.referenceAudio != nil {
-                Button(role: .destructive) {
-                    model.removeMusic()
-                } label: {
-                    Label("Remove music", systemImage: "trash")
-                }
-            }
+        Button {
+            showsSources = true
         } label: {
-            Image(systemName: "music.note")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.ivory)
-                .frame(width: Theme.minTouch, height: Theme.minTouch)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Theme.instrument, Theme.obsidian], startPoint: .top, endPoint: .bottom))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
-                        .strokeBorder(Theme.hairline))
+            Image(systemName: "music.note").font(.system(size: 15, weight: .bold))
         }
+        .buttonStyle(.round(40, lit: model.project.referenceAudio != nil))
         .accessibilityLabel("Music")
+        .accessibilityHint("Choose the reference: My Music, Quick Click or Billboards")
     }
 }
 

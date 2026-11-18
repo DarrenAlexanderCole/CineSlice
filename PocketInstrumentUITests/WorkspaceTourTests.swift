@@ -26,6 +26,14 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertTrue(button("New").isHittable)
     }
 
+    /// Mix's music chooser, opened at My Music.
+    private func openMyMusic() {
+        let choose = button("Choose music")
+        (choose.waitForExistence(timeout: 5) ? choose : button("Music")).tap()
+        XCTAssertTrue(button("My Music").waitForExistence(timeout: 5))
+        button("My Music").tap()
+    }
+
     private func button(_ label: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label ==[c] %@", label)).firstMatch
     }
@@ -79,6 +87,9 @@ final class WorkspaceTourTests: XCTestCase {
         shot("1d Clip 1 pushed in")
 
         button("Mix").tap()
+        openMyMusic()
+        sleep(1)
+        shot("2a Music chooser, My Music")
         button("Demo click track").tap()
         let lane = app.otherElements["Music position"]
         XCTAssertTrue(
@@ -262,6 +273,7 @@ final class WorkspaceTourTests: XCTestCase {
         button("Demo clips").tap()
         XCTAssertTrue(button("Mix").waitForExistence(timeout: 60), "demo clips never arrived")
         button("Mix").tap()
+        openMyMusic()
         button("Demo click track").tap()
         XCTAssertTrue(musicFader.waitForExistence(timeout: 30))
         let write = button("Write automation")

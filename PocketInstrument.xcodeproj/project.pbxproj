@@ -19,6 +19,7 @@
 		7F4E9BFD364C70B097EBBD63 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D9302D4DEAE15B1873C5D585 /* PrivacyInfo.xcprivacy */; };
 		81DEC2326A640F210022BA0C /* CMTime+MediaTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF56D275663E66C21D0907C4 /* CMTime+MediaTime.swift */; };
 		8A3420A8639040923B9EA8BC /* EditCore in Frameworks */ = {isa = PBXBuildFile; productRef = 50ACD7C90D49A13097C890DD /* EditCore */; };
+		8E02F1B29679A4F741F5B911 /* MusicSources.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37A3717594FF3F9958CF2E4D /* MusicSources.swift */; };
 		8F6A0FA38E90D1D37E773F85 /* DemoMediaGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EA6B02B6AFBAA3969D56E58 /* DemoMediaGenerator.swift */; };
 		92AF54485F3B0B3118122A3A /* SequenceLane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2599198CE9D4302B2AECE3FD /* SequenceLane.swift */; };
 		ABB5BAC565BB1FCD6EC0B081 /* MixDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DF8AE6F304D0E552467BBF /* MixDeck.swift */; };
@@ -63,6 +64,7 @@
 		21D8DA783D9BCFAC63BA389C /* PocketInstrumentUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
 		2599198CE9D4302B2AECE3FD /* SequenceLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceLane.swift; sourceTree = "<group>"; };
+		37A3717594FF3F9958CF2E4D /* MusicSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicSources.swift; sourceTree = "<group>"; };
 		48E6F5D7028543BECDE616A1 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		52E32BB34441D429E1B49272 /* MediaImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImporter.swift; sourceTree = "<group>"; };
 		547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEngine.swift; sourceTree = "<group>"; };
@@ -127,6 +129,7 @@
 				98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */,
 				14C7FB958DDC81A57CE3883A /* ExportSheet.swift */,
 				00DF8AE6F304D0E552467BBF /* MixDeck.swift */,
+				37A3717594FF3F9958CF2E4D /* MusicSources.swift */,
 				7743A7E0A879B3DFFC5F64FB /* PlayerView.swift */,
 				2599198CE9D4302B2AECE3FD /* SequenceLane.swift */,
 				7CD2F88F2097660E608C9055 /* WorkspaceModel.swift */,
@@ -366,6 +369,7 @@
 				DAC2166A9E5E40909E01B190 /* LibraryView.swift in Sources */,
 				2A72F952C5B8947F6E4B9B24 /* MediaImporter.swift in Sources */,
 				ABB5BAC565BB1FCD6EC0B081 /* MixDeck.swift in Sources */,
+				8E02F1B29679A4F741F5B911 /* MusicSources.swift in Sources */,
 				1FE55A59329B9D6B636FB00C /* PlaybackEngine.swift in Sources */,
 				560C4C0C405E460B82A70CAF /* PlayerView.swift in Sources */,
 				7C78BBA48CB402CA8EA6C7CD /* PocketInstrumentApp.swift in Sources */,
