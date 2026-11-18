@@ -32,6 +32,7 @@ Packages/EditCore/            Pure Swift model + logic. No AVFoundation, no UI. 
                               levelCurve), Crop, AudioTrack, LoopRange, SoundPolicy, ExportSettings, Project
   SequenceMap.swift           Converts source time <-> composition time (clips are back to back)
   Audio.swift                 Music placement, MusicSyncNote (Instagram handoff), Waveform
+  Rhythm.swift                MusicReference, ClickGuide, TapRhythm, SongIdentity, TapCapture
   Automation.swift            Volume automation lanes: recorded passes, points, smoothing
   Commands.swift              EditingCommand + every edit (see below)
   UndoStack.swift             Snapshot undo/redo
@@ -89,8 +90,12 @@ travel with the clip. `SequenceMap` converts between them.
     music waveform, cuts and loop bracket, lane zoom, Fill/Fit, duplicate, delete, **Crop** (a
     per-clip push-in up to 4×, drawn and dragged/pinched over the picture).
   - **Trim:** whole-source filmstrip, In/Out handles and keys, zoom to the clip, music under it.
-  - **Mix:** one reference song (Files, a video's sound, or a demo click track), slide/nudge it
-    against the picture and lock it; per-clip and music faders; Write records fader rides as
+  - **Mix:** one reference track, chosen from the music key in three ways: **My Music** (Files,
+    a video's sound, or the demo click), **Quick Click** (a click guide: BPM by −/+, drag or tap
+    tempo, 4/4, quarter/eighth, accented beat one) or **Billboards** (the song to add in Instagram,
+    named by hand, its tempo or rhythm tapped along while it plays elsewhere; raw taps kept,
+    quantizing reversible, repeat optional). Guides render to a WAV (`Media/RhythmGuide.swift`) and
+    show bar/beat lines on the lane. Slide/nudge the track against the picture and lock it; per-clip and music faders; Write records fader rides as
     automation (Touch mode); Edit draws/moves/adds/deletes curve points by finger.
   - Loop a region, the selected clip or everything.
 - **Release:** frame (Reels 9:16 or Feed 4:5 for vertical edits; 16:9 when horizontal), sound
@@ -155,5 +160,7 @@ controller input, cloud features, AI auto-editing, heavy effects, and attaching 
 - VoiceOver works on the main controls but hasn't had a full pass.
 - Export uses `AVAssetExportSession.exportAsynchronously` (deprecated on iOS 18, still works).
 - HDR sources export as SDR H.264.
+- "Billboards" is CineSlice's name for the feature, not an affiliation with Billboard; there is no
+  chart data, catalog or network lookup. Song identity is typed in; only the user's taps are kept.
 - "Open Instagram" uses Instagram's undocumented `instagram://library?LocalIdentifier=` link;
   it falls back to just opening Instagram.

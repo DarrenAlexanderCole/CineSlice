@@ -112,6 +112,14 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertTrue(button("Undo Set Quick Click").waitForExistence(timeout: 30))
         sleep(1)
         shot("2c Mix with a Quick Click guide")
+        // Zoomed, the guide's bars and beats spread out; zooming never moves them in time.
+        let laneZoom = button("Zoom sequence")
+        laneZoom.tap()
+        sleep(1)
+        shot("2c2 Quick Click guide, lane zoomed 4x")
+        laneZoom.tap()
+        laneZoom.tap()
+        XCTAssertEqual(laneZoom.value as? String, "1×")
         button("Undo Set Quick Click").tap()
         XCTAssertTrue(button("Undo Set Music").waitForExistence(timeout: 10))
 

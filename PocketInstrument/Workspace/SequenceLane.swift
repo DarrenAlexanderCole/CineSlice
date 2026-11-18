@@ -204,6 +204,10 @@ struct SequenceLane: View {
                     .foregroundStyle(Theme.secondaryLabel)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            if let grid = music.reference?.click ?? music.reference?.rhythm?.grid {
+                // A click or tapped guide: its bars and beats, sliding with it.
+                BeatGrid(guide: grid, offset: offset, length: music.duration, window: window)
+            }
             Text(music.originalFilename ?? "Music")
                 .font(Theme.mono(9))
                 .foregroundStyle(Theme.label.opacity(0.8))
@@ -677,5 +681,49 @@ struct LaneZoomKey: View {
     private func label(_ zoom: Double) -> String {
         let whole = (zoom - zoom.rounded()).magnitude < 0.05 || zoom >= 10
         return String(format: whole ? "%.0f×" : "%.1f×", zoom)
+    }
+}
+
+/// Bar and beat lines of a click or tapped guide across the lane, in composition time (beat one
+/// at the track's offset), with bar numbers when there's room. Beats thin out when zoomed out so
+/// the lane never turns to a smear; zooming changes only the spacing, never the times.
+private struct BeatGrid: View {
+    var guide: ClickGuide
+    var offset: MediaTime
+    /// The guide's rendered length: no lines past its end.
+    var length: MediaTime
+    var window: (start: Double, span: Double)
+
+    var body: some View {
+        Canvas { context, size in
+            guard window.span > 0 else { return }
+            let perSecond = Double(size.width) / window.span
+            let beat = 60 / guide.bpm
+            let beatGap = beat * perSecond
+            let barGap = beatGap * Double(guide.beatsPerBar)
+            guard barGap >= 3 else { return }
+            let first = max(0, Int(((window.start - offset.seconds) / beat).rounded(.down)))
+            let last = Int(((window.start + window.span - offset.seconds) / beat).rounded(.up))
+            let end = length.seconds
+            guard last >= first else { return }
+            for n in first...last {
+                let guideTime = Double(n) * beat
+                guard guideTime < end else { break }
+                let isBar = n % guide.beatsPerBar == 0
+                guard isBar || beatGap >= 5 else { continue }
+                let x = CGFloat((offset.seconds + guideTime - window.start) * perSecond)
+                guard x >= -1, x <= size.width + 1 else { continue }
+                let line = CGRect(x: x - (isBar ? 0.75 : 0.25), y: 0, width: isBar ? 1.5 : 0.5, height: size.height)
+                context.fill(Path(line), with: .color(isBar ? Theme.signal.opacity(0.55) : Theme.ivory.opacity(0.18)))
+                if isBar, barGap >= 26 {
+                    context.draw(
+                        Text("\(n / guide.beatsPerBar + 1)").font(Theme.mono(8, weight: .bold))
+                            .foregroundStyle(Theme.signal.opacity(0.85)),
+                        at: CGPoint(x: x + 3, y: size.height - 6), anchor: .leading)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
