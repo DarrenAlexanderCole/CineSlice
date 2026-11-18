@@ -191,10 +191,14 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
     public var volume: Float
     /// Locked once lined up, so the song can't be bumped: `offset` changes are refused.
     public var isLocked: Bool
+    /// How the track was made (Quick Click or Billboards guides); nil for older projects, which
+    /// all used My Music.
+    public var reference: MusicReference?
 
     public init(
         id: UUID = UUID(), fileName: String, originalFilename: String? = nil,
-        duration: MediaTime, offset: MediaTime = .zero, volume: Float = 1, isLocked: Bool = false
+        duration: MediaTime, offset: MediaTime = .zero, volume: Float = 1, isLocked: Bool = false,
+        reference: MusicReference? = nil
     ) {
         self.id = id
         self.fileName = fileName
@@ -203,11 +207,15 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
         self.offset = offset
         self.volume = volume
         self.isLocked = isLocked
+        self.reference = reference
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, fileName, originalFilename, duration, offset, volume, isLocked
+        case id, fileName, originalFilename, duration, offset, volume, isLocked, reference
     }
+
+    /// Where it came from; older tracks were all My Music.
+    public var kind: MusicReference.Kind { reference?.kind ?? .myMusic }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -218,6 +226,7 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
         offset = try c.decodeIfPresent(MediaTime.self, forKey: .offset) ?? .zero
         volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
         isLocked = try c.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
+        reference = try c.decodeIfPresent(MusicReference.self, forKey: .reference)
     }
 }
 

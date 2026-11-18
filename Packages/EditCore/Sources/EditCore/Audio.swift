@@ -101,6 +101,12 @@ public struct MusicSyncNote: Codable, Equatable, Sendable {
     /// e.g. "In Instagram, start the song at 0:12.40."
     public var instruction: String
     public var caveat: String
+    /// How the reference was made ("myMusic", "quickClick", "billboards"); absent in older notes.
+    public var referenceKind: String?
+    /// Billboards: the song to add in Instagram, as typed in.
+    public var songTitle: String?
+    public var songArtist: String?
+    public var songSection: String?
 
     public static let caveatText =
         "Instagram doesn't let apps set where its music starts, so match it by hand there. "
@@ -116,14 +122,43 @@ public struct MusicSyncNote: Codable, Equatable, Sendable {
         songStartSeconds = max(0, -music.offset.seconds)
         soundPolicy = project.exportSoundPolicy
         self.exportFilename = exportFilename
-        if music.offset <= .zero {
-            instruction = "In Instagram, start the song at \(Self.clock(songStartSeconds))."
-        } else {
-            instruction =
-                "In Instagram, start the song at 0:00.00. In this edit it comes in "
-                + "\(Self.clock(music.offset.seconds)) after the video starts, but Instagram plays music from the first frame."
-        }
         caveat = Self.caveatText
+        referenceKind = music.reference?.kind.rawValue
+        let song = music.reference?.song
+        songTitle = song.flatMap { $0.title.isEmpty ? nil : $0.title }
+        songArtist = song.flatMap { $0.artist.isEmpty ? nil : $0.artist }
+        songSection = song.flatMap { $0.section.isEmpty ? nil : $0.section }
+
+        switch music.kind {
+        case .myMusic:
+            if music.offset <= .zero {
+                instruction = "In Instagram, start the song at \(Self.clock(songStartSeconds))."
+            } else {
+                instruction =
+                    "In Instagram, start the song at 0:00.00. In this edit it comes in "
+                    + "\(Self.clock(music.offset.seconds)) after the video starts, but Instagram plays music from the first frame."
+            }
+        case .quickClick:
+            // The guide stands in for a song: say where its first downbeat falls in the video.
+            let bar = music.reference?.click?.barDuration.seconds ?? 2
+            var first = music.offset.seconds
+            if first < 0, bar > 0 { first += (-first / bar).rounded(.up) * bar }
+            instruction =
+                "Your click guide's first downbeat is \(Self.clock(first)) into the video. In Instagram, "
+                + "start the song on a downbeat so it lands there."
+        case .billboards:
+            let name = song?.displayName ?? "the song"
+            let part = songSection.map { " (\($0))" } ?? ""
+            if let from = song?.tappedFrom {
+                // Song time at the first frame: where tapping began, less how far into the video it is.
+                songStartSeconds = max(0, from.seconds - music.offset.seconds)
+                instruction = "In Instagram, add \(name) and start it at \(Self.clock(songStartSeconds))."
+            } else {
+                instruction =
+                    "In Instagram, add \(name). Start it so the spot you tapped from\(part) comes in "
+                    + "\(Self.clock(max(0, music.offset.seconds))) into the video."
+            }
+        }
     }
 
     /// m:ss.cc, the way music apps show song positions.

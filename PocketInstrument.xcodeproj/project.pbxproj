@@ -10,6 +10,7 @@
 		053E286D294424134FA740C4 /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */; };
 		1FE55A59329B9D6B636FB00C /* PlaybackEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */; };
 		2A72F952C5B8947F6E4B9B24 /* MediaImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52E32BB34441D429E1B49272 /* MediaImporter.swift */; };
+		427005A74781C23E00CC7BEF /* RhythmGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */; };
 		46B518839A7A4B1DCDC972B6 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */; };
 		4DE251C57513F0C5A47BCA57 /* CompositionBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF21A29882624124DD5AC043 /* CompositionBuilder.swift */; };
 		560C4C0C405E460B82A70CAF /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7743A7E0A879B3DFFC5F64FB /* PlayerView.swift */; };
@@ -83,6 +84,7 @@
 		D9302D4DEAE15B1873C5D585 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		DF56D275663E66C21D0907C4 /* CMTime+MediaTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMTime+MediaTime.swift"; sourceTree = "<group>"; };
+		EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhythmGuide.swift; sourceTree = "<group>"; };
 		EE4CB30A85115C146D89F422 /* WorkspaceTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTourTests.swift; sourceTree = "<group>"; };
 		F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -108,6 +110,7 @@
 				F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */,
 				52E32BB34441D429E1B49272 /* MediaImporter.swift */,
 				547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */,
+				EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */,
 				23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */,
 				8D3BD010507DB5CBA8581C6A /* WaveformAnalyzer.swift */,
 			);
@@ -373,6 +376,7 @@
 				1FE55A59329B9D6B636FB00C /* PlaybackEngine.swift in Sources */,
 				560C4C0C405E460B82A70CAF /* PlayerView.swift in Sources */,
 				7C78BBA48CB402CA8EA6C7CD /* PocketInstrumentApp.swift in Sources */,
+				427005A74781C23E00CC7BEF /* RhythmGuide.swift in Sources */,
 				92AF54485F3B0B3118122A3A /* SequenceLane.swift in Sources */,
 				730D29CB6C69B0B2737DF5EB /* Theme.swift in Sources */,
 				053E286D294424134FA740C4 /* ThumbnailCache.swift in Sources */,

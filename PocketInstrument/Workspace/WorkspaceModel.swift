@@ -869,6 +869,48 @@ final class WorkspaceModel {
         }
     }
 
+    // MARK: Click and rhythm guides
+
+    /// How long a guide is rendered: the sequence and half a minute more (at least a minute), in
+    /// whole bars, so there's room to slide it and to keep cutting.
+    func guideLength(bar: MediaTime) -> MediaTime {
+        let wanted = max(60, project.duration.seconds + 30)
+        let bars = max(1, Int((wanted / max(bar.seconds, 0.1)).rounded(.up)))
+        return MediaTime(value: bar.value * Int64(bars), timescale: bar.timescale)
+    }
+
+    /// Renders a Quick Click or Billboards guide into the project's media and makes it the
+    /// reference track, as one undoable step. Re-saving a guide of the same kind keeps where it
+    /// was placed, its level and its lock; `beatOneAt` places its beat one there instead.
+    func saveGuide(_ reference: MusicReference, named name: String, beatOneAt: MediaTime? = nil) async {
+        let bar = reference.rhythm?.grid.barDuration ?? reference.click?.barDuration ?? MediaTime(seconds: 2)
+        let length = guideLength(bar: bar)
+        let clicks =
+            reference.rhythm?.clicks(upTo: length) ?? reference.click?.clicks(upTo: length) ?? []
+        importStatus = "Building guide…"
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        do {
+            try GuideRenderer.write(clicks, duration: length, to: temp)
+            var track = try await MediaImporter.adoptAudio(
+                tempURL: temp, originalName: name, store: store, projectID: project.id)
+            track.reference = reference
+            if let previous = project.referenceAudio, previous.kind == reference.kind {
+                track.offset = previous.offset
+                track.volume = previous.volume
+                track.isLocked = previous.isLocked
+            }
+            if let beatOneAt {
+                track.offset = beatOneAt
+                track.isLocked = false
+            }
+            finishMusicImport(track)
+        } catch {
+            try? FileManager.default.removeItem(at: temp)
+            finishMusicImport(error)
+        }
+    }
+
     private func finishMusicImport(_ track: AudioTrack) {
         importStatus = nil
         perform(SetReferenceAudioCommand(track: track))

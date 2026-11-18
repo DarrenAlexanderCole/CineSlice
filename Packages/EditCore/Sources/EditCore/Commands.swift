@@ -170,7 +170,14 @@ public struct SetExportSettingsCommand: EditingCommand {
 public struct SetReferenceAudioCommand: EditingCommand {
     public let track: AudioTrack?
     public init(track: AudioTrack?) { self.track = track }
-    public var actionName: String { track == nil ? "Remove Music" : "Set Music" }
+    public var actionName: String {
+        switch track?.kind {
+        case nil: return "Remove Music"
+        case .myMusic: return "Set Music"
+        case .quickClick: return "Set Quick Click"
+        case .billboards: return "Set Billboards Guide"
+        }
+    }
     public func apply(to project: inout Project) throws { project.referenceAudio = track }
 }
 

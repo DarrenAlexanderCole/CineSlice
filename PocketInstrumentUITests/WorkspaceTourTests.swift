@@ -98,6 +98,23 @@ final class WorkspaceTourTests: XCTestCase {
         sleep(2)
         shot("2 Mix with click track")
 
+        // Quick Click: a guide at a tempo, previewed, then used in place of the click track.
+        button("Music").tap()
+        button("Quick Click").tap()
+        XCTAssertTrue(button("Faster").waitForExistence(timeout: 5))
+        button("Faster").tap()
+        button("Faster").tap()
+        XCTAssertEqual(app.descendants(matching: .any)["Tempo"].value as? String, "122 beats per minute")
+        button("Eighth").tap()
+        sleep(1)
+        shot("2b Quick Click")
+        button("Use this click").tap()
+        XCTAssertTrue(button("Undo Set Quick Click").waitForExistence(timeout: 30))
+        sleep(1)
+        shot("2c Mix with a Quick Click guide")
+        button("Undo Set Quick Click").tap()
+        XCTAssertTrue(button("Undo Set Music").waitForExistence(timeout: 10))
+
         button("Music 10 milliseconds later").tap()
         button("Music one frame earlier").tap()
         shot("3 Mix after nudges")

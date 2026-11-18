@@ -423,6 +423,64 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertNil(built.clipAudioTrackID)
     }
 
+    // MARK: Music reference guides
+
+    /// A Quick Click guide renders as the reference track: its clicks play where its offset puts
+    /// them, re-saving at a new tempo keeps that placement, it's one undo step, and a Silent export
+    /// carries none of it.
+    func testQuickClickGuidePlaysOnItsBeatAndStaysOutOfSilentExports() async throws {
+        var project = try await makeProject()
+        try SetReferenceAudioCommand(track: nil).apply(to: &project)
+        try store.save(project)
+        let model = WorkspaceModel(project: project, store: store)
+        defer { model.close() }
+
+        await model.saveGuide(
+            MusicReference(kind: .quickClick, click: ClickGuide(bpm: 100)), named: "Quick Click 100 BPM",
+            beatOneAt: MediaTime(seconds: 1))
+        let first = try XCTUnwrap(model.project.referenceAudio)
+        XCTAssertEqual(first.kind, .quickClick)
+        XCTAssertEqual(first.offset, MediaTime(seconds: 1))
+        XCTAssertGreaterThanOrEqual(first.duration.seconds, 60 - 0.01, "long enough to keep cutting")
+        XCTAssertEqual(model.undoName, "Set Quick Click")
+
+        // Slid in Mix, then re-saved at 120 BPM: it stays where it was put.
+        model.setMusicOffset(MediaTime(seconds: 0.4))
+        await model.saveGuide(
+            MusicReference(kind: .quickClick, click: ClickGuide(bpm: 120)), named: "Quick Click 120 BPM")
+        XCTAssertEqual(model.project.referenceAudio?.offset, MediaTime(seconds: 0.4))
+        XCTAssertEqual(model.project.referenceAudio?.reference?.click?.bpm, 120)
+
+        // Clip + music: beat one at 0.4 s, then every 0.5 s.
+        var heard = model.project
+        heard.exportSettings.soundPolicy = .clipsAndMusic
+        let loud = try await ExportService.export(project: heard, store: store) { _ in }
+        let onsets = try await clickOnsets(in: AVURLAsset(url: loud.videoURL))
+        XCTAssertEqual(onsets.count, 26, "\(onsets)")
+        for (i, onset) in onsets.enumerated() {
+            XCTAssertEqual(onset, 0.4 + Double(i) * 0.5, accuracy: 0.012, "click \(i)")
+        }
+        // Silent: no sound at all, the guide included.
+        var silent = model.project
+        silent.exportSettings.soundPolicy = .silent
+        let quiet = try await ExportService.export(project: silent, store: store) { _ in }
+        let audio = try await AVURLAsset(url: quiet.videoURL).loadTracks(withMediaType: .audio)
+        XCTAssertTrue(audio.isEmpty)
+        let note = try XCTUnwrap(quiet.syncNote)
+        XCTAssertEqual(note.referenceKind, "quickClick")
+        XCTAssertTrue(note.instruction.contains("0:00.40 into the video"), note.instruction)
+
+        // Undo walks back through each step: the re-save, the slide, the first guide.
+        model.undo()
+        XCTAssertEqual(model.project.referenceAudio?.reference?.click?.bpm, 100)
+        model.undo()
+        XCTAssertEqual(model.project.referenceAudio?.offset, MediaTime(seconds: 1))
+        model.undo()
+        XCTAssertNil(model.project.referenceAudio)
+        model.redo()
+        XCTAssertEqual(model.project.referenceAudio?.kind, .quickClick)
+    }
+
     // MARK: Crop
 
     /// A crop pushes in on the exported picture, not just the preview. The source is a still split
