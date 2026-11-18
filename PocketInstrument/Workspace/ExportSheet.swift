@@ -149,12 +149,32 @@ struct ExportSheet: View {
     /// can't attach Instagram's licensed music or set its start.
     private func handoff(_ note: MusicSyncNote) -> some View {
         let start = MusicSyncNote.clock(note.songStartSeconds)
-        let song = note.referenceFilename
+        let song = note.songTitle.map { title in
+            note.songArtist.map { "\u{201C}\(title)\u{201D} by \($0)" } ?? "\u{201C}\(title)\u{201D}"
+        }
+        let songName =
+            song ?? (note.referenceKind == "quickClick" ? "your song" : "\u{201C}\(note.referenceFilename)\u{201D}")
+        // What the big readout shows: where the song starts, or for a guide without a song
+        // position, the moment in the video to line the song up with.
+        let cue: (label: String, seconds: Double, step: String) =
+            if let downbeat = note.firstDownbeatSeconds {
+                (
+                    "FIRST DOWNBEAT AT", downbeat,
+                    "Start the song on a downbeat so it lands \(MusicSyncNote.clock(downbeat)) in."
+                )
+            } else if let spot = note.tappedSpotSeconds {
+                (
+                    "TAPPED SPOT AT", spot,
+                    "Start it so the spot you tapped from\(note.songSection.map { " (\($0))" } ?? "") comes in at \(MusicSyncNote.clock(spot))."
+                )
+            } else {
+                ("SONG STARTS AT", note.songStartSeconds, "Drag the song so it starts at \(start).")
+            }
         return PanelSection(title: "Instagram handoff") {
             HStack(alignment: .firstTextBaseline) {
-                Text("SONG STARTS AT").font(Theme.mono(10, weight: .bold)).foregroundStyle(Theme.secondaryLabel)
+                Text(cue.label).font(Theme.mono(10, weight: .bold)).foregroundStyle(Theme.secondaryLabel)
                 Spacer()
-                Text(start)
+                Text(MusicSyncNote.clock(cue.seconds))
                     .font(Theme.mono(30, weight: .bold))
                     .foregroundStyle(Theme.signal)
                     .shadow(color: Theme.signal.opacity(0.5), radius: 6)
@@ -173,8 +193,8 @@ struct ExportSheet: View {
             if model.project.exportSoundPolicy == .silent {
                 VStack(alignment: .leading, spacing: 6) {
                     step(1, "Render, then save the silent video to Photos.")
-                    step(2, "In Instagram, make a Reel with it and add \u{201C}\(song)\u{201D}.")
-                    step(3, "Drag the song so it starts at \(start).")
+                    step(2, "In Instagram, make a Reel with it and add \(songName).")
+                    step(3, cue.step)
                 }
             } else {
                 Text(note.instruction).font(.system(size: 13)).foregroundStyle(Theme.label)

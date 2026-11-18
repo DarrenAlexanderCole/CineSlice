@@ -231,8 +231,9 @@ public struct TapRhythm: Codable, Hashable, Sendable {
 /// Turns taps (seconds on a monotonic clock, e.g. touch timestamps) into a tempo and a rhythm.
 /// A long pause starts over; taps too close together to be meant are dropped as bounces.
 public struct TapCapture: Sendable {
-    /// Longer than this between taps starts a new take.
+    /// Longer than this between taps starts a new take (tempo taps; rhythm takes allow longer).
     public static let restartGap = 2.5
+    public static let rhythmRestartGap = 6.0
     /// Closer than this to the previous tap is a bounce, not a tap (rhythm mode).
     public static let bounce = 0.06
     /// Tempo taps further apart or closer than these aren't a pulse (30–300 BPM).
@@ -244,8 +245,11 @@ public struct TapCapture: Sendable {
     /// Seconds of each kept tap, on the caller's clock.
     public private(set) var times: [Double] = []
     public private(set) var accents: [Bool] = []
+    public let restartAfter: Double
 
-    public init() {}
+    public init(restartAfter: Double = TapCapture.restartGap) {
+        self.restartAfter = restartAfter
+    }
 
     /// Adds a tap; returns false when it was dropped as a bounce. A tap after a long pause
     /// starts a new take with it as the first.
@@ -254,7 +258,7 @@ public struct TapCapture: Sendable {
         if let last = times.last {
             let gap = seconds - last
             if gap < Self.bounce { return false }
-            if gap > Self.restartGap { reset() }
+            if gap > restartAfter { reset() }
         }
         times.append(seconds)
         accents.append(accent)

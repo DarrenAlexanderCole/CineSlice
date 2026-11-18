@@ -481,6 +481,47 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertEqual(model.project.referenceAudio?.kind, .quickClick)
     }
 
+    /// A Billboards rhythm keeps its uneven spacing all the way into the exported file, survives
+    /// reopening the project, and names its song in the handoff.
+    func testBillboardsRhythmKeepsItsTimingAndItsSong() async throws {
+        var project = try await makeProject()
+        try SetReferenceAudioCommand(track: nil).apply(to: &project)
+        try store.save(project)
+        let model = WorkspaceModel(project: project, store: store)
+        defer { model.close() }
+
+        let tapped = [0.0, 0.3, 0.8, 1.1, 1.9]
+        let rhythm = TapRhythm(
+            mode: .rhythm, taps: tapped.map { TapRhythm.Tap(time: MediaTime(seconds: $0), accent: $0 == 0) })
+        let song = SongIdentity(title: "Midnight", artist: "The Reels", section: "chorus")
+        await model.saveGuide(
+            MusicReference(kind: .billboards, rhythm: rhythm, song: song), named: "Billboards: Midnight",
+            beatOneAt: MediaTime(seconds: 0.25))
+        XCTAssertEqual(model.undoName, "Set Billboards Guide")
+        model.saveNow()
+
+        // Reopened from disk: the taps and the song are as captured.
+        let reopened = try store.load(id: project.id)
+        let reference = try XCTUnwrap(reopened.referenceAudio?.reference)
+        XCTAssertEqual(reference.kind, .billboards)
+        XCTAssertEqual(reference.rhythm?.taps.map(\.time.seconds), tapped)
+        XCTAssertEqual(reference.song, song)
+
+        var heard = reopened
+        heard.exportSettings.soundPolicy = .clipsAndMusic
+        let result = try await ExportService.export(project: heard, store: store) { _ in }
+        let onsets = try await clickOnsets(in: AVURLAsset(url: result.videoURL))
+        XCTAssertEqual(onsets.count, tapped.count, "\(onsets)")
+        for (onset, tap) in zip(onsets, tapped) {
+            XCTAssertEqual(onset, 0.25 + tap, accuracy: 0.012)
+        }
+        let note = try XCTUnwrap(result.syncNote)
+        XCTAssertEqual(note.songTitle, "Midnight")
+        XCTAssertEqual(note.tappedSpotSeconds ?? -1, 0.25, accuracy: 1e-6)
+        let sidecar = try XCTUnwrap(result.syncNoteURL)
+        XCTAssertTrue(try String(contentsOf: sidecar, encoding: .utf8).contains("\"songArtist\" : \"The Reels\""))
+    }
+
     // MARK: Crop
 
     /// A crop pushes in on the exported picture, not just the preview. The source is a still split

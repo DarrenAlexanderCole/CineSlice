@@ -107,6 +107,10 @@ public struct MusicSyncNote: Codable, Equatable, Sendable {
     public var songTitle: String?
     public var songArtist: String?
     public var songSection: String?
+    /// Quick Click: how far into the video its first downbeat falls.
+    public var firstDownbeatSeconds: Double?
+    /// Billboards without a song position: how far into the video the spot tapped from falls.
+    public var tappedSpotSeconds: Double?
 
     public static let caveatText =
         "Instagram doesn't let apps set where its music starts, so match it by hand there. "
@@ -143,6 +147,7 @@ public struct MusicSyncNote: Codable, Equatable, Sendable {
             let bar = music.reference?.click?.barDuration.seconds ?? 2
             var first = music.offset.seconds
             if first < 0, bar > 0 { first += (-first / bar).rounded(.up) * bar }
+            firstDownbeatSeconds = first
             instruction =
                 "Your click guide's first downbeat is \(Self.clock(first)) into the video. In Instagram, "
                 + "start the song on a downbeat so it lands there."
@@ -154,6 +159,7 @@ public struct MusicSyncNote: Codable, Equatable, Sendable {
                 songStartSeconds = max(0, from.seconds - music.offset.seconds)
                 instruction = "In Instagram, add \(name) and start it at \(Self.clock(songStartSeconds))."
             } else {
+                tappedSpotSeconds = max(0, music.offset.seconds)
                 instruction =
                     "In Instagram, add \(name). Start it so the spot you tapped from\(part) comes in "
                     + "\(Self.clock(max(0, music.offset.seconds))) into the video."

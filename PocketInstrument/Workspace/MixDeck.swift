@@ -69,20 +69,20 @@ struct MixDeck: View {
                 LoopButton(model: model)
             }
         }
-        .sheet(
-            isPresented: $showsSources,
-            onDismiss: {
-                switch pendingPick {
-                case .files: onAddMusicFile()
-                case .video: onAddMusicFromVideo()
-                case nil: break
-                }
-                pendingPick = nil
-            }
-        ) {
+        .sheet(isPresented: $showsSources, onDismiss: openPendingPick) {
             MusicSourceSheet(model: model) { pendingPick = $0 }
                 .presentationDetents([.large])
         }
+    }
+
+    /// Opens the system picker the source sheet asked for, now that it has closed.
+    private func openPendingPick() {
+        switch pendingPick {
+        case .files: onAddMusicFile()
+        case .video: onAddMusicFromVideo()
+        case nil: break
+        }
+        pendingPick = nil
     }
 
     /// Editing a curve with a point tapped, the wheel slides that point instead of the playhead.

@@ -115,6 +115,34 @@ final class WorkspaceTourTests: XCTestCase {
         button("Undo Set Quick Click").tap()
         XCTAssertTrue(button("Undo Set Music").waitForExistence(timeout: 10))
 
+        // Billboards: name the song, tap its rhythm (with an accent), then use it.
+        button("Music").tap()
+        button("Billboards").tap()
+        let title = app.textFields["Title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        title.tap()
+        title.typeText("Midnight")
+        app.textFields["Artist"].tap()
+        app.textFields["Artist"].typeText("The Reels\n")
+        let tempoPad = app.buttons["Tap tempo"]
+        for _ in 0..<5 { tempoPad.tap() }
+        XCTAssertTrue((tempoPad.value as? String ?? "").hasPrefix("5 taps"), "\(tempoPad.value ?? "")")
+        shot("2d Billboards, Tap Tempo")
+        button("Tap Rhythm").tap()
+        let accentPad = app.buttons["Accent"]
+        XCTAssertTrue(accentPad.waitForExistence(timeout: 5))
+        accentPad.tap()
+        for _ in 0..<3 { app.buttons["Tap"].tap() }
+        XCTAssertTrue(app.descendants(matching: .any)["Rhythm, 4 taps"].waitForExistence(timeout: 5))
+        button("Snap to grid").tap()
+        app.swipeUp()
+        sleep(1)
+        shot("2e Billboards, Tap Rhythm")
+        button("Use this guide").tap()
+        XCTAssertTrue(button("Undo Set Billboards Guide").waitForExistence(timeout: 30))
+        button("Undo Set Billboards Guide").tap()
+        XCTAssertTrue(button("Undo Set Music").waitForExistence(timeout: 10))
+
         button("Music 10 milliseconds later").tap()
         button("Music one frame earlier").tap()
         shot("3 Mix after nudges")
