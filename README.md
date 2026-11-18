@@ -83,7 +83,7 @@ travel with the clip. `SequenceMap` converts between them.
 - **Workspace** (one screen, three states: Arrange, Trim, Mix; Release is a sheet):
   - Viewer in a cast metal housing; outside the picture is a machined gate plate whose aperture
     springs between 9:16 and 16:9, with engraved rulers and the feed's 4:5 lines. **Watch** is
-    full screen; tap the left/right edge to mark In/Out on the playing clip, double-tap the middle to clear.
+    full screen; tap to show play/pause, In/Out and Done; triple-tap or swipe down to leave.
   - **Jog/shuttle wheel** (horizontal knurled drum): jogs frames near where you touch, shuttles
     ¼×–4× either way when pushed out, stops on release.
   - **Arrange:** clip tiles (tap select, long-press drag reorder), full-width scrub lane with the

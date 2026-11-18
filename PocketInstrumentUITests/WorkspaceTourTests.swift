@@ -432,18 +432,21 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertFalse(button("Mix").waitForExistence(timeout: 1), "the deck should be hidden")
         sleep(1)
         shot("Watch")
-        // Tapping the left edge marks In on the clip that's playing, without stopping.
+        // Tapping the edge of the picture marks nothing; it just brings up the controls.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.5)).tap()
+        XCTAssertTrue(button("Pause").waitForExistence(timeout: 3), "a tap shouldn't stop playback")
+        // The In key marks deliberately, still without stopping.
+        button("Mark in at playhead").tap()
         shot("Watch, marked In")
-        // A double tap in the middle clears that clip's In and Out again.
-        app.doubleTap()
-        shot("Watch, cleared")
-        sleep(1)
-        app.tap()
-        XCTAssertTrue(button("Pause").waitForExistence(timeout: 3), "marking should keep it playing")
+        XCTAssertTrue(button("Pause").exists, "marking should keep it playing")
         button("Done").tap()
         XCTAssertTrue(button("Mix").waitForExistence(timeout: 3))
         XCTAssertTrue(button("Undo Trim Clip").exists)
+        // A triple tap leaves Watch too.
+        button("Watch").tap()
+        XCTAssertFalse(button("Mix").waitForExistence(timeout: 1))
+        app.tap(withNumberOfTaps: 3, numberOfTouches: 1)
+        XCTAssertTrue(button("Mix").waitForExistence(timeout: 3), "a triple tap should leave Watch")
         button("Pause").tap()
     }
 }
