@@ -23,6 +23,7 @@
 		ABB5BAC565BB1FCD6EC0B081 /* MixDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DF8AE6F304D0E552467BBF /* MixDeck.swift */; };
 		ABC80865925DFE487980EC3C /* MusicPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2D6B1E8FD79E15B152394E /* MusicPipelineTests.swift */; };
 		B234F02052D46C663B23BBA8 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48E6F5D7028543BECDE616A1 /* Components.swift */; };
+		C0228B4F6A3E9F01DCAA4E98 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2133A967A46DCA109FA477EF /* Assets.xcassets */; };
 		C9390A56870EA3FC61699B82 /* WorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CD2F88F2097660E608C9055 /* WorkspaceModel.swift */; };
 		CF5BB531EC77106A70E817FF /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */; };
 		DA9D4150080022C78ECDD701 /* WaveformAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D3BD010507DB5CBA8581C6A /* WaveformAnalyzer.swift */; };
@@ -53,11 +54,12 @@
 /* Begin PBXFileReference section */
 		00BC1811B0F9CE64F2BBD505 /* PocketInstrumentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketInstrumentApp.swift; sourceTree = "<group>"; };
 		00DF8AE6F304D0E552467BBF /* MixDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixDeck.swift; sourceTree = "<group>"; };
-		042783780F4DFA12BA32F2BC /* PocketInstrumentTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PocketInstrumentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		042783780F4DFA12BA32F2BC /* PocketInstrumentTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0CE8CE8ECB7F6B0E87452B91 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		0EA6B02B6AFBAA3969D56E58 /* DemoMediaGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoMediaGenerator.swift; sourceTree = "<group>"; };
 		14C7FB958DDC81A57CE3883A /* ExportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSheet.swift; sourceTree = "<group>"; };
-		21D8DA783D9BCFAC63BA389C /* PocketInstrumentUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PocketInstrumentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		2133A967A46DCA109FA477EF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		21D8DA783D9BCFAC63BA389C /* PocketInstrumentUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
 		2599198CE9D4302B2AECE3FD /* SequenceLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceLane.swift; sourceTree = "<group>"; };
 		48E6F5D7028543BECDE616A1 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
@@ -74,7 +76,7 @@
 		8E6B70F463559A3468CDEE1E /* EditCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = EditCore; path = Packages/EditCore; sourceTree = SOURCE_ROOT; };
 		98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreDeck.swift; sourceTree = "<group>"; };
 		AF21A29882624124DD5AC043 /* CompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionBuilder.swift; sourceTree = "<group>"; };
-		BB503F9E82671553893CF232 /* PocketInstrument.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketInstrument.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB503F9E82671553893CF232 /* PocketInstrument.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PocketInstrument.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		DF56D275663E66C21D0907C4 /* CMTime+MediaTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMTime+MediaTime.swift"; sourceTree = "<group>"; };
 		EE4CB30A85115C146D89F422 /* WorkspaceTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTourTests.swift; sourceTree = "<group>"; };
@@ -170,6 +172,7 @@
 		60895C445B0F2DB5107AAB31 /* PocketInstrument */ = {
 			isa = PBXGroup;
 			children = (
+				2133A967A46DCA109FA477EF /* Assets.xcassets */,
 				5EF71D9139DC9498A540BF25 /* Info.plist */,
 				50BE08420DFE5A464C9C0FAA /* App */,
 				58006475C23C8624AE71205E /* Design */,
@@ -252,6 +255,7 @@
 			buildPhases = (
 				532250292468810BAA887007 /* swift-format lint */,
 				00E725775F411D14AF16B142 /* Sources */,
+				46B008452E74CB10E61A9292 /* Resources */,
 				8B52E36B3DC3EC0799FD2A2C /* Frameworks */,
 			);
 			buildRules = (
@@ -279,6 +283,7 @@
 						TestTargetID = BFE762072E0C44F117DBE645;
 					};
 					BFE762072E0C44F117DBE645 = {
+						DevelopmentTeam = HF6H3Q6CJ2;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -306,6 +311,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		46B008452E74CB10E61A9292 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C0228B4F6A3E9F01DCAA4E98 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		532250292468810BAA887007 /* swift-format lint */ = {
