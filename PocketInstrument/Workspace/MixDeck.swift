@@ -10,7 +10,8 @@ import SwiftUI
 /// inside a recorded pass the fader follows the curve and reads AUTO, and with Write off, moving
 /// it there raises or lowers that whole pass (shape kept). A CLIP ride writes onto
 /// each clip it plays over, and the fader names the clip under the playhead while it records.
-/// The Edit key opens a curve for hand editing in the lane, point by point.
+/// The Edit key opens a curve for hand editing in the lane, point by point; a tapped point can
+/// then be inched along in time with the jog dial.
 struct MixDeck: View {
     var model: WorkspaceModel
     var onAddMusicFile: () -> Void
@@ -19,7 +20,9 @@ struct MixDeck: View {
     var body: some View {
         VStack(spacing: 10) {
             SequenceLane(model: model, waveformDrag: .slideMusic, showsAutomation: true)
-            if let music = model.project.referenceAudio {
+            if model.curveEditTarget != nil {
+                curveJog
+            } else if let music = model.project.referenceAudio {
                 alignment(music)
             } else {
                 emptyMusic
@@ -51,6 +54,19 @@ struct MixDeck: View {
                 LoopButton(model: model)
             }
         }
+    }
+
+    /// While editing a curve the music's alignment gives way to the jog dial: it moves the
+    /// selected point a frame at a time, or jogs and shuttles the playhead when no point is selected.
+    private var curveJog: some View {
+        let movesPoint = model.selectedCurveHandle != nil
+        return JogDial(
+            title: movesPoint ? "POINT" : "JOG",
+            onStep: { movesPoint ? model.jogCurvePoint(by: $0) : model.jog(by: $0) },
+            onShuttle: movesPoint ? nil : { model.shuttle($0) },
+            onEnd: { model.endJog() }
+        )
+        .frame(minHeight: 70)
     }
 
     private func faderTitle(_ title: String, _ target: AutomationTarget) -> String {

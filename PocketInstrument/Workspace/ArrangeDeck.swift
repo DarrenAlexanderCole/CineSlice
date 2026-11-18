@@ -15,6 +15,8 @@ struct ArrangeDeck: View {
             ClipStrip(model: model, onAddPhotos: onAddPhotos, onAddFiles: onAddFiles)
             SequenceLane(model: model)
             selectedClipBar
+            JogDial(title: "JOG", onStep: { model.jog(by: $0) }, onShuttle: { model.shuttle($0) })
+                .disabled(model.project.clips.isEmpty)
             TransportRow(model: model) {
                 Color.clear.frame(width: 44, height: 44)
             } trailing: {

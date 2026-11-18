@@ -86,10 +86,17 @@ final class MusicPipelineTests: XCTestCase {
             try await Task.sleep(nanoseconds: 100_000_000)
             times.append(engine.currentTime.seconds)
         }
+        try skipUnlessInForeground()
         XCTAssertTrue(engine.isPlaying)
         // After 3.5 s of playback from 4 s, it has wrapped and never left the bar.
         XCTAssertTrue(times.allSatisfy { $0 >= 3.95 && $0 <= 6.1 }, "\(times)")
-        XCTAssertTrue(zip(times, times.dropFirst()).contains { $1 < $0 }, "never wrapped: \(times)")
+        let player = engine.player
+        XCTAssertTrue(
+            zip(times, times.dropFirst()).contains { $1 < $0 },
+            "never wrapped: \(times); player status \(player.timeControlStatus.rawValue), waiting for "
+                + "\(player.reasonForWaitingToPlay?.rawValue ?? "nothing"), item status "
+                + "\(player.currentItem?.status.rawValue ?? -1), error \(String(describing: player.currentItem?.error))"
+        )
     }
 
     func testSilentExportHasNoAudioAndWritesSidecar() async throws {
@@ -281,6 +288,73 @@ final class MusicPipelineTests: XCTestCase {
         model.faderSet(.music, to: 0.2)
         XCTAssertEqual(model.undoName, "Music Level")
         XCTAssertEqual(model.project.referenceAudio?.volume, 0.2)
+    }
+
+    /// iOS pauses video playback while the phone is locked, so playback can't be judged then.
+    private func skipUnlessInForeground() throws {
+        if UIApplication.shared.applicationState != .active {
+            throw XCTSkip("The app wasn't in the foreground (phone locked?), so iOS paused playback.")
+        }
+    }
+
+    // MARK: Jog dial
+
+    /// The dial moves the playhead by whole export frames, shuttles at speed, and inches a selected
+    /// curve point along (one undo step per turn).
+    func testJogDialMovesByFramesAndInchesAPoint() async throws {
+        var project = try await makeProject()
+        try WriteAutomationCommand(
+            target: .music,
+            samples: [
+                AutomationPoint(time: MediaTime(seconds: 2), value: 0.3),
+                AutomationPoint(time: MediaTime(seconds: 3), value: 0.9),
+                AutomationPoint(time: MediaTime(seconds: 5), value: 0.3),
+            ]
+        ).apply(to: &project)
+        try store.save(project)
+        let model = WorkspaceModel(project: project, store: store)
+        model.open()
+        defer { model.close() }
+        model.setMode(.mix)
+        for _ in 0..<100 where model.engine.duration == .zero {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let fps = Double(project.exportSettings.frameRate)
+        model.scrub(to: MediaTime(seconds: 1), precise: true)
+        model.jog(by: 3)
+        XCTAssertEqual(model.currentTime.seconds, 1 + 3 / fps, accuracy: 1e-4)
+        model.jog(by: -1000)
+        XCTAssertEqual(model.currentTime, .zero)
+
+        // Pushed out, the dial plays at speed (backwards too) and stops on a frame when let go.
+        model.scrub(to: MediaTime(seconds: 6), precise: true)
+        model.shuttle(4)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        model.shuttle(nil)
+        try skipUnlessInForeground()
+        let ahead = model.currentTime.seconds
+        XCTAssertGreaterThan(ahead, 8, "4× for a second covers a few seconds")
+        XCTAssertFalse(model.engine.isPlaying)
+        model.shuttle(-2)
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+        model.shuttle(nil)
+        XCTAssertLessThan(model.currentTime.seconds, ahead - 1, "reverse goes back")
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let stopped = model.currentTime
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(model.currentTime, stopped, "let go, it stays put")
+
+        model.curveEditTarget = .music
+        model.selectedCurvePoint = (0, 1)
+        model.jogCurvePoint(by: 2)
+        model.jogCurvePoint(by: 4)
+        XCTAssertEqual(model.selectedCurveHandle?.position.time.seconds ?? 0, 3 + 6 / fps, accuracy: 1e-4)
+        XCTAssertEqual(model.project.automation.music.segments[0].points[1].time, MediaTime(seconds: 3), "drafted")
+        XCTAssertEqual(model.currentTime.seconds, 3 + 6 / fps, accuracy: 1e-4, "the playhead follows the point")
+        model.endJog()
+        XCTAssertEqual(model.undoName, "Move Curve Point")
+        XCTAssertEqual(model.project.automation.music.segments[0].points[1].time.seconds, 3 + 6 / fps, accuracy: 1e-4)
+        XCTAssertEqual(model.project.automation.music.segments[0].points[1].value, 0.9)
     }
 
     // MARK: Photos

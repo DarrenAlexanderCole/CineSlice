@@ -29,7 +29,10 @@ final class WorkspaceModel {
         // The CLIP fader resets on a new clip without a release, so a trim in progress ends here.
         didSet {
             if curveTrim?.target == .clipAudio { curveTrim = nil }
-            if curveEditTarget == .clipAudio { curveDraft = nil }
+            if curveEditTarget == .clipAudio {
+                curveDraft = nil
+                selectedCurvePoint = nil
+            }
         }
     }
     /// Explore only: loops the clip's in/out range. Arrange and Mix use the project's loop region.
@@ -125,12 +128,14 @@ final class WorkspaceModel {
 
     func undo() {
         let previous = project
+        selectedCurvePoint = nil
         guard undoStack.undo(&project) != nil else { return }
         didEdit(from: previous)
     }
 
     func redo() {
         let previous = project
+        selectedCurvePoint = nil
         guard undoStack.redo(&project) != nil else { return }
         didEdit(from: previous)
     }
@@ -441,6 +446,7 @@ final class WorkspaceModel {
     var curveEditTarget: AutomationTarget? {
         didSet {
             curveDraft = nil
+            selectedCurvePoint = nil
             if curveEditTarget != nil, engine.isPlaying { engine.pause() }
         }
     }
@@ -524,6 +530,7 @@ final class WorkspaceModel {
         strokeLast = nil
         guard let draft = curveDraft else { return }
         curveDraft = nil
+        if draft is WriteAutomationCommand { selectedCurvePoint = nil }
         // A stroke that never spanned two moments draws nothing.
         if let write = draft as? WriteAutomationCommand,
             AutomationSegment(recorded: write.samples, sequenceDuration: project.duration) == nil
@@ -544,6 +551,7 @@ final class WorkspaceModel {
             Haptics.warning()
             return
         }
+        selectedCurvePoint = nil
         perform(
             EditCurvePointCommand(
                 target: target, clipID: target == .clipAudio ? selectedClipID : nil, edit: .add(point)))
@@ -553,6 +561,7 @@ final class WorkspaceModel {
 
     func removeCurvePoint(_ handle: CurveHandle) {
         guard let target = curveEditTarget else { return }
+        selectedCurvePoint = nil
         perform(
             EditCurvePointCommand(
                 target: target, clipID: target == .clipAudio ? selectedClipID : nil,
@@ -855,6 +864,76 @@ final class WorkspaceModel {
     func step(_ frames: Int) {
         engine.step(frames: frames)
         Haptics.detent()
+    }
+
+    // MARK: Jog dial
+
+    /// Frames per second of what the playhead moves through: the clip's source in Explore,
+    /// the export frame grid otherwise.
+    var jogFrameRate: Double {
+        mode == .explore ? selectedSource?.frameRate ?? 30 : Double(project.exportSettings.frameRate)
+    }
+
+    /// The start of frame `n`, rounded up so a seek there shows that frame and not the one before.
+    private func frameStart(_ n: Int) -> MediaTime {
+        let timescale: Int32 = 60000
+        return MediaTime(
+            value: Int64((Double(n) / jogFrameRate * Double(timescale)).rounded(.up)), timescale: timescale)
+    }
+
+    /// The frame the playhead is on.
+    private var currentFrame: Int { Int((currentTime.seconds * jogFrameRate + 1e-4).rounded(.down)) }
+
+    /// Moves the playhead by whole frames (pausing playback), frame-accurately.
+    func jog(by frames: Int) {
+        guard frames != 0 else { return }
+        if engine.isPlaying { engine.pause() }
+        let last = max(0, Int((engine.duration.seconds * jogFrameRate).rounded(.up)) - 1)
+        engine.seek(to: frameStart(min(max(currentFrame + frames, 0), last)).cmTime, precise: true)
+    }
+
+    /// Shuttles the playhead at `rate` (negative is reverse), or stops it with nil.
+    func shuttle(_ rate: Float?) {
+        if let rate {
+            engine.shuttle(rate: rate)
+        } else {
+            engine.endShuttle()
+        }
+    }
+
+    /// Mix, editing a curve: the point last tapped, which the dial then moves in time.
+    var selectedCurvePoint: (segment: Int, point: Int)? {
+        didSet { curvePointJog = nil }
+    }
+    /// The selected point as it was when the dial took hold of it, and how far it has moved.
+    @ObservationIgnored private var curvePointJog: (handle: CurveHandle, frames: Int)?
+
+    /// The selected point's handle, if it still exists.
+    var selectedCurveHandle: CurveHandle? {
+        guard let selected = selectedCurvePoint else { return nil }
+        return curveHandles.first { $0.segment == selected.segment && $0.point == selected.point }
+    }
+
+    /// Moves the selected point by whole frames of composition time (drafted until `endJog`).
+    func jogCurvePoint(by frames: Int) {
+        guard frames != 0 else { return }
+        if curvePointJog == nil, let handle = selectedCurveHandle { curvePointJog = (handle, 0) }
+        guard var jog = curvePointJog else { return }
+        jog.frames += frames
+        curvePointJog = jog
+        var moved = jog.handle.position
+        moved.time = jog.handle.position.time + MediaTime(value: Int64(jog.frames), timescale: sequenceFrame.timescale)
+        dragCurvePoint(jog.handle, to: moved)
+        if let point = curveHandles.first(where: { $0.segment == jog.handle.segment && $0.point == jog.handle.point }) {
+            engine.seek(to: point.position.time.cmTime, precise: true)
+        }
+    }
+
+    /// The dial was let go: a point it moved is committed as one undo step.
+    func endJog() {
+        guard curvePointJog != nil else { return }
+        curvePointJog = nil
+        commitCurveDraft()
     }
 
     // MARK: Import

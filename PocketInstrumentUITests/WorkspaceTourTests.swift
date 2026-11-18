@@ -57,6 +57,30 @@ final class WorkspaceTourTests: XCTestCase {
         sleep(2)
         shot("6 Trim with music strip")
 
+        // The jog dial: a small drag in the middle inches the playhead forward a few frames…
+        let dial = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Jog dial'")).firstMatch
+        XCTAssertTrue(dial.waitForExistence(timeout: 5))
+        let clock = app.staticTexts.matching(NSPredicate(format: "label ENDSWITH ' seconds'")).firstMatch
+        let seconds = { Double(clock.label.components(separatedBy: " ")[0]) ?? -1 }
+        let before = seconds()
+        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).press(
+            forDuration: 0.05, thenDragTo: dial.coordinate(withNormalizedOffset: CGVector(dx: 0.46, dy: 0.5)),
+            withVelocity: 80, thenHoldForDuration: 0.2)
+        sleep(1)
+        let jogged = seconds()
+        XCTAssertGreaterThan(jogged, before, "the dial didn't jog")
+        XCTAssertLessThan(jogged - before, 0.5, "a small drag should only move a few frames")
+        shot("6b Trim after jogging")
+        // …and pushed out to the edge and held, it plays fast, stopping when let go.
+        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.05, thenDragTo: dial.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)),
+            withVelocity: 600, thenHoldForDuration: 1.0)
+        sleep(1)
+        let shuttled = seconds()
+        XCTAssertGreaterThan(shuttled - jogged, 1.5, "holding the dial out didn't shuttle")
+        sleep(1)
+        XCTAssertEqual(seconds(), shuttled, "playback should stop when the dial is let go")
+
         button("Arrange").tap()
         button("Export").tap()
         XCTAssertTrue(button("Render video").waitForExistence(timeout: 5))
@@ -258,6 +282,14 @@ final class WorkspaceTourTests: XCTestCase {
         from.press(forDuration: 0.1, thenDragTo: band.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.6)))
         XCTAssertTrue(button("Undo Draw Music Curve").waitForExistence(timeout: 5))
         shot("Music curve drawn by finger")
+        // A tapped point is selected, and the jog dial then inches it along in time.
+        points.element(boundBy: 0).tap()
+        let dial = labelled("Jog dial").firstMatch
+        XCTAssertEqual(dial.value as? String, "Point")
+        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).press(
+            forDuration: 0.05, thenDragTo: dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)),
+            withVelocity: 120, thenHoldForDuration: 0.2)
+        XCTAssertTrue(button("Undo Move Curve Point").waitForExistence(timeout: 5))
         edit.tap()
         XCTAssertFalse(band.waitForExistence(timeout: 1))
 

@@ -12,6 +12,8 @@ final class PlaybackEngine {
     private(set) var currentTime: CMTime = .zero
     private(set) var duration: CMTime = .zero
     private(set) var isPlaying = false
+    /// Shuttle speed while the jog dial is pushed out (negative plays backwards), else nil.
+    private(set) var shuttleRate: Float?
 
     /// When set, playback wraps inside this range instead of the whole item.
     var loopRange: CMTimeRange?
@@ -20,6 +22,8 @@ final class PlaybackEngine {
     @ObservationIgnored private var endObserver: NSObjectProtocol?
     @ObservationIgnored private var isSeeking = false
     @ObservationIgnored private var pendingSeek: (time: CMTime, precise: Bool)?
+    /// Steps the playhead for shuttle speeds this item can't play natively.
+    @ObservationIgnored private var shuttleTask: Task<Void, Never>?
 
     init() {
         player.actionAtItemEnd = .pause
@@ -90,6 +94,52 @@ final class PlaybackEngine {
     }
 
     func togglePlay() { isPlaying ? pause() : play() }
+
+    // MARK: Shuttle
+
+    /// Plays at `rate` (e.g. 0.25 to 4, negative for reverse) until `endShuttle`, ignoring the loop
+    /// and stopping at either end. Speeds the item can't play natively are stepped by seeking.
+    func shuttle(rate: Float) {
+        guard let item = player.currentItem, rate != 0 else { return }
+        if isPlaying { pause() }
+        shuttleRate = rate
+        let native =
+            switch rate {
+            case 2...: rate == 2 || item.canPlayFastForward
+            case 0...: true
+            case -1: item.canPlayReverse
+            case -1..<0: item.canPlaySlowReverse
+            default: item.canPlayFastReverse
+            }
+        shuttleTask?.cancel()
+        shuttleTask = nil
+        if native {
+            player.rate = rate
+            return
+        }
+        player.pause()
+        shuttleTask = Task { [weak self] in
+            let tick = 1.0 / 30
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(tick))
+                guard let self, let rate = self.shuttleRate else { return }
+                let next = CMTimeAdd(self.currentTime, CMTime(seconds: Double(rate) * tick, preferredTimescale: 600))
+                self.seek(to: next, precise: false)
+                if next <= .zero || next >= self.duration { return }
+            }
+        }
+    }
+
+    /// Stops shuttling and settles exactly on the frame it stopped at.
+    func endShuttle() {
+        guard shuttleRate != nil else { return }
+        let stopped = shuttleTask == nil ? player.currentTime() : currentTime
+        shuttleRate = nil
+        shuttleTask?.cancel()
+        shuttleTask = nil
+        player.pause()
+        seek(to: stopped, precise: true)
+    }
 
     /// Coalesced seek: while one seek is in flight, only the latest request is kept.
     func seek(to time: CMTime, precise: Bool) {

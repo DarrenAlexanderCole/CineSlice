@@ -358,7 +358,8 @@ struct SequenceLane: View {
             }
             ForEach(handles, id: \.self) { handle in
                 let grabbed =
-                    pointGrab?.handle.map { $0.segment == handle.segment && $0.point == handle.point } ?? false
+                    pointGrab?.handle.map { $0.segment == handle.segment && $0.point == handle.point }
+                    ?? (model.selectedCurvePoint.map { $0 == (handle.segment, handle.point) } ?? false)
                 Circle()
                     .fill(grabbed ? color : Theme.obsidian)
                     .overlay(Circle().strokeBorder(color, lineWidth: 2))
@@ -444,6 +445,8 @@ struct SequenceLane: View {
                         model.removeCurvePoint(handle)
                     } else {
                         lastPointTap = (handle, Date())
+                        model.selectedCurvePoint = (handle.segment, handle.point)
+                        Haptics.detent()
                     }
                 } else if grab.moved {
                     model.commitCurveDraft()

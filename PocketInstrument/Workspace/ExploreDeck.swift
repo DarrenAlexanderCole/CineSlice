@@ -5,6 +5,7 @@ import SwiftUI
 /// strip to scrub; drag the Signal handles (or use Mark In / Mark Out) to set
 /// the clip's in/out. Everything is in *source* time; nothing touches the file.
 /// Zoom fits the strip to just around In–Out, so handles move in fine steps on long sources.
+/// The jog dial inches the playhead a source frame at a time, or shuttles through it pushed out.
 struct ExploreDeck: View {
     var model: WorkspaceModel
 
@@ -16,6 +17,7 @@ struct ExploreDeck: View {
                     TrimMusicStrip(model: model, clip: clip, source: source, music: music, waveform: waveform)
                 }
                 readouts(range: model.draftRange ?? clip.sourceRange, frameRate: source.frameRate)
+                JogDial(title: "JOG", onStep: { model.jog(by: $0) }, onShuttle: { model.shuttle($0) })
             }
             TransportRow(model: model) {
                 Button("In") { model.markIn() }
