@@ -294,35 +294,6 @@ struct WorkspaceView: View {
 
     // MARK: Deck
 
-    /// The instrument's body: brushed graphite with a machined, light-catching top edge.
-    private var chassis: some View {
-        let shape = UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22, style: .continuous)
-        return shape.fill(
-            LinearGradient(
-                colors: [Color(hex: 0x4B5539), Color(hex: 0x3A4230), Color(hex: 0x20251A)], startPoint: .top,
-                endPoint: .bottom)
-        )
-        .overlay(BrushedMetal(strength: 0.8).clipShape(shape))
-        .overlay(Grain(opacity: 0.5).clipShape(shape))
-        .overlay(alignment: .top) {
-            HStack {
-                Screw(angle: 20)
-                Spacer()
-                Screw(angle: -50)
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 10)
-        }
-        .overlay(
-            shape.strokeBorder(
-                LinearGradient(
-                    colors: [Color.white.opacity(0.22), Color.white.opacity(0.03), .clear], startPoint: .top,
-                    endPoint: .bottom),
-                lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.7), radius: 8, y: -2)
-    }
-
     private func pick(_ purpose: PickPurpose, photos: Bool) {
         pickPurpose = purpose
         if photos { showPhotos = true } else { showFiles = true }
@@ -356,7 +327,7 @@ struct WorkspaceView: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 4)
-        .background(chassis.ignoresSafeArea(edges: .bottom))
+        .background(Chassis().shadow(color: .black.opacity(0.7), radius: 8, y: -2).ignoresSafeArea(edges: .bottom))
         .padding(.top, 6)
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85), value: model.mode)
     }

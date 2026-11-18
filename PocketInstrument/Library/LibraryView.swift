@@ -588,11 +588,11 @@ private struct StorageSheet: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Storage").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.label)
-                gauge
-                temporary
-                Text("PROJECTS").font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
+            VStack(alignment: .leading, spacing: 14) {
+                TitlePlate(title: "Storage", subtitle: "\(library.projects.count) reels on this iPhone")
+                PanelSection(title: "In use") { gauge }
+                PanelSection(title: "Temporary files") { temporary }
+                EngravedLabel("Projects · biggest first").padding(.leading, 4)
                 ForEach(projects) { project in
                     row(project, library.usage[project.id] ?? StorageUsage())
                 }
@@ -602,9 +602,12 @@ private struct StorageSheet: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.secondaryLabel)
             }
-            .padding(20)
+            .padding(.horizontal, 16)
+            .padding(.top, 26)
+            .padding(.bottom, 20)
         }
-        .background(Theme.obsidian)
+        .presentationBackground { Chassis(cornerRadius: 0) }
+        .presentationCornerRadius(26)
         .preferredColorScheme(.dark)
         .onAppear { library.measure() }
     }
@@ -622,14 +625,7 @@ private struct StorageSheet: View {
                     .font(Theme.mono(12))
                     .foregroundStyle(Theme.secondaryLabel)
             }
-            GeometryReader { geo in
-                Capsule().fill(Theme.signal)
-                    .frame(width: max(6, geo.size.width * share))
-                    .shadow(color: Theme.signal.opacity(0.7), radius: 4)
-            }
-            .frame(height: 6)
-            .padding(3)
-            .recessed(cornerRadius: 6, padding: 0)
+            SegmentMeter(value: share)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Using \(bytes(library.totalBytes)) of \(bytes(ProjectStore.storageWarningBytes))")
@@ -638,8 +634,8 @@ private struct StorageSheet: View {
     private var temporary: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Temporary files").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.label)
                 Text("Left over from imports and previews. \(bytes(library.temporaryBytes)).")
+                    .fixedSize(horizontal: false, vertical: true)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.secondaryLabel)
             }

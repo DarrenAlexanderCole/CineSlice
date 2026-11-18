@@ -598,3 +598,148 @@ struct Screw: View {
         .accessibilityHidden(true)
     }
 }
+
+/// The instrument's body: olive brushed graphite with grain, a machined, light-catching top edge
+/// and screws in its top corners. Behind the deck, and behind sheets that rise over it.
+struct Chassis: View {
+    var cornerRadius: CGFloat = 22
+
+    var body: some View {
+        let shape = UnevenRoundedRectangle(
+            topLeadingRadius: cornerRadius, topTrailingRadius: cornerRadius, style: .continuous)
+        shape.fill(
+            LinearGradient(
+                colors: [Color(hex: 0x4B5539), Color(hex: 0x3A4230), Color(hex: 0x20251A)], startPoint: .top,
+                endPoint: .bottom)
+        )
+        .overlay(BrushedMetal(strength: 0.8).clipShape(shape))
+        .overlay(Grain(opacity: 0.5).clipShape(shape))
+        .overlay(alignment: .top) {
+            HStack {
+                Screw(angle: 20)
+                Spacer()
+                Screw(angle: -50)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+        }
+        .overlay(
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.22), Color.white.opacity(0.03), .clear], startPoint: .top,
+                    endPoint: .bottom),
+                lineWidth: 1)
+        )
+        .accessibilityHidden(true)
+    }
+}
+
+/// A label stamped into the panel: pale lettering with a shadowed upper edge.
+struct EngravedLabel: View {
+    var text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(Theme.mono(9, weight: .heavy))
+            .tracking(1.5)
+            .foregroundStyle(Theme.aluminum.opacity(0.8))
+            .shadow(color: .black.opacity(0.7), radius: 0, y: -0.8)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// A group of controls under an engraved label, set into a recessed well.
+struct PanelSection<Content: View>: View {
+    var title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            EngravedLabel(title).padding(.leading, 4)
+            VStack(alignment: .leading, spacing: 8) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .recessed(cornerRadius: 14)
+        }
+    }
+}
+
+/// A sheet's title on a brushed-aluminum plate, screwed to the panel.
+struct TitlePlate: View {
+    var title: String
+    var subtitle: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Screw(angle: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.system(size: 18, weight: .semibold, design: .serif).italic())
+                Text(subtitle.uppercased()).font(Theme.mono(9, weight: .semibold))
+            }
+            .foregroundStyle(Color(hex: 0x2B2F27))
+            .shadow(color: .white.opacity(0.5), radius: 0, y: 1)
+            Spacer(minLength: 0)
+            Screw(angle: -40)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Theme.ivory, Theme.aluminum, Color(hex: 0xA2A498)], startPoint: .top,
+                        endPoint: .bottom)
+                )
+                .overlay(BrushedMetal(strength: 1.2).clipShape(RoundedRectangle(cornerRadius: 6)).blendMode(.multiply))
+                .shadow(color: .black.opacity(0.6), radius: 2, y: 2)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// One choice of several, as a wide dark key: lit (Signal ring and LED) when it's the one chosen.
+struct OptionKeyStyle: ButtonStyle {
+    var isOn: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity, minHeight: Theme.minTouch, alignment: .leading)
+            .padding(.leading, 12)
+            .padding(.trailing, 22)
+            .padding(.vertical, 8)
+            .offset(y: configuration.isPressed ? 1.5 : 0)
+            .background(KeyCap(kind: .dark, isLit: isOn, isPressed: configuration.isPressed))
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(Rectangle())
+            .onChange(of: configuration.isPressed) { _, down in
+                if down { Haptics.press() }
+            }
+            .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
+/// A row of LED segments lit up to `value` (0…1), like a level meter.
+struct SegmentMeter: View {
+    var value: Double
+    var segments = 24
+
+    var body: some View {
+        let lit = Int((min(max(value, 0), 1) * Double(segments)).rounded(.up))
+        HStack(spacing: 3) {
+            ForEach(0..<segments, id: \.self) { i in
+                Capsule()
+                    .fill(i < lit ? Theme.signal : Color.black.opacity(0.55))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(i < lit ? 0 : 0.07), lineWidth: 0.5))
+                    .shadow(color: i < lit ? Theme.signal.opacity(0.8) : .clear, radius: 3)
+            }
+        }
+        .frame(height: 8)
+        .padding(6)
+        .recessed(cornerRadius: 8)
+        .accessibilityHidden(true)
+    }
+}
