@@ -51,9 +51,10 @@ targets:
     info:
       path: PocketInstrument/Info.plist
       properties:
-        CFBundleDisplayName: CineSlice
+        CFBundleDisplayName: CINE SLICE
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.video
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
