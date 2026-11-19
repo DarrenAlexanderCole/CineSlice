@@ -9,6 +9,8 @@ final class WorkspaceTourTests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app.launchArguments = ["-skipIntro"]
+        // Press screenshots: run with TEST_RUNNER_DEMO_PHOTOS to film photos instead of test cards.
+        app.launchEnvironment["DEMO_PHOTOS"] = ProcessInfo.processInfo.environment["DEMO_PHOTOS"]
         guard name.contains("testIntro") == false else { return }
         app.launch()
     }
@@ -85,6 +87,10 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertTrue((button("Crop").value as? String ?? "").hasSuffix("times"), "the clip kept no crop")
         sleep(2)
         shot("1d Clip 1 pushed in")
+        // Undo the crop so the later screens show the whole picture.
+        let undoCrop = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Undo Crop'")).firstMatch
+        while undoCrop.exists { undoCrop.tap() }
+        XCTAssertFalse((button("Crop").value as? String ?? "").hasSuffix("times"), "undo left the clip cropped")
 
         button("Mix").tap()
         openMyMusic()

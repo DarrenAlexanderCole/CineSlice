@@ -63,6 +63,7 @@ enum DemoMediaGenerator {
         }
         writer.startSession(atSourceTime: .zero)
 
+        let photo = photo(for: spec)
         let totalFrames = spec.seconds * Int(fps)
         for frame in 0..<totalFrames {
             while !input.isReadyForMoreMediaData {
@@ -72,7 +73,11 @@ enum DemoMediaGenerator {
             var buffer: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
             guard let buffer else { throw ExportError.failed("No pixel buffer") }
-            draw(spec, frame: frame, fps: Int(fps), into: buffer)
+            if let photo {
+                draw(photo, progress: CGFloat(frame) / CGFloat(totalFrames), into: buffer)
+            } else {
+                draw(spec, frame: frame, fps: Int(fps), into: buffer)
+            }
             adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps))
         }
         input.markAsFinished()
@@ -143,6 +148,40 @@ enum DemoMediaGenerator {
             text.draw(at: CGPoint(x: (size.width - textSize.width) / 2, y: y), withAttributes: attrs)
             y += textSize.height + 8
         }
+    }
+
+    /// Debug builds only: with `DEMO_PHOTOS` set to a folder holding `A.jpg`, `B.jpg`, `C.jpg`,
+    /// each clip becomes a slow push-in on its photo instead of the test card, for press screenshots.
+    private static func photo(for spec: Spec) -> UIImage? {
+        #if DEBUG
+        guard let folder = ProcessInfo.processInfo.environment["DEMO_PHOTOS"], let letter = spec.label.first else {
+            return nil
+        }
+        return UIImage(contentsOfFile: (folder as NSString).appendingPathComponent("\(letter).jpg"))
+        #else
+        return nil
+        #endif
+    }
+
+    /// Aspect-fills the photo and pushes in 6% over the clip, drifting slightly right.
+    private static func draw(_ photo: UIImage, progress: CGFloat, into buffer: CVPixelBuffer) {
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        let w = CGFloat(CVPixelBufferGetWidth(buffer))
+        let h = CGFloat(CVPixelBufferGetHeight(buffer))
+        guard
+            let cgImage = photo.cgImage,
+            let ctx = CGContext(
+                data: CVPixelBufferGetBaseAddress(buffer), width: Int(w), height: Int(h),
+                bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return }
+        let fill = max(w / photo.size.width, h / photo.size.height) * (1 + 0.06 * progress)
+        let size = CGSize(width: photo.size.width * fill, height: photo.size.height * fill)
+        let drift = (size.width - w) * 0.5 * progress
+        ctx.interpolationQuality = .high
+        ctx.draw(cgImage, in: CGRect(x: (w - size.width) / 2 - drift * 0.3, y: (h - size.height) / 2, width: size.width, height: size.height))
     }
 
     // MARK: Click track
