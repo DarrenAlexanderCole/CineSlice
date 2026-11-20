@@ -137,6 +137,28 @@ final class MusicPipelineTests: XCTestCase {
         }
     }
 
+    /// Voice isolation's latency is taken out: both versions are as long as the sound they came
+    /// from, and what's left after the voices are subtracted lines up with the original.
+    func testVoiceSeparationKeepsLengthAndTiming() async throws {
+        let project = try await makeProject()
+        let music = try XCTUnwrap(project.referenceAudio)
+        let url = try XCTUnwrap(store.audioURL(for: music, projectID: project.id))
+        let source = SourceAsset(fileName: music.fileName, duration: music.duration, width: 0, height: 0, hasAudio: true)
+        let voiceURL = store.voiceCacheURL(for: source, treatment: .voiceOnly, projectID: project.id)
+        let reducedURL = store.voiceCacheURL(for: source, treatment: .reduceVoice, projectID: project.id)
+        try await VoiceSeparator.separate(source: url, voiceURL: voiceURL, reducedURL: reducedURL) { _ in }
+
+        for output in [voiceURL, reducedURL] {
+            let duration = try await AVURLAsset(url: output).load(.duration)
+            XCTAssertEqual(duration.seconds, music.duration.seconds, accuracy: 0.01, output.lastPathComponent)
+        }
+        // A click track has no voice, so it survives the subtraction, on the beat.
+        let original = try await clickOnsets(in: AVURLAsset(url: url))
+        let reduced = try await clickOnsets(in: AVURLAsset(url: reducedURL))
+        XCTAssertEqual(reduced.count, original.count, "\(reduced)")
+        for (a, b) in zip(original, reduced) { XCTAssertEqual(a, b, accuracy: 0.003) }
+    }
+
     func testClipAudioOnlyExportLeavesMusicOut() async throws {
         var project = try await makeProject()
         project.exportSettings.soundPolicy = .clipsOnly

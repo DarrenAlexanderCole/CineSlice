@@ -5,7 +5,7 @@ import Foundation
 ///     <root>/<project-id>/project.json
 ///     <root>/<project-id>/Media/<uuid>.<ext>     imported copies (never modified)
 ///     <root>/<project-id>/Exports/...            rendered files
-///     <root>/<project-id>/Cache/...              derived data (waveforms); safe to delete
+///     <root>/<project-id>/Cache/...              derived data (waveforms, processed voice); safe to delete
 ///
 /// JSON is written atomically, so an interrupted save never corrupts the last good copy.
 public final class ProjectStore: @unchecked Sendable {
@@ -53,6 +53,21 @@ public final class ProjectStore: @unchecked Sendable {
 
     public func waveformCacheURL(for track: AudioTrack, projectID: UUID) -> URL {
         cacheDirectory(for: projectID).appendingPathComponent("\(track.fileName).waveform")
+    }
+
+    /// Where a source's processed sound is kept. It's derived data: clearing the cache removes
+    /// it and it is made again when needed.
+    public func voiceCacheURL(for source: SourceAsset, treatment: VoiceTreatment, projectID: UUID) -> URL {
+        cacheDirectory(for: projectID)
+            .appendingPathComponent("Voice", isDirectory: true)
+            .appendingPathComponent("\(source.fileName).\(treatment.rawValue).m4a")
+    }
+
+    /// The processed sound for a clip, or nil when it plays as recorded or hasn't been made yet.
+    public func voiceAudioURL(for clip: TimelineClip, source: SourceAsset, projectID: UUID) -> URL? {
+        guard let treatment = clip.voice else { return nil }
+        let url = voiceCacheURL(for: source, treatment: treatment, projectID: projectID)
+        return fm.fileExists(atPath: url.path) ? url : nil
     }
 
     private func fileURL(for projectID: UUID) -> URL {

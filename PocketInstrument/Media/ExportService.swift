@@ -54,7 +54,8 @@ enum ExportService {
                 store.isMissing(source, projectID: project.id)
                     ? nil : store.mediaURL(for: source, projectID: project.id)
             },
-            musicURL: project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) })
+            musicURL: project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) },
+            clipAudioURL: { store.voiceAudioURL(for: $0, source: $1, projectID: project.id) })
 
         guard
             let session = AVAssetExportSession(

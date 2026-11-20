@@ -322,6 +322,9 @@ struct WorkspaceView: View {
                     onAddMusicFromVideo: { pick(.music, photos: true) }
                 )
                 .transition(.opacity)
+            case .audio:
+                AudioDeck(model: model)
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 12)
@@ -645,7 +648,7 @@ struct StateSwitcher: View {
     var model: WorkspaceModel
 
     var body: some View {
-        // Three keys in one recessed slot, like a rocker; the current one is lit.
+        // The state keys in one recessed slot, like a rocker; the current one is lit.
         HStack(spacing: 6) {
             ForEach(WorkspaceModel.Mode.allCases, id: \.self) { mode in
                 let isCurrent = model.mode == mode

@@ -147,6 +147,27 @@ public struct SetCropCommand: EditingCommand {
     }
 }
 
+/// Plays a clip's sound processed (voice only, or voices reduced), or with nil as recorded.
+public struct SetVoiceTreatmentCommand: EditingCommand {
+    public let clipID: UUID
+    public let treatment: VoiceTreatment?
+    public init(clipID: UUID, treatment: VoiceTreatment?) {
+        self.clipID = clipID
+        self.treatment = treatment
+    }
+    public var actionName: String {
+        switch treatment {
+        case nil: return "Original Sound"
+        case .voiceOnly: return "Voice Only"
+        case .reduceVoice: return "Reduce Voice"
+        }
+    }
+    public func apply(to project: inout Project) throws {
+        guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
+        project.clips[i].voice = treatment
+    }
+}
+
 public struct RenameProjectCommand: EditingCommand {
     public let name: String
     public init(name: String) { self.name = name }

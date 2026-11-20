@@ -236,6 +236,13 @@ struct ExportSheet: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.instrument(.prominent, height: 52))
+            // Until then, clips set to voice only or reduced voice would render as recorded.
+            .disabled(model.isProcessingVoice && model.project.exportSoundPolicy.includesClipAudio)
+            if model.isProcessingVoice && model.project.exportSoundPolicy.includesClipAudio {
+                Text("Processing clip sound… Render is ready when it finishes.")
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.secondaryLabel)
+            }
 
         case .exporting(let p):
             VStack(alignment: .leading, spacing: 10) {

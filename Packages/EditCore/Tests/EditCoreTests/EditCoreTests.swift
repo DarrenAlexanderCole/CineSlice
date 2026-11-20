@@ -245,6 +245,46 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertEqual(p.exportSettings, .vertical1080)
     }
 
+    func testVoiceTreatmentSavesUndoesAndOlderClipsPlayAsRecorded() throws {
+        var (p, _) = SequenceMapTests().makeProject()
+        var undo = UndoStack()
+        let id = p.clips[0].id
+        XCTAssertNil(p.clips[0].voice)
+        try undo.perform(SetVoiceTreatmentCommand(clipID: id, treatment: .reduceVoice), on: &p)
+        XCTAssertEqual(undo.undoActionName, "Reduce Voice")
+        let reopened = try ProjectStore.decoder.decode(Project.self, from: ProjectStore.encoder.encode(p))
+        XCTAssertEqual(reopened.clips[0].voice, .reduceVoice)
+        // A duplicate carries the same sound.
+        try undo.perform(DuplicateClipCommand(clipID: id), on: &p)
+        XCTAssertEqual(p.clips[1].voice, .reduceVoice)
+        undo.undo(&p)
+        undo.undo(&p)
+        XCTAssertNil(p.clips[0].voice)
+
+        // Files written before this field existed have no "voice" key.
+        let old = try ProjectStore.encoder.encode(p.clips[0])
+        XCTAssertFalse(String(decoding: old, as: UTF8.self).contains("voice"))
+        XCTAssertNil(try ProjectStore.decoder.decode(TimelineClip.self, from: old).voice)
+    }
+
+    func testVoiceCacheIsClearedWithTheCache() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try ProjectStore(rootURL: root)
+        let project = try store.create(name: "Voice")
+        let source = SourceAsset(fileName: "a.mov", duration: MediaTime(seconds: 2), width: 1080, height: 1920)
+        var clip = TimelineClip(sourceID: source.id, sourceRange: source.defaultClipRange)
+        XCTAssertNil(store.voiceAudioURL(for: clip, source: source, projectID: project.id))
+        clip.voice = .voiceOnly
+        XCTAssertNil(store.voiceAudioURL(for: clip, source: source, projectID: project.id), "not made yet")
+        let url = store.voiceCacheURL(for: source, treatment: .voiceOnly, projectID: project.id)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1]).write(to: url)
+        XCTAssertEqual(store.voiceAudioURL(for: clip, source: source, projectID: project.id), url)
+        try store.clearCache(for: project.id)
+        XCTAssertNil(store.voiceAudioURL(for: clip, source: source, projectID: project.id))
+    }
+
     func testNewerSchemaIsRejected() {
         let json = """
             {"schemaVersion":99,"id":"\(UUID().uuidString)","name":"Future","createdAt":0}

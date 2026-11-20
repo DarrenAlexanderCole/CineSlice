@@ -11,7 +11,7 @@ import SwiftUI
 @Observable
 final class WorkspaceModel {
     enum Mode: String, CaseIterable {
-        case arrange, explore, mix
+        case arrange, explore, mix, audio
 
         /// User-facing name. The explore state is shown as "Trim".
         var title: String {
@@ -19,6 +19,7 @@ final class WorkspaceModel {
             case .arrange: "Arrange"
             case .explore: "Trim"
             case .mix: "Mix"
+            case .audio: "Audio"
             }
         }
     }
@@ -110,6 +111,7 @@ final class WorkspaceModel {
     func open() {
         rebuildSequence(keepingTime: .zero)
         loadWaveform()
+        makeMissingVoiceAudio()
     }
 
     func close() {
@@ -117,6 +119,7 @@ final class WorkspaceModel {
         engine.tearDown()
         rebuildTask?.cancel()
         waveformTask?.cancel()
+        voiceTasks.values.forEach { $0.cancel() }
     }
 
     // MARK: Commands / undo
@@ -156,6 +159,7 @@ final class WorkspaceModel {
         if previous.referenceAudio?.fileName != project.referenceAudio?.fileName { loadWaveform() }
         scheduleSave()
         extendGuideIfNeeded()
+        makeMissingVoiceAudio()
         if selectedClip == nil { isCropping = false }
         if mode != .explore, Self.playbackShape(previewed(previous)) == Self.playbackShape(previewed(project)) {
             // Levels or loop only: adjust the live item instead of reloading it, so playback doesn't stutter.
@@ -211,7 +215,7 @@ final class WorkspaceModel {
 
     private func refreshPlayback() {
         switch mode {
-        case .arrange, .mix:
+        case .arrange, .mix, .audio:
             rebuildSequence(keepingTime: currentTime)
         case .explore:
             // Source item stays loaded; only the loop window may change.
@@ -244,7 +248,8 @@ final class WorkspaceModel {
                         store.isMissing($0, projectID: snapshot.id)
                             ? nil : store.mediaURL(for: $0, projectID: snapshot.id)
                     },
-                    musicURL: snapshot.referenceAudio.flatMap { store.audioURL(for: $0, projectID: snapshot.id) })
+                    musicURL: snapshot.referenceAudio.flatMap { store.audioURL(for: $0, projectID: snapshot.id) },
+                    clipAudioURL: { store.voiceAudioURL(for: $0, source: $1, projectID: snapshot.id) })
                 guard !Task.isCancelled, self.mode != .explore else { return }
                 let item = AVPlayerItem(asset: built.composition)
                 item.videoComposition = built.videoComposition
@@ -262,7 +267,7 @@ final class WorkspaceModel {
 
     private func updateLoopRange() {
         switch mode {
-        case .arrange, .mix:
+        case .arrange, .mix, .audio:
             engine.loopRange = activeLoop?.range.cmTimeRange
         case .explore:
             guard loopSelection, let clip = selectedClip else {
@@ -308,7 +313,7 @@ final class WorkspaceModel {
         switch newMode {
         case .explore:
             enterExplore()
-        case .arrange, .mix:
+        case .arrange, .mix, .audio:
             let fromExplore = mode == .explore
             mode = newMode
             draftRange = nil
@@ -466,6 +471,60 @@ final class WorkspaceModel {
         perform(SetClipVolumeCommand(clipID: id, volume: volume))
     }
     func setMusicVolume(_ volume: Float) { perform(SetMusicVolumeCommand(volume: volume)) }
+
+    // MARK: Voice (Audio state)
+
+    /// Sources whose sound is being split by `VoiceSeparator`, and how far along (0…1).
+    private(set) var voiceProgress: [UUID: Double] = [:]
+    @ObservationIgnored private var voiceTasks: [UUID: Task<Void, Never>] = [:]
+    /// Sources that couldn't be processed this session, so edits don't retry (and alert) each time.
+    @ObservationIgnored private var voiceFailures: Set<UUID> = []
+
+    /// Export waits for this: until then, processed clips would export as recorded.
+    var isProcessingVoice: Bool { !voiceProgress.isEmpty }
+
+    /// Plays the selected clip's sound as recorded (nil), voice only, or with the voices reduced.
+    /// It applies at once; the clip plays as recorded until its processed sound is ready.
+    func setVoiceTreatment(_ treatment: VoiceTreatment?) {
+        guard let clip = selectedClip, clip.voice != treatment else { return }
+        perform(SetVoiceTreatmentCommand(clipID: clip.id, treatment: treatment))
+        Haptics.detent()
+    }
+
+    /// Splits the sound of every source a clip wants processed and that isn't on disk yet (new,
+    /// or the cache was cleared). One pass makes both versions.
+    private func makeMissingVoiceAudio() {
+        for clip in project.clips {
+            guard clip.voice != nil, let source = project.source(for: clip), source.hasAudio,
+                voiceTasks[source.id] == nil, !voiceFailures.contains(source.id), let url = mediaURL(for: source),
+                store.voiceAudioURL(for: clip, source: source, projectID: project.id) == nil
+            else { continue }
+            let voiceURL = store.voiceCacheURL(for: source, treatment: .voiceOnly, projectID: project.id)
+            let reducedURL = store.voiceCacheURL(for: source, treatment: .reduceVoice, projectID: project.id)
+            let id = source.id
+            voiceProgress[id] = 0
+            voiceTasks[id] = Task { [weak self] in
+                do {
+                    try await VoiceSeparator.separate(source: url, voiceURL: voiceURL, reducedURL: reducedURL) {
+                        progress in
+                        Task { @MainActor in
+                            if self?.voiceProgress[id] != nil { self?.voiceProgress[id] = progress }
+                        }
+                    }
+                } catch {
+                    if !Task.isCancelled {
+                        self?.voiceFailures.insert(id)
+                        self?.alertMessage = "Couldn't process this clip's sound: \(error.localizedDescription)"
+                    }
+                }
+                guard let self, !Task.isCancelled else { return }
+                self.voiceTasks[id] = nil
+                self.voiceProgress[id] = nil
+                // The files don't change the project, so nothing else would reload playback.
+                if self.mode != .explore { self.rebuildSequence(keepingTime: self.currentTime) }
+            }
+        }
+    }
 
     // MARK: Automation recording
 

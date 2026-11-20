@@ -31,6 +31,8 @@ enum CompositionBuilder {
     ///   - mediaURL: resolves a source to its file; return nil when the file is missing.
     ///   - includeClipAudio / includeMusic: both false produces a silent composition.
     ///   - musicURL: the reference music file, or nil when there's none or it's missing.
+    ///   - clipAudioURL: a clip's processed sound (see `VoiceSeparator`) to play instead of its
+    ///     source's, starting where the source's sound starts; nil plays the source's own.
     ///   - frameSize: the frame the clips are framed and cropped in, when the output keeps only
     ///     its centre (the feed's 4:5 of a 9:16 sequence); nil means `renderSize`.
     static func build(
@@ -41,7 +43,8 @@ enum CompositionBuilder {
         includeClipAudio: Bool,
         includeMusic: Bool,
         mediaURL: (SourceAsset) -> URL?,
-        musicURL: URL?
+        musicURL: URL?,
+        clipAudioURL: (TimelineClip, SourceAsset) -> URL? = { _, _ in nil }
     ) async throws -> BuiltComposition {
         guard !project.clips.isEmpty else { throw CompositionError.empty }
 
@@ -104,9 +107,22 @@ enum CompositionBuilder {
 
             if let audioTrack, let sourceAudio = try await asset.loadTracks(withMediaType: .audio).first {
                 let audioTrackRange = try await sourceAudio.load(.timeRange)
-                let audioRange = sourceRange.intersection(audioTrackRange)
+                var audioRange = sourceRange.intersection(audioTrackRange)
                 if audioRange.isValid && !audioRange.isEmpty {
-                    try audioTrack.insertTimeRange(audioRange, of: sourceAudio, at: cursor)
+                    if let processed = try await processedAudio(clipAudioURL(clip, source)) {
+                        // The processed file starts at the source sound's first sample.
+                        let offset = audioTrackRange.start
+                        let wanted = CMTimeRange(start: audioRange.start - offset, duration: audioRange.duration)
+                        let usable = wanted.intersection(try await processed.load(.timeRange))
+                        audioRange = CMTimeRange(start: usable.start + offset, duration: usable.duration)
+                        if usable.isValid && !usable.isEmpty {
+                            try audioTrack.insertTimeRange(usable, of: processed, at: cursor)
+                        }
+                    } else {
+                        try audioTrack.insertTimeRange(audioRange, of: sourceAudio, at: cursor)
+                    }
+                }
+                if audioRange.isValid && !audioRange.isEmpty {
                     if clip.speed != 1 {
                         audioTrack.scaleTimeRange(
                             CMTimeRange(start: cursor, duration: audioRange.duration),
@@ -148,6 +164,13 @@ enum CompositionBuilder {
             composition: composition, videoComposition: videoComposition,
             audioMix: audioMix(project: project, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID),
             duration: cursor, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID)
+    }
+
+    /// The audio track of a processed clip sound, or nil when there's none or it can't be read.
+    private static func processedAudio(_ url: URL?) async throws -> AVAssetTrack? {
+        guard let url else { return nil }
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        return try? await asset.loadTracks(withMediaType: .audio).first
     }
 
     /// Places the music per `MusicPlacement`, trimmed to the sequence. Returns its track ID, or nil if nothing overlaps.

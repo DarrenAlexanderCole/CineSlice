@@ -258,6 +258,24 @@ final class WorkspaceTourTests: XCTestCase {
     /// Twelve clips overflow the strip: swiping must scroll it, and long-press-drag must
     /// reorder across it by auto-scrolling. Demo clips repeat 6 s, 5 s, 4 s, so the
     /// durations identify which clip sits where.
+    /// The Audio state lists the clips and the selected clip's sound. The demo clips are silent, so
+    /// it says so instead of offering processing.
+    func testAudioStateShowsEachClipsSound() {
+        XCTAssertTrue(button("New").waitForExistence(timeout: 10))
+        button("New").tap()
+        button("Demo clips").tap()
+        XCTAssertTrue(button("Audio").waitForExistence(timeout: 60), "demo clips never arrived")
+        button("Audio").tap()
+        XCTAssertTrue(app.staticTexts["This clip has no sound."].waitForExistence(timeout: 5))
+        let second = app.buttons["Clip 2 sound"]
+        XCTAssertTrue(second.exists)
+        XCTAssertEqual(second.value as? String, "No sound")
+        second.tap()
+        XCTAssertTrue(app.staticTexts["CLIP 02 SOUND"].waitForExistence(timeout: 5))
+        sleep(1)
+        shot("Audio, silent clips")
+    }
+
     func testClipStripScrollsAndReordersLongSequence() {
         button("New").tap()
         button("Demo clips").tap()

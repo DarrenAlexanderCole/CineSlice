@@ -26,8 +26,10 @@
 		ABB5BAC565BB1FCD6EC0B081 /* MixDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DF8AE6F304D0E552467BBF /* MixDeck.swift */; };
 		ABC80865925DFE487980EC3C /* MusicPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2D6B1E8FD79E15B152394E /* MusicPipelineTests.swift */; };
 		B234F02052D46C663B23BBA8 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48E6F5D7028543BECDE616A1 /* Components.swift */; };
+		BFB165C710BD0850B9B40822 /* AudioDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 038E3C0A33C5DD257FEF8DEA /* AudioDeck.swift */; };
 		C0228B4F6A3E9F01DCAA4E98 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2133A967A46DCA109FA477EF /* Assets.xcassets */; };
 		C9390A56870EA3FC61699B82 /* WorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CD2F88F2097660E608C9055 /* WorkspaceModel.swift */; };
+		CE7775B19245B4B80D1BAB01 /* VoiceSeparator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 651AE1474F00FFA80A0637CC /* VoiceSeparator.swift */; };
 		CF5BB531EC77106A70E817FF /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */; };
 		DA9D4150080022C78ECDD701 /* WaveformAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D3BD010507DB5CBA8581C6A /* WaveformAnalyzer.swift */; };
 		DAC2166A9E5E40909E01B190 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89E08EC4889646EA88576B37 /* LibraryView.swift */; };
@@ -57,6 +59,7 @@
 /* Begin PBXFileReference section */
 		00BC1811B0F9CE64F2BBD505 /* PocketInstrumentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketInstrumentApp.swift; sourceTree = "<group>"; };
 		00DF8AE6F304D0E552467BBF /* MixDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixDeck.swift; sourceTree = "<group>"; };
+		038E3C0A33C5DD257FEF8DEA /* AudioDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDeck.swift; sourceTree = "<group>"; };
 		042783780F4DFA12BA32F2BC /* PocketInstrumentTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0CE8CE8ECB7F6B0E87452B91 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		0EA6B02B6AFBAA3969D56E58 /* DemoMediaGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoMediaGenerator.swift; sourceTree = "<group>"; };
@@ -71,6 +74,7 @@
 		547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEngine.swift; sourceTree = "<group>"; };
 		5EF71D9139DC9498A540BF25 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		63F6E64CBA156AFCC78BDDA6 /* ArrangeDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArrangeDeck.swift; sourceTree = "<group>"; };
+		651AE1474F00FFA80A0637CC /* VoiceSeparator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSeparator.swift; sourceTree = "<group>"; };
 		7743A7E0A879B3DFFC5F64FB /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
 		7CD2F88F2097660E608C9055 /* WorkspaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceModel.swift; sourceTree = "<group>"; };
 		8015626D0D83837F0166B600 /* Fader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fader.swift; sourceTree = "<group>"; };
@@ -112,6 +116,7 @@
 				547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */,
 				EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */,
 				23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */,
+				651AE1474F00FFA80A0637CC /* VoiceSeparator.swift */,
 				8D3BD010507DB5CBA8581C6A /* WaveformAnalyzer.swift */,
 			);
 			path = Media;
@@ -129,6 +134,7 @@
 			isa = PBXGroup;
 			children = (
 				63F6E64CBA156AFCC78BDDA6 /* ArrangeDeck.swift */,
+				038E3C0A33C5DD257FEF8DEA /* AudioDeck.swift */,
 				98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */,
 				14C7FB958DDC81A57CE3883A /* ExportSheet.swift */,
 				00DF8AE6F304D0E552467BBF /* MixDeck.swift */,
@@ -365,6 +371,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E5CA5674EEECBFD49415E6B7 /* ArrangeDeck.swift in Sources */,
+				BFB165C710BD0850B9B40822 /* AudioDeck.swift in Sources */,
 				81DEC2326A640F210022BA0C /* CMTime+MediaTime.swift in Sources */,
 				B234F02052D46C663B23BBA8 /* Components.swift in Sources */,
 				4DE251C57513F0C5A47BCA57 /* CompositionBuilder.swift in Sources */,
@@ -384,6 +391,7 @@
 				92AF54485F3B0B3118122A3A /* SequenceLane.swift in Sources */,
 				730D29CB6C69B0B2737DF5EB /* Theme.swift in Sources */,
 				053E286D294424134FA740C4 /* ThumbnailCache.swift in Sources */,
+				CE7775B19245B4B80D1BAB01 /* VoiceSeparator.swift in Sources */,
 				DA9D4150080022C78ECDD701 /* WaveformAnalyzer.swift in Sources */,
 				C9390A56870EA3FC61699B82 /* WorkspaceModel.swift in Sources */,
 				46B518839A7A4B1DCDC972B6 /* WorkspaceView.swift in Sources */,
