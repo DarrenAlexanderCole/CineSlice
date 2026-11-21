@@ -26,23 +26,6 @@ protocol VoiceModel {
 enum VoiceSeparator {
     static let sampleRate = 44_100.0
 
-    /// The models that can do the split. The cache file name in `ProjectStore.stemCacheURL` says
-    /// which made it; change it with this, so sound made by the other is made again.
-    enum Engine {
-        /// Meta's music separator: stereo, but hears speech as singing and leaves a warble.
-        case htdemucs
-        /// Trained on dialogue / music / effects: cleaner speech, mono in.
-        case dbsTiger
-    }
-    static let engine = Engine.dbsTiger
-
-    private static func makeModel() throws -> VoiceModel {
-        switch engine {
-        case .htdemucs: return try Demucs()
-        case .dbsTiger: return try Tiger()
-        }
-    }
-
     enum SeparationError: LocalizedError {
         case noAudio
 
@@ -91,7 +74,7 @@ enum VoiceSeparator {
         // Scoped so both files are finished (closed) before they're moved into place.
         try {
             var split = Splitter(
-                model: try makeModel(), voice: try losslessFile(voiceTemp), rest: try losslessFile(reducedTemp))
+                model: try Tiger(), voice: try losslessFile(voiceTemp), rest: try losslessFile(reducedTemp))
             while let buffer = output.copyNextSampleBuffer() {
                 try Task.checkCancellation()
                 guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
