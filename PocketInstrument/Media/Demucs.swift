@@ -8,7 +8,7 @@ import CoreML
 /// network alone; the spectrogram it reads and the one it writes are done here, exactly as
 /// demucs's `_spec` and `_ispec` do them, so its output matches the PyTorch model. A stem is the
 /// inverse spectrogram of its spectral output plus its waveform output.
-final class Demucs {
+final class Demucs: VoiceModel {
     static let sampleRate = 44_100.0
     /// Samples in one segment, the length the model was trained on.
     static let segment = 343_980
@@ -21,11 +21,7 @@ final class Demucs {
     private static let pad = hop / 2 * 3
     private static let paddedLength = frames * hop + 2 * pad
 
-    struct Stems {
-        /// Left and right, each `segment` long.
-        var voice: [[Float]]
-        var rest: [[Float]]
-    }
+    var segment: Int { Self.segment }
 
     enum DemucsError: LocalizedError {
         case missingModel
@@ -55,7 +51,7 @@ final class Demucs {
 
     /// Separates one segment. `channels` is left and right, each at most `segment` long; shorter
     /// sound is padded with silence, as demucs does.
-    func separate(_ channels: [[Float]]) throws -> Stems {
+    func separate(_ channels: [[Float]]) throws -> VoiceStems {
         let mix = try MLMultiArray(shape: [1, 2, NSNumber(value: Self.segment)], dataType: .float32)
         let spec = try MLMultiArray(
             shape: [1, 4, NSNumber(value: Self.bins), NSNumber(value: Self.frames)], dataType: .float32)
@@ -82,7 +78,7 @@ final class Demucs {
                 return x
             }
         }
-        return Stems(
+        return VoiceStems(
             voice: stem(scalars("voiceSpec"), scalars("voiceWave")),
             rest: stem(scalars("restSpec"), scalars("restWave")))
     }

@@ -61,7 +61,7 @@ public final class ProjectStore: @unchecked Sendable {
     public func stemCacheURL(for source: SourceAsset, stem: SoundStem, projectID: UUID) -> URL {
         cacheDirectory(for: projectID)
             .appendingPathComponent("Voice", isDirectory: true)
-            .appendingPathComponent("\(source.fileName).\(stem.rawValue).htdemucs.m4a")
+            .appendingPathComponent("\(source.fileName).\(stem.rawValue).dbstiger-stereo.m4a")
     }
 
     /// A clip's split sound, or nil when it plays as recorded or the split hasn't been made yet.

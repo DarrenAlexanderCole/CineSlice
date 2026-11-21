@@ -14,7 +14,7 @@ struct BuiltComposition {
     let musicTrackID: CMPersistentTrackID?
     /// The voices of split clips; their scene plays on the clip audio track.
     let voiceTrackID: CMPersistentTrackID?
-    /// Clips playing split sound. A clip whose split isn't made yet plays as recorded.
+    /// Clips playing split sound. A clip whose split isn't made yet is silent.
     let separatedClipIDs: Set<UUID>
 }
 
@@ -223,8 +223,8 @@ enum CompositionBuilder {
     /// throughout, while that fader is being recorded.
     ///
     /// Split clips (`separated`) play their scene on the clip audio track and their voices on
-    /// `voiceTrackID`, each scaled by the clip's level for it; `balance` replaces one clip's
-    /// levels for a live fader preview.
+    /// `voiceTrackID`, each scaled by the clip's level for it; clips set to split whose split isn't
+    /// made yet are silent. `balance` replaces one clip's levels for a live fader preview.
     static func audioMix(
         project: Project, clipAudioTrackID: CMPersistentTrackID?, musicTrackID: CMPersistentTrackID?,
         voiceTrackID: CMPersistentTrackID? = nil, separated: Set<UUID> = [],
@@ -237,10 +237,15 @@ enum CompositionBuilder {
         if let musicLevel { mixed.referenceAudio?.volume = musicLevel }
         if let balance, let i = mixed.index(ofClip: balance.id) { mixed.clips[i].balance = balance.balance }
 
-        let scene: (TimelineClip) -> Float = { separated.contains($0.id) ? $0.balance?.scene ?? 1 : 1 }
+        // A clip waiting for its split is silent rather than heard as recorded, voice and all.
+        let scene: (TimelineClip) -> Float = { clip in
+            guard let balance = clip.balance else { return 1 }
+            return separated.contains(clip.id) ? balance.scene : 0
+        }
         let voice: (TimelineClip) -> Float = { separated.contains($0.id) ? $0.balance?.voice ?? 0 : 0 }
+        let anySplit = mixed.clips.contains { $0.balance != nil }
         let tracks: [(CMPersistentTrackID?, AutomationTarget, ((TimelineClip) -> Float)?)] = [
-            (clipAudioTrackID, .clipAudio, separated.isEmpty ? nil : scene),
+            (clipAudioTrackID, .clipAudio, anySplit ? scene : nil),
             (voiceTrackID, .clipAudio, voice),
             (musicTrackID, .music, nil),
         ]
@@ -278,10 +283,22 @@ enum CompositionBuilder {
     }
 
     /// What Explore plays, in source time: the source itself, or, when its sound has been split,
-    /// its picture with the two halves at `balance`'s levels.
+    /// its picture with the two halves at `balance`'s levels; silent while a split is wanted but
+    /// not made yet.
     static func sourceItem(url: URL, stems: (voice: URL, scene: URL)?, balance: SoundBalance?) async -> AVPlayerItem {
         let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
-        guard let stems, let balance else { return AVPlayerItem(asset: asset) }
+        guard let balance else { return AVPlayerItem(asset: asset) }
+        guard let stems else {
+            let item = AVPlayerItem(asset: asset)
+            if let sound = try? await asset.loadTracks(withMediaType: .audio).first {
+                let p = AVMutableAudioMixInputParameters(track: sound)
+                p.setVolume(0, at: .zero)
+                let mix = AVMutableAudioMix()
+                mix.inputParameters = [p]
+                item.audioMix = mix
+            }
+            return item
+        }
         do {
             let voiceAsset = AVURLAsset(url: stems.voice, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
             let sceneAsset = AVURLAsset(url: stems.scene, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])

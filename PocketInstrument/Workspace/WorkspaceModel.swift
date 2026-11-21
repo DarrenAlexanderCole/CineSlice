@@ -352,7 +352,7 @@ final class WorkspaceModel {
     /// split is made, so what Explore plays matches the sequence.
     private func loadExploreItem(_ clip: TimelineClip, source: SourceAsset, url: URL, at time: CMTime, resume: Bool?) {
         let stems = store.stemURLs(for: clip, source: source, projectID: project.id)
-        guard stems != nil else {
+        guard stems != nil || clip.balance != nil else {
             engine.load(AVPlayerItem(asset: AVURLAsset(url: url)), duration: source.duration.cmTime, at: time, resume: resume)
             updateLoopRange()
             return
@@ -504,14 +504,17 @@ final class WorkspaceModel {
     /// Sources whose sound is being split by `VoiceSeparator`, and how far along (0…1).
     private(set) var voiceProgress: [UUID: Double] = [:]
     @ObservationIgnored private var voiceTasks: [UUID: Task<Void, Never>] = [:]
+    /// The split started last. Each waits for the one before, so only one model runs at a time:
+    /// two at once can run the phone out of memory, and the app is killed with neither made.
+    @ObservationIgnored private var lastVoiceTask: Task<Void, Never>?
     /// Sources that couldn't be processed this session, so edits don't retry (and alert) each time.
     @ObservationIgnored private var voiceFailures: Set<UUID> = []
 
-    /// Export waits for this: until then, processed clips would export as recorded.
+    /// Export waits for this: until then, clips set to split would export silent.
     var isProcessingVoice: Bool { !voiceProgress.isEmpty }
 
     /// Plays the selected clip's sound as recorded (nil), or split into voices and scene at these
-    /// levels. It applies at once; the clip plays as recorded until its split is ready.
+    /// levels. It applies at once; the clip is silent until its split is ready.
     func setSoundBalance(_ balance: SoundBalance?) {
         guard let clip = selectedClip, clip.balance != balance else { return }
         perform(SetSoundBalanceCommand(clipID: clip.id, balance: balance))
@@ -529,8 +532,11 @@ final class WorkspaceModel {
             let reducedURL = store.stemCacheURL(for: source, stem: .scene, projectID: project.id)
             let id = source.id
             voiceProgress[id] = 0
-            voiceTasks[id] = Task { [weak self] in
+            let previous = lastVoiceTask
+            let task = Task { [weak self] in
+                await previous?.value
                 do {
+                    try Task.checkCancellation()
                     try await VoiceSeparator.separate(source: url, voiceURL: voiceURL, reducedURL: reducedURL) {
                         progress in
                         Task { @MainActor in
@@ -555,6 +561,8 @@ final class WorkspaceModel {
                     self.loadExploreItem(clip, source: source, url: media, at: self.engine.currentTime, resume: nil)
                 }
             }
+            voiceTasks[id] = task
+            lastVoiceTask = task
         }
     }
 

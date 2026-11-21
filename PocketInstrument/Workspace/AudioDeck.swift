@@ -4,7 +4,7 @@ import SwiftUI
 /// Audio state: each clip's own sound, split on the device. Pick a clip in the row, then play it
 /// as recorded, or split into voices and everything else with a fader for each (voices down for
 /// someone talking behind the camera). Splitting runs once per source in the background and the
-/// clip plays as recorded until it's ready; each change is one undo step and never touches the
+/// clip is silent until it's ready; each change is one undo step and never touches the
 /// footage. Play and loop to audition it in the sequence.
 struct AudioDeck: View {
     var model: WorkspaceModel
@@ -101,7 +101,7 @@ struct AudioDeck: View {
                     .font(Theme.mono(11, weight: .bold))
                     .foregroundStyle(Theme.signal)
                 Spacer(minLength: 0)
-                Text("Plays as recorded until done")
+                Text("Silent until done")
                     .font(Theme.caption)
                     .foregroundStyle(Theme.secondaryLabel)
             }

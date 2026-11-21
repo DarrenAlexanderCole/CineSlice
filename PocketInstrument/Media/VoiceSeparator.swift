@@ -2,24 +2,46 @@ import AVFoundation
 import Accelerate
 import EditCore
 
-/// Splits a source's sound with HTDemucs (see `Demucs`), once, into the two versions a clip can
-/// play: the voices alone, and everything else (the scene, music, noise) with the voices taken
-/// out. It runs on the device; nothing leaves it.
+/// One stretch of sound split in two: left and right, each the model's `segment` long.
+struct VoiceStems {
+    var voice: [[Float]]
+    var rest: [[Float]]
+}
+
+/// A model that splits a fixed stretch of stereo sound at 44.1 kHz into voices and the rest.
+protocol VoiceModel {
+    /// Samples it takes at a time.
+    var segment: Int { get }
+    /// `channels` is left and right, each at most `segment` long.
+    func separate(_ channels: [[Float]]) throws -> VoiceStems
+}
+
+/// Splits a source's sound, once, into the two versions a clip can play: the voices alone, and
+/// everything else (the scene, music, noise) with the voices taken out. It runs on the device;
+/// nothing leaves it.
 ///
-/// The model takes 7.8 s at a time, so the sound goes through in overlapping segments that are
-/// cross-faded back together, as demucs's `apply_model` does (a quarter overlap, triangular
+/// The model takes a few seconds at a time, so the sound goes through in overlapping segments that
+/// are cross-faded back together, as demucs's `apply_model` does (a quarter overlap, triangular
 /// weights). It streams: only a couple of segments are held in memory, whatever the clip's length.
 enum VoiceSeparator {
-    static let sampleRate = Demucs.sampleRate
-    private static let segment = Demucs.segment
-    /// Segments start this far apart, so each overlaps the next by a quarter.
-    private static let stride = segment * 3 / 4
-    /// demucs's cross-fade: rising to the segment's middle and falling after it.
-    private static let weight: [Float] = {
-        let half = segment / 2
-        let peak = Float(max(half, segment - half))
-        return (0..<segment).map { i in Float(i < half ? i + 1 : segment - i) / peak }
-    }()
+    static let sampleRate = 44_100.0
+
+    /// The models that can do the split. The cache file name in `ProjectStore.stemCacheURL` says
+    /// which made it; change it with this, so sound made by the other is made again.
+    enum Engine {
+        /// Meta's music separator: stereo, but hears speech as singing and leaves a warble.
+        case htdemucs
+        /// Trained on dialogue / music / effects: cleaner speech, mono in.
+        case dbsTiger
+    }
+    static let engine = Engine.dbsTiger
+
+    private static func makeModel() throws -> VoiceModel {
+        switch engine {
+        case .htdemucs: return try Demucs()
+        case .dbsTiger: return try Tiger()
+        }
+    }
 
     enum SeparationError: LocalizedError {
         case noAudio
@@ -69,7 +91,7 @@ enum VoiceSeparator {
         // Scoped so both files are finished (closed) before they're moved into place.
         try {
             var split = Splitter(
-                demucs: try Demucs(), voice: try losslessFile(voiceTemp), rest: try losslessFile(reducedTemp))
+                model: try makeModel(), voice: try losslessFile(voiceTemp), rest: try losslessFile(reducedTemp))
             while let buffer = output.copyNextSampleBuffer() {
                 try Task.checkCancellation()
                 guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
@@ -108,10 +130,15 @@ enum VoiceSeparator {
             commonFormat: .pcmFormatFloat32, interleaved: false)
     }
 
-    /// Runs the recording through `Demucs` a segment at a time and writes the cross-faded stems
+    /// Runs the recording through the model a segment at a time and writes the cross-faded stems
     /// as soon as no later segment can change them.
     private struct Splitter {
-        let demucs: Demucs
+        let model: VoiceModel
+        let segment: Int
+        /// Segments start this far apart, so each overlaps the next by a quarter.
+        let stride: Int
+        /// demucs's cross-fade: rising to the segment's middle and falling after it.
+        let weight: [Float]
         let voice: AVAudioFile
         let rest: AVAudioFile
         /// The recording, left and right, from `base` on.
@@ -127,8 +154,14 @@ enum VoiceSeparator {
         private(set) var framesIn = 0
         private(set) var framesOut = 0
 
-        init(demucs: Demucs, voice: AVAudioFile, rest: AVAudioFile) {
-            self.demucs = demucs
+        init(model: VoiceModel, voice: AVAudioFile, rest: AVAudioFile) {
+            self.model = model
+            let segment = model.segment
+            self.segment = segment
+            stride = segment * 3 / 4
+            let half = segment / 2
+            let peak = Float(max(half, segment - half))
+            weight = (0..<segment).map { i in Float(i < half ? i + 1 : segment - i) / peak }
             self.voice = voice
             self.rest = rest
         }
@@ -142,7 +175,7 @@ enum VoiceSeparator {
                 input[1].append(samples[2 * i + 1])
             }
             var separated = false
-            while framesIn - next >= VoiceSeparator.segment {
+            while framesIn - next >= segment {
                 try separateNext()
                 separated = true
             }
@@ -159,9 +192,9 @@ enum VoiceSeparator {
         private mutating func separateNext() throws {
             try Task.checkCancellation()
             let start = next - base
-            let end = min(input[0].count, start + VoiceSeparator.segment)
-            let stems = try demucs.separate(input.map { Array($0[start..<end]) })
-            let needed = start + VoiceSeparator.segment
+            let end = min(input[0].count, start + segment)
+            let stems = try model.separate(input.map { Array($0[start..<end]) })
+            let needed = start + segment
             if weightSum.count < needed {
                 let more = needed - weightSum.count
                 weightSum += repeatElement(0, count: more)
@@ -170,7 +203,7 @@ enum VoiceSeparator {
                     restSum[c] += repeatElement(0, count: more)
                 }
             }
-            let w = VoiceSeparator.weight
+            let w = weight
             for c in 0..<2 {
                 voiceSum[c].withUnsafeMutableBufferPointer { s in
                     vDSP.add(s[start..<needed], vDSP.multiply(stems.voice[c], w), result: &s[start..<needed])
@@ -182,7 +215,7 @@ enum VoiceSeparator {
             weightSum.withUnsafeMutableBufferPointer { s in
                 vDSP.add(s[start..<needed], w, result: &s[start..<needed])
             }
-            next += VoiceSeparator.stride
+            next += stride
             try write(min(next, framesIn) - base)
         }
 

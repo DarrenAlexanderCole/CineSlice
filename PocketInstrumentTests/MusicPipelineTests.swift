@@ -210,7 +210,7 @@ final class MusicPipelineTests: XCTestCase {
         let split = project.clips[1].id
         try SetClipVolumeCommand(clipID: split, volume: 0.5).apply(to: &project)
         try SetSoundBalanceCommand(clipID: split, balance: SoundBalance(voice: 0.2, scene: 0.8)).apply(to: &project)
-        // Clip 2 wants splitting but isn't split yet, so it plays as recorded.
+        // Clip 2 wants splitting but isn't split yet, so it's silent: never its voice.
         try SetSoundBalanceCommand(clipID: project.clips[2].id, balance: .removeVoice).apply(to: &project)
         let mix = try XCTUnwrap(
             CompositionBuilder.audioMix(
@@ -223,7 +223,7 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertEqual(level(voice, at: 2), 0)
         XCTAssertEqual(level(scene, at: 5), 0.4, accuracy: 1e-5)
         XCTAssertEqual(level(voice, at: 5), 0.1, accuracy: 1e-5)
-        XCTAssertEqual(level(scene, at: 10), 1, "not split yet: as recorded")
+        XCTAssertEqual(level(scene, at: 10), 0, "not split yet: silent")
         XCTAssertEqual(level(voice, at: 10), 0)
 
         // A live drag of the split clip's faders.
@@ -241,7 +241,7 @@ final class MusicPipelineTests: XCTestCase {
                 writing: (.clipAudio, 0.6)) as? AVMutableAudioMix)
         XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 5), 0.48, accuracy: 1e-5)
         XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 3 }), at: 5), 0.12, accuracy: 1e-5)
-        XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 10), 0.6, accuracy: 1e-5)
+        XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 10), 0)
     }
 
     /// Preview and export share one mix, and it plays the project's level envelopes.

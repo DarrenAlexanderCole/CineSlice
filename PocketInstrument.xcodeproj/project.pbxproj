@@ -9,13 +9,18 @@
 /* Begin PBXBuildFile section */
 		053E286D294424134FA740C4 /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */; };
 		079D5A1CCFE8546E165F9CFD /* HTDemucs.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 98760BBD5064F56AA0EC6E70 /* HTDemucs.mlpackage */; };
+		1D71D7B57361209E3EF06134 /* TigerStep.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = BFE6E096ADE5D307BAB58C60 /* TigerStep.mlpackage */; };
 		1FE55A59329B9D6B636FB00C /* PlaybackEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */; };
+		22AE35DC3C163BB7F434BA86 /* TigerBack.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 51CFC24872A6D1E97A3CE09D /* TigerBack.mlpackage */; };
 		292AAF07B520D10A5AE4251C /* Demucs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FC904C98FF443EB7E701097 /* Demucs.swift */; };
 		2A72F952C5B8947F6E4B9B24 /* MediaImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52E32BB34441D429E1B49272 /* MediaImporter.swift */; };
 		427005A74781C23E00CC7BEF /* RhythmGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */; };
 		46B518839A7A4B1DCDC972B6 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */; };
 		4DE251C57513F0C5A47BCA57 /* CompositionBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF21A29882624124DD5AC043 /* CompositionBuilder.swift */; };
+		535E9AD80E6A0EC919AA0CCA /* TigerStepFirst.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */; };
+		536FAAB3E6079EF37372F3BE /* Tiger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14B3D5C32E59E6456E05202C /* Tiger.swift */; };
 		560C4C0C405E460B82A70CAF /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7743A7E0A879B3DFFC5F64FB /* PlayerView.swift */; };
+		69CC894138522AB840191D94 /* TigerFront.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = C8B666C98A969E96EAFB5102 /* TigerFront.mlpackage */; };
 		6A64129068E57B9FF8A29FC4 /* ExportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14C7FB958DDC81A57CE3883A /* ExportSheet.swift */; };
 		730D29CB6C69B0B2737DF5EB /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CE8CE8ECB7F6B0E87452B91 /* Theme.swift */; };
 		7C78BBA48CB402CA8EA6C7CD /* PocketInstrumentApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00BC1811B0F9CE64F2BBD505 /* PocketInstrumentApp.swift */; };
@@ -65,6 +70,7 @@
 		042783780F4DFA12BA32F2BC /* PocketInstrumentTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0CE8CE8ECB7F6B0E87452B91 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		0EA6B02B6AFBAA3969D56E58 /* DemoMediaGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoMediaGenerator.swift; sourceTree = "<group>"; };
+		14B3D5C32E59E6456E05202C /* Tiger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tiger.swift; sourceTree = "<group>"; };
 		14C7FB958DDC81A57CE3883A /* ExportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSheet.swift; sourceTree = "<group>"; };
 		2133A967A46DCA109FA477EF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		21D8DA783D9BCFAC63BA389C /* PocketInstrumentUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -72,6 +78,7 @@
 		2599198CE9D4302B2AECE3FD /* SequenceLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceLane.swift; sourceTree = "<group>"; };
 		37A3717594FF3F9958CF2E4D /* MusicSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicSources.swift; sourceTree = "<group>"; };
 		48E6F5D7028543BECDE616A1 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		51CFC24872A6D1E97A3CE09D /* TigerBack.mlpackage */ = {isa = PBXFileReference; path = TigerBack.mlpackage; sourceTree = "<group>"; };
 		52E32BB34441D429E1B49272 /* MediaImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImporter.swift; sourceTree = "<group>"; };
 		547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEngine.swift; sourceTree = "<group>"; };
 		5EF71D9139DC9498A540BF25 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -85,10 +92,13 @@
 		8D2D6B1E8FD79E15B152394E /* MusicPipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicPipelineTests.swift; sourceTree = "<group>"; };
 		8D3BD010507DB5CBA8581C6A /* WaveformAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformAnalyzer.swift; sourceTree = "<group>"; };
 		8E6B70F463559A3468CDEE1E /* EditCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = EditCore; path = Packages/EditCore; sourceTree = SOURCE_ROOT; };
+		95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */ = {isa = PBXFileReference; path = TigerStepFirst.mlpackage; sourceTree = "<group>"; };
 		98760BBD5064F56AA0EC6E70 /* HTDemucs.mlpackage */ = {isa = PBXFileReference; path = HTDemucs.mlpackage; sourceTree = "<group>"; };
 		98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreDeck.swift; sourceTree = "<group>"; };
 		AF21A29882624124DD5AC043 /* CompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionBuilder.swift; sourceTree = "<group>"; };
 		BB503F9E82671553893CF232 /* PocketInstrument.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PocketInstrument.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BFE6E096ADE5D307BAB58C60 /* TigerStep.mlpackage */ = {isa = PBXFileReference; path = TigerStep.mlpackage; sourceTree = "<group>"; };
+		C8B666C98A969E96EAFB5102 /* TigerFront.mlpackage */ = {isa = PBXFileReference; path = TigerFront.mlpackage; sourceTree = "<group>"; };
 		D9302D4DEAE15B1873C5D585 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		DF56D275663E66C21D0907C4 /* CMTime+MediaTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMTime+MediaTime.swift"; sourceTree = "<group>"; };
@@ -122,6 +132,11 @@
 				547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */,
 				EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */,
 				23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */,
+				14B3D5C32E59E6456E05202C /* Tiger.swift */,
+				51CFC24872A6D1E97A3CE09D /* TigerBack.mlpackage */,
+				C8B666C98A969E96EAFB5102 /* TigerFront.mlpackage */,
+				BFE6E096ADE5D307BAB58C60 /* TigerStep.mlpackage */,
+				95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */,
 				651AE1474F00FFA80A0637CC /* VoiceSeparator.swift */,
 				8D3BD010507DB5CBA8581C6A /* WaveformAnalyzer.swift */,
 			);
@@ -399,6 +414,11 @@
 				92AF54485F3B0B3118122A3A /* SequenceLane.swift in Sources */,
 				730D29CB6C69B0B2737DF5EB /* Theme.swift in Sources */,
 				053E286D294424134FA740C4 /* ThumbnailCache.swift in Sources */,
+				536FAAB3E6079EF37372F3BE /* Tiger.swift in Sources */,
+				22AE35DC3C163BB7F434BA86 /* TigerBack.mlpackage in Sources */,
+				69CC894138522AB840191D94 /* TigerFront.mlpackage in Sources */,
+				1D71D7B57361209E3EF06134 /* TigerStep.mlpackage in Sources */,
+				535E9AD80E6A0EC919AA0CCA /* TigerStepFirst.mlpackage in Sources */,
 				CE7775B19245B4B80D1BAB01 /* VoiceSeparator.swift in Sources */,
 				DA9D4150080022C78ECDD701 /* WaveformAnalyzer.swift in Sources */,
 				C9390A56870EA3FC61699B82 /* WorkspaceModel.swift in Sources */,
