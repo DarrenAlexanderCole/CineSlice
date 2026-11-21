@@ -322,8 +322,19 @@ extension Project {
     /// to ramp linearly between: static levels (each clip's own, or the music fader), recorded
     /// passes, and the glides joining them. Two points at the same time are a step.
     /// Empty when there is nothing to play (no clips, or no music).
-    public func levelEnvelope(for target: AutomationTarget) -> [AutomationPoint] {
+    ///
+    /// `gain` scales clip sound clip by clip (a split clip's voice or scene level), stepping at
+    /// the cuts; the music ignores it.
+    public func levelEnvelope(
+        for target: AutomationTarget, gain: ((TimelineClip) -> Float)? = nil
+    ) -> [AutomationPoint] {
         let base = staticLevels(for: target)
+        let gains: [(start: MediaTime, value: Float)] =
+            target == .clipAudio
+            ? SequenceMap(project: self).entries.compactMap { entry in
+                clip(id: entry.clipID).map { (entry.compositionRange.start, gain?($0) ?? 1) }
+            }
+            : []
         guard !base.isEmpty else { return [] }
         let lane = lane(for: target)
         let end = duration
@@ -384,10 +395,15 @@ extension Project {
             times.insert(segment.start - glide)
             times.insert(segment.end + glide)
         }
+        func gainAt(_ t: MediaTime, fromLeft: Bool) -> Float {
+            guard let first = gains.first else { return 1 }
+            return (gains.last { fromLeft ? $0.start < t : $0.start <= t } ?? first).value
+        }
+
         var envelope: [AutomationPoint] = []
         for t in times.filter({ $0 >= .zero && $0 <= end }).sorted() {
-            let left = level(at: t, fromLeft: true)
-            let right = level(at: t, fromLeft: false)
+            let left = level(at: t, fromLeft: true) * gainAt(t, fromLeft: true)
+            let right = level(at: t, fromLeft: false) * gainAt(t, fromLeft: false)
             if t > .zero { envelope.append(AutomationPoint(time: t, value: left)) }
             if t < end, t == .zero || right != left { envelope.append(AutomationPoint(time: t, value: right)) }
         }

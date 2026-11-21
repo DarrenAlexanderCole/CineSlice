@@ -122,13 +122,29 @@ public struct Crop: Codable, Hashable, Sendable {
     public var magnification: Double { 1 / size }
 }
 
-/// What a clip's own sound plays instead of the recording, made on the device by voice isolation.
-/// The source file is never changed; the processed sound is derived data in the project's Cache.
-public enum VoiceTreatment: String, Codable, Sendable, CaseIterable {
-    /// Just the voices: background noise taken out.
-    case voiceOnly
-    /// The voices turned down and the rest kept. Voice isolation lowers them; it can't take them out.
-    case reduceVoice
+/// A clip's own sound split on the device by source separation, played back as two levels: the
+/// voices, and everything else (the scene, music, noise). The source file is never changed; the
+/// split sound is derived data in the project's Cache.
+public struct SoundBalance: Codable, Hashable, Sendable {
+    /// The voices' level, 0…1.
+    public var voice: Float
+    /// Everything but the voices, 0…1.
+    public var scene: Float
+    public init(voice: Float, scene: Float) {
+        self.voice = voice
+        self.scene = scene
+    }
+    /// Where a clip starts when its sound is first split: the voices taken out, the scene kept.
+    public static let removeVoice = SoundBalance(voice: 0, scene: 1)
+    public static let voiceOnly = SoundBalance(voice: 1, scene: 0)
+}
+
+/// The two halves of a split sound, each kept as its own file.
+public enum SoundStem: String, Codable, Sendable, CaseIterable {
+    /// The voices. (Raw values are the names of the cache files made before the levels existed.)
+    case voice = "voiceOnly"
+    /// Everything but the voices.
+    case scene = "reduceVoice"
 }
 
 /// One moment of a source placed in the sequence. Clips are placed
@@ -148,13 +164,13 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     /// Recorded level passes in source time, so the curve travels with the clip. Parts outside
     /// `sourceRange` are kept (a trim can bring them back) but don't play.
     public var levelCurve: AutomationLane
-    /// Plays processed sound instead of the recording; nil plays it as recorded.
-    public var voice: VoiceTreatment?
+    /// Plays the sound split into voices and scene at these levels; nil plays it as recorded.
+    public var balance: SoundBalance?
 
     public init(
         id: UUID = UUID(), sourceID: UUID, sourceRange: MediaTimeRange,
         speed: Double = 1, framing: Framing = .fill, crop: Crop? = nil, volume: Float = 1,
-        levelCurve: AutomationLane = .init(), voice: VoiceTreatment? = nil
+        levelCurve: AutomationLane = .init(), balance: SoundBalance? = nil
     ) {
         self.id = id
         self.sourceID = sourceID
@@ -164,11 +180,26 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         self.crop = crop
         self.volume = volume
         self.levelCurve = levelCurve
-        self.voice = voice
+        self.balance = balance
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceID, sourceRange, speed, framing, crop, volume, levelCurve, voice
+        case id, sourceID, sourceRange, speed, framing, crop, volume, levelCurve, balance
+        /// Before the levels: "voiceOnly" or "reduceVoice". Read, never written.
+        case voice
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(sourceID, forKey: .sourceID)
+        try c.encode(sourceRange, forKey: .sourceRange)
+        try c.encode(speed, forKey: .speed)
+        try c.encode(framing, forKey: .framing)
+        try c.encodeIfPresent(crop, forKey: .crop)
+        try c.encode(volume, forKey: .volume)
+        try c.encode(levelCurve, forKey: .levelCurve)
+        try c.encodeIfPresent(balance, forKey: .balance)
     }
 
     public init(from decoder: Decoder) throws {
@@ -181,7 +212,15 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         crop = try c.decodeIfPresent(Crop.self, forKey: .crop)
         volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
         levelCurve = try c.decodeIfPresent(AutomationLane.self, forKey: .levelCurve) ?? AutomationLane()
-        voice = try c.decodeIfPresent(VoiceTreatment.self, forKey: .voice)
+        if let balance = try c.decodeIfPresent(SoundBalance.self, forKey: .balance) {
+            self.balance = balance
+        } else {
+            switch try c.decodeIfPresent(String.self, forKey: .voice) {
+            case "voiceOnly": balance = .voiceOnly
+            case "reduceVoice": balance = .removeVoice
+            default: balance = nil
+            }
+        }
     }
 
     /// Length of this clip on the composition timeline.

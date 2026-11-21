@@ -137,26 +137,37 @@ final class MusicPipelineTests: XCTestCase {
         }
     }
 
-    /// Voice isolation's latency is taken out: both versions are as long as the sound they came
-    /// from, and what's left after the voices are subtracted lines up with the original.
+    /// Both versions are as long as the sound they came from, and the segments are stitched back
+    /// in place: what's left with the voices taken out lines up with the original.
     func testVoiceSeparationKeepsLengthAndTiming() async throws {
         let project = try await makeProject()
         let music = try XCTUnwrap(project.referenceAudio)
         let url = try XCTUnwrap(store.audioURL(for: music, projectID: project.id))
         let source = SourceAsset(fileName: music.fileName, duration: music.duration, width: 0, height: 0, hasAudio: true)
-        let voiceURL = store.voiceCacheURL(for: source, treatment: .voiceOnly, projectID: project.id)
-        let reducedURL = store.voiceCacheURL(for: source, treatment: .reduceVoice, projectID: project.id)
+        let voiceURL = store.stemCacheURL(for: source, stem: .voice, projectID: project.id)
+        let reducedURL = store.stemCacheURL(for: source, stem: .scene, projectID: project.id)
         try await VoiceSeparator.separate(source: url, voiceURL: voiceURL, reducedURL: reducedURL) { _ in }
 
         for output in [voiceURL, reducedURL] {
             let duration = try await AVURLAsset(url: output).load(.duration)
             XCTAssertEqual(duration.seconds, music.duration.seconds, accuracy: 0.01, output.lastPathComponent)
         }
-        // A click track has no voice, so it survives the subtraction, on the beat.
-        let original = try await clickOnsets(in: AVURLAsset(url: url))
-        let reduced = try await clickOnsets(in: AVURLAsset(url: reducedURL))
-        XCTAssertEqual(reduced.count, original.count, "\(reduced)")
-        for (a, b) in zip(original, reduced) { XCTAssertEqual(a, b, accuracy: 0.003) }
+        // A click track has no voice, so it stays in the rest, on the beat. Compared at each
+        // click's loudest sample: separation smears a little sound just ahead of a click, which
+        // moves where it first gets loud but not where it peaks.
+        let rate = 44_100.0
+        let original = try await monoSamples(in: AVURLAsset(url: url), rate: rate)
+        let reduced = try await monoSamples(in: AVURLAsset(url: reducedURL), rate: rate)
+        func peak(_ samples: [Float], near seconds: Double) -> Double {
+            let window = max(0, Int((seconds - 0.05) * rate))..<min(samples.count, Int((seconds + 0.1) * rate))
+            let loudest = window.max { abs(samples[$0]) < abs(samples[$1]) } ?? 0
+            return Double(loudest) / rate
+        }
+        let onsets = try await clickOnsets(in: AVURLAsset(url: url))
+        XCTAssertGreaterThan(onsets.count, 10)
+        for onset in onsets {
+            XCTAssertEqual(peak(reduced, near: onset), peak(original, near: onset), accuracy: 0.003, "click at \(onset)")
+        }
     }
 
     func testClipAudioOnlyExportLeavesMusicOut() async throws {
@@ -190,6 +201,47 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertEqual(live.inputParameters.count, 1)
         XCTAssertEqual(level(live.inputParameters[0], at: 5), 0.8)
         XCTAssertEqual(level(live.inputParameters[0], at: 10), 0.5)
+    }
+
+    /// A split clip plays its scene on the clip track and its voices on their own track, each at
+    /// the clip's level times its level for that half; clips not split play as recorded.
+    func testSplitClipsPlayVoiceAndSceneAtTheirLevels() async throws {
+        var project = try await makeProject()
+        let split = project.clips[1].id
+        try SetClipVolumeCommand(clipID: split, volume: 0.5).apply(to: &project)
+        try SetSoundBalanceCommand(clipID: split, balance: SoundBalance(voice: 0.2, scene: 0.8)).apply(to: &project)
+        // Clip 2 wants splitting but isn't split yet, so it plays as recorded.
+        try SetSoundBalanceCommand(clipID: project.clips[2].id, balance: .removeVoice).apply(to: &project)
+        let mix = try XCTUnwrap(
+            CompositionBuilder.audioMix(
+                project: project, clipAudioTrackID: 1, musicTrackID: nil, voiceTrackID: 3, separated: [split])
+                as? AVMutableAudioMix)
+        let scene = try XCTUnwrap(mix.inputParameters.first { $0.trackID == 1 })
+        let voice = try XCTUnwrap(mix.inputParameters.first { $0.trackID == 3 })
+        // Cuts at 4 s and 9 s.
+        XCTAssertEqual(level(scene, at: 2), 1)
+        XCTAssertEqual(level(voice, at: 2), 0)
+        XCTAssertEqual(level(scene, at: 5), 0.4, accuracy: 1e-5)
+        XCTAssertEqual(level(voice, at: 5), 0.1, accuracy: 1e-5)
+        XCTAssertEqual(level(scene, at: 10), 1, "not split yet: as recorded")
+        XCTAssertEqual(level(voice, at: 10), 0)
+
+        // A live drag of the split clip's faders.
+        let live = try XCTUnwrap(
+            CompositionBuilder.audioMix(
+                project: project, clipAudioTrackID: 1, musicTrackID: nil, voiceTrackID: 3, separated: [split],
+                balance: (id: split, balance: SoundBalance(voice: 1, scene: 0))) as? AVMutableAudioMix)
+        XCTAssertEqual(level(try XCTUnwrap(live.inputParameters.first { $0.trackID == 1 }), at: 5), 0)
+        XCTAssertEqual(level(try XCTUnwrap(live.inputParameters.first { $0.trackID == 3 }), at: 5), 0.5, accuracy: 1e-5)
+
+        // Recording the clip fader keeps each half at its level.
+        let writing = try XCTUnwrap(
+            CompositionBuilder.audioMix(
+                project: project, clipAudioTrackID: 1, musicTrackID: nil, voiceTrackID: 3, separated: [split],
+                writing: (.clipAudio, 0.6)) as? AVMutableAudioMix)
+        XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 5), 0.48, accuracy: 1e-5)
+        XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 3 }), at: 5), 0.12, accuracy: 1e-5)
+        XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 10), 0.6, accuracy: 1e-5)
     }
 
     /// Preview and export share one mix, and it plays the project's level envelopes.

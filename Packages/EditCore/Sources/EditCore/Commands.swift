@@ -147,26 +147,22 @@ public struct SetCropCommand: EditingCommand {
     }
 }
 
-/// Plays a clip's sound processed (voice only, or voices reduced), or with nil as recorded.
-public struct SetVoiceTreatmentCommand: EditingCommand {
+/// Plays a clip's sound split into voices and scene at the given levels, or with nil as recorded.
+public struct SetSoundBalanceCommand: EditingCommand {
     public let clipID: UUID
-    public let treatment: VoiceTreatment?
-    public init(clipID: UUID, treatment: VoiceTreatment?) {
+    public let balance: SoundBalance?
+    public init(clipID: UUID, balance: SoundBalance?) {
         self.clipID = clipID
-        self.treatment = treatment
+        self.balance = balance.map { SoundBalance(voice: clamp01($0.voice), scene: clamp01($0.scene)) }
     }
-    public var actionName: String {
-        switch treatment {
-        case nil: return "Original Sound"
-        case .voiceOnly: return "Voice Only"
-        case .reduceVoice: return "Reduce Voice"
-        }
-    }
+    public var actionName: String { balance == nil ? "Original Sound" : "Voice & Scene Levels" }
     public func apply(to project: inout Project) throws {
         guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
-        project.clips[i].voice = treatment
+        project.clips[i].balance = balance
     }
 }
+
+private func clamp01(_ v: Float) -> Float { min(max(v, 0), 1) }
 
 public struct RenameProjectCommand: EditingCommand {
     public let name: String

@@ -67,8 +67,11 @@ final class WorkspaceModel {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
     @ObservationIgnored private var waveformTask: Task<Void, Never>?
-    /// Audio track IDs in the loaded sequence item, for live level changes.
-    @ObservationIgnored private var loadedTrackIDs: (clip: CMPersistentTrackID?, music: CMPersistentTrackID?)
+    /// Audio track IDs in the loaded sequence item, and the clips playing split sound, for live
+    /// level changes.
+    @ObservationIgnored private var loadedTrackIDs:
+        (clip: CMPersistentTrackID?, music: CMPersistentTrackID?, voice: CMPersistentTrackID?, separated: Set<UUID>) =
+            (nil, nil, nil, [])
     private(set) var undoName: String?
     private(set) var redoName: String?
 
@@ -178,6 +181,8 @@ final class WorkspaceModel {
         for i in shape.clips.indices {
             shape.clips[i].volume = 1
             shape.clips[i].levelCurve = AutomationLane()
+            // Split or not changes the tracks; the voice and scene levels are only levels.
+            if shape.clips[i].balance != nil { shape.clips[i].balance = .init(voice: 1, scene: 1) }
         }
         shape.referenceAudio?.volume = 1
         shape.automation = Automation()
@@ -249,12 +254,14 @@ final class WorkspaceModel {
                             ? nil : store.mediaURL(for: $0, projectID: snapshot.id)
                     },
                     musicURL: snapshot.referenceAudio.flatMap { store.audioURL(for: $0, projectID: snapshot.id) },
-                    clipAudioURL: { store.voiceAudioURL(for: $0, source: $1, projectID: snapshot.id) })
+                    clipStems: { store.stemURLs(for: $0, source: $1, projectID: snapshot.id) })
                 guard !Task.isCancelled, self.mode != .explore else { return }
                 let item = AVPlayerItem(asset: built.composition)
                 item.videoComposition = built.videoComposition
                 item.audioMix = built.audioMix
-                self.loadedTrackIDs = (built.clipAudioTrackID, built.musicTrackID)
+                self.loadedTrackIDs = (
+                    built.clipAudioTrackID, built.musicTrackID, built.voiceTrackID, built.separatedClipIDs
+                )
                 let target = CMTimeMinimum(time.cmTime, built.duration)
                 self.engine.load(item, duration: built.duration, at: target, resume: resume)
                 self.updateLoopRange()
@@ -279,12 +286,15 @@ final class WorkspaceModel {
     }
 
     /// Sets the player's levels; `clip` (for the selected clip) and `music` override the project's
-    /// for live fader previews. A fader being recorded is always heard as it is.
-    func applyLevels(clip: Float? = nil, music: Float? = nil) {
+    /// for live fader previews, as `balance` does the selected clip's voice and scene levels. A
+    /// fader being recorded is always heard as it is.
+    func applyLevels(clip: Float? = nil, music: Float? = nil, balance: SoundBalance? = nil) {
         guard mode != .explore, let item = engine.player.currentItem else { return }
         item.audioMix = CompositionBuilder.audioMix(
             project: mixProject, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
+            voiceTrackID: loadedTrackIDs.voice, separated: loadedTrackIDs.separated,
             clipLevel: clip.flatMap { level in selectedClipID.map { (id: $0, volume: level) } }, musicLevel: music,
+            balance: balance.flatMap { b in selectedClipID.map { (id: $0, balance: b) } },
             writing: recording.map { ($0.target, recordLevel) })
     }
 
@@ -335,9 +345,26 @@ final class WorkspaceModel {
         }
         rebuildTask?.cancel()
         mode = .explore
-        let item = AVPlayerItem(asset: AVURLAsset(url: url))
-        engine.load(item, duration: source.duration.cmTime, at: clip.sourceRange.start.cmTime, resume: false)
-        updateLoopRange()
+        loadExploreItem(clip, source: source, url: url, at: clip.sourceRange.start.cmTime, resume: false)
+    }
+
+    /// Loads the selected clip's source for Explore, its sound split at the clip's levels when the
+    /// split is made, so what Explore plays matches the sequence.
+    private func loadExploreItem(_ clip: TimelineClip, source: SourceAsset, url: URL, at time: CMTime, resume: Bool?) {
+        let stems = store.stemURLs(for: clip, source: source, projectID: project.id)
+        guard stems != nil else {
+            engine.load(AVPlayerItem(asset: AVURLAsset(url: url)), duration: source.duration.cmTime, at: time, resume: resume)
+            updateLoopRange()
+            return
+        }
+        let clipID = clip.id
+        let balance = clip.balance
+        rebuildTask = Task { [weak self] in
+            let item = await CompositionBuilder.sourceItem(url: url, stems: stems, balance: balance)
+            guard let self, !Task.isCancelled, self.mode == .explore, self.selectedClipID == clipID else { return }
+            self.engine.load(item, duration: source.duration.cmTime, at: time, resume: resume)
+            self.updateLoopRange()
+        }
     }
 
     // MARK: Loop region (composition time)
@@ -483,24 +510,23 @@ final class WorkspaceModel {
     /// Export waits for this: until then, processed clips would export as recorded.
     var isProcessingVoice: Bool { !voiceProgress.isEmpty }
 
-    /// Plays the selected clip's sound as recorded (nil), voice only, or with the voices reduced.
-    /// It applies at once; the clip plays as recorded until its processed sound is ready.
-    func setVoiceTreatment(_ treatment: VoiceTreatment?) {
-        guard let clip = selectedClip, clip.voice != treatment else { return }
-        perform(SetVoiceTreatmentCommand(clipID: clip.id, treatment: treatment))
-        Haptics.detent()
+    /// Plays the selected clip's sound as recorded (nil), or split into voices and scene at these
+    /// levels. It applies at once; the clip plays as recorded until its split is ready.
+    func setSoundBalance(_ balance: SoundBalance?) {
+        guard let clip = selectedClip, clip.balance != balance else { return }
+        perform(SetSoundBalanceCommand(clipID: clip.id, balance: balance))
     }
 
     /// Splits the sound of every source a clip wants processed and that isn't on disk yet (new,
     /// or the cache was cleared). One pass makes both versions.
     private func makeMissingVoiceAudio() {
         for clip in project.clips {
-            guard clip.voice != nil, let source = project.source(for: clip), source.hasAudio,
+            guard clip.balance != nil, let source = project.source(for: clip), source.hasAudio,
                 voiceTasks[source.id] == nil, !voiceFailures.contains(source.id), let url = mediaURL(for: source),
-                store.voiceAudioURL(for: clip, source: source, projectID: project.id) == nil
+                store.stemURLs(for: clip, source: source, projectID: project.id) == nil
             else { continue }
-            let voiceURL = store.voiceCacheURL(for: source, treatment: .voiceOnly, projectID: project.id)
-            let reducedURL = store.voiceCacheURL(for: source, treatment: .reduceVoice, projectID: project.id)
+            let voiceURL = store.stemCacheURL(for: source, stem: .voice, projectID: project.id)
+            let reducedURL = store.stemCacheURL(for: source, stem: .scene, projectID: project.id)
             let id = source.id
             voiceProgress[id] = 0
             voiceTasks[id] = Task { [weak self] in
@@ -521,7 +547,13 @@ final class WorkspaceModel {
                 self.voiceTasks[id] = nil
                 self.voiceProgress[id] = nil
                 // The files don't change the project, so nothing else would reload playback.
-                if self.mode != .explore { self.rebuildSequence(keepingTime: self.currentTime) }
+                if self.mode != .explore {
+                    self.rebuildSequence(keepingTime: self.currentTime)
+                } else if let clip = self.selectedClip, let source = self.project.source(for: clip), source.id == id,
+                    let media = self.mediaURL(for: source)
+                {
+                    self.loadExploreItem(clip, source: source, url: media, at: self.engine.currentTime, resume: nil)
+                }
             }
         }
     }

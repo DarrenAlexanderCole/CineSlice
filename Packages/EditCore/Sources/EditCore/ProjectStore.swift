@@ -55,19 +55,22 @@ public final class ProjectStore: @unchecked Sendable {
         cacheDirectory(for: projectID).appendingPathComponent("\(track.fileName).waveform")
     }
 
-    /// Where a source's processed sound is kept. It's derived data: clearing the cache removes
-    /// it and it is made again when needed.
-    public func voiceCacheURL(for source: SourceAsset, treatment: VoiceTreatment, projectID: UUID) -> URL {
+    /// Where one half of a source's split sound is kept. It's derived data: clearing the cache
+    /// removes it and it is made again when needed. The name says which separator made it, so
+    /// sound made by an earlier one is made again rather than reused.
+    public func stemCacheURL(for source: SourceAsset, stem: SoundStem, projectID: UUID) -> URL {
         cacheDirectory(for: projectID)
             .appendingPathComponent("Voice", isDirectory: true)
-            .appendingPathComponent("\(source.fileName).\(treatment.rawValue).m4a")
+            .appendingPathComponent("\(source.fileName).\(stem.rawValue).htdemucs.m4a")
     }
 
-    /// The processed sound for a clip, or nil when it plays as recorded or hasn't been made yet.
-    public func voiceAudioURL(for clip: TimelineClip, source: SourceAsset, projectID: UUID) -> URL? {
-        guard let treatment = clip.voice else { return nil }
-        let url = voiceCacheURL(for: source, treatment: treatment, projectID: projectID)
-        return fm.fileExists(atPath: url.path) ? url : nil
+    /// A clip's split sound, or nil when it plays as recorded or the split hasn't been made yet.
+    public func stemURLs(for clip: TimelineClip, source: SourceAsset, projectID: UUID) -> (voice: URL, scene: URL)? {
+        guard clip.balance != nil else { return nil }
+        let voice = stemCacheURL(for: source, stem: .voice, projectID: projectID)
+        let scene = stemCacheURL(for: source, stem: .scene, projectID: projectID)
+        guard fm.fileExists(atPath: voice.path), fm.fileExists(atPath: scene.path) else { return nil }
+        return (voice, scene)
     }
 
     private func fileURL(for projectID: UUID) -> URL {

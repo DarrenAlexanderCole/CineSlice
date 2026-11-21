@@ -245,44 +245,83 @@ final class ProjectStoreTests: XCTestCase {
         XCTAssertEqual(p.exportSettings, .vertical1080)
     }
 
-    func testVoiceTreatmentSavesUndoesAndOlderClipsPlayAsRecorded() throws {
+    func testSoundBalanceSavesUndoesAndOlderClipsKeepTheirChoice() throws {
         var (p, _) = SequenceMapTests().makeProject()
         var undo = UndoStack()
         let id = p.clips[0].id
-        XCTAssertNil(p.clips[0].voice)
-        try undo.perform(SetVoiceTreatmentCommand(clipID: id, treatment: .reduceVoice), on: &p)
-        XCTAssertEqual(undo.undoActionName, "Reduce Voice")
+        XCTAssertNil(p.clips[0].balance)
+        try undo.perform(SetSoundBalanceCommand(clipID: id, balance: .removeVoice), on: &p)
+        XCTAssertEqual(undo.undoActionName, "Voice & Scene Levels")
+        try undo.perform(SetSoundBalanceCommand(clipID: id, balance: SoundBalance(voice: 1.4, scene: 0.3)), on: &p)
+        XCTAssertEqual(p.clips[0].balance, SoundBalance(voice: 1, scene: 0.3), "levels stay in 0…1")
         let reopened = try ProjectStore.decoder.decode(Project.self, from: ProjectStore.encoder.encode(p))
-        XCTAssertEqual(reopened.clips[0].voice, .reduceVoice)
+        XCTAssertEqual(reopened.clips[0].balance, SoundBalance(voice: 1, scene: 0.3))
         // A duplicate carries the same sound.
         try undo.perform(DuplicateClipCommand(clipID: id), on: &p)
-        XCTAssertEqual(p.clips[1].voice, .reduceVoice)
+        XCTAssertEqual(p.clips[1].balance, SoundBalance(voice: 1, scene: 0.3))
         undo.undo(&p)
         undo.undo(&p)
-        XCTAssertNil(p.clips[0].voice)
+        XCTAssertEqual(p.clips[0].balance, .removeVoice)
+        undo.undo(&p)
+        XCTAssertNil(p.clips[0].balance)
 
-        // Files written before this field existed have no "voice" key.
-        let old = try ProjectStore.encoder.encode(p.clips[0])
-        XCTAssertFalse(String(decoding: old, as: UTF8.self).contains("voice"))
-        XCTAssertNil(try ProjectStore.decoder.decode(TimelineClip.self, from: old).voice)
+        // Files written before the field existed have no "balance" key; those from before the
+        // levels have "voice", which becomes the matching levels.
+        let plain = try ProjectStore.encoder.encode(p.clips[0])
+        XCTAssertFalse(String(decoding: plain, as: UTF8.self).contains("balance"))
+        XCTAssertNil(try ProjectStore.decoder.decode(TimelineClip.self, from: plain).balance)
+        func old(_ voice: String) throws -> TimelineClip {
+            var json = try JSONSerialization.jsonObject(with: plain) as! [String: Any]
+            json["voice"] = voice
+            return try ProjectStore.decoder.decode(
+                TimelineClip.self, from: JSONSerialization.data(withJSONObject: json))
+        }
+        XCTAssertEqual(try old("reduceVoice").balance, .removeVoice)
+        XCTAssertEqual(try old("voiceOnly").balance, .voiceOnly)
+        let rewritten = try JSONSerialization.jsonObject(with: ProjectStore.encoder.encode(try old("voiceOnly")))
+        XCTAssertNil((rewritten as? [String: Any])?["voice"], "the old key isn't written back")
     }
 
-    func testVoiceCacheIsClearedWithTheCache() throws {
+    func testStemsAreClearedWithTheCache() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = try ProjectStore(rootURL: root)
         let project = try store.create(name: "Voice")
         let source = SourceAsset(fileName: "a.mov", duration: MediaTime(seconds: 2), width: 1080, height: 1920)
         var clip = TimelineClip(sourceID: source.id, sourceRange: source.defaultClipRange)
-        XCTAssertNil(store.voiceAudioURL(for: clip, source: source, projectID: project.id))
-        clip.voice = .voiceOnly
-        XCTAssertNil(store.voiceAudioURL(for: clip, source: source, projectID: project.id), "not made yet")
-        let url = store.voiceCacheURL(for: source, treatment: .voiceOnly, projectID: project.id)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data([1]).write(to: url)
-        XCTAssertEqual(store.voiceAudioURL(for: clip, source: source, projectID: project.id), url)
+        XCTAssertNil(store.stemURLs(for: clip, source: source, projectID: project.id))
+        clip.balance = .removeVoice
+        XCTAssertNil(store.stemURLs(for: clip, source: source, projectID: project.id), "not made yet")
+        let voice = store.stemCacheURL(for: source, stem: .voice, projectID: project.id)
+        let scene = store.stemCacheURL(for: source, stem: .scene, projectID: project.id)
+        try FileManager.default.createDirectory(at: voice.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1]).write(to: voice)
+        XCTAssertNil(store.stemURLs(for: clip, source: source, projectID: project.id), "needs both halves")
+        try Data([1]).write(to: scene)
+        let urls = try XCTUnwrap(store.stemURLs(for: clip, source: source, projectID: project.id))
+        XCTAssertEqual(urls.voice, voice)
+        XCTAssertEqual(urls.scene, scene)
         try store.clearCache(for: project.id)
-        XCTAssertNil(store.voiceAudioURL(for: clip, source: source, projectID: project.id))
+        XCTAssertNil(store.stemURLs(for: clip, source: source, projectID: project.id))
+    }
+
+    func testClipGainStepsAtTheCuts() throws {
+        var (p, _) = SequenceMapTests().makeProject()
+        try SetClipVolumeCommand(clipID: p.clips[1].id, volume: 0.5).apply(to: &p)
+        let second = p.clips[1].id
+        let cut = SequenceMap(project: p).entries[1].compositionRange.start
+        let next = SequenceMap(project: p).entries[1].compositionRange.end
+        let envelope = p.levelEnvelope(for: .clipAudio) { $0.id == second ? 0.25 : 1 }
+        func at(_ t: MediaTime, left: Bool) -> Float? {
+            let points = envelope.filter { $0.time == t }
+            return left ? points.first?.value : points.last?.value
+        }
+        XCTAssertEqual(at(.zero, left: false), 1)
+        XCTAssertEqual(at(cut, left: true), 1)
+        XCTAssertEqual(at(cut, left: false), 0.125, "its own level times its gain")
+        XCTAssertEqual(at(next, left: true), 0.125, "to the end")
+        // The music ignores clip gains.
+        XCTAssertEqual(p.levelEnvelope(for: .music) { _ in 0 }, p.levelEnvelope(for: .music))
     }
 
     func testNewerSchemaIsRejected() {

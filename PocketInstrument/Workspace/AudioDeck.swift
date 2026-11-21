@@ -1,10 +1,10 @@
 import EditCore
 import SwiftUI
 
-/// Audio state: each clip's own sound, cleaned up on the device. Pick a clip in the row, then
-/// play it as recorded, voice only (background noise taken out), or with the voices reduced (for
-/// someone talking behind the camera). Processing runs once per source in the background and the
-/// clip plays as recorded until it's ready; the choice is one undo step and never touches the
+/// Audio state: each clip's own sound, split on the device. Pick a clip in the row, then play it
+/// as recorded, or split into voices and everything else with a fader for each (voices down for
+/// someone talking behind the camera). Splitting runs once per source in the background and the
+/// clip plays as recorded until it's ready; each change is one undo step and never touches the
 /// footage. Play and loop to audition it in the sequence.
 struct AudioDeck: View {
     var model: WorkspaceModel
@@ -29,9 +29,26 @@ struct AudioDeck: View {
             PanelSection(title: String(format: "Clip %02d sound", number)) {
                 if source.hasAudio {
                     HStack(spacing: 6) {
-                        option("Original", "As recorded", nil, clip)
-                        option("Voice only", "Noise out", .voiceOnly, clip)
-                        option("Reduce voice", "Scene kept", .reduceVoice, clip)
+                        option("Original", "As recorded", isOn: clip.balance == nil, clip) { nil }
+                        option("Split", "Voice & everything else", isOn: clip.balance != nil, clip) {
+                            clip.balance ?? .removeVoice
+                        }
+                    }
+                    if let balance = clip.balance {
+                        HStack(spacing: 14) {
+                            Fader(
+                                title: "VOICE", value: balance.voice,
+                                onChange: { model.applyLevels(balance: SoundBalance(voice: $0, scene: balance.scene)) },
+                                onCommit: { model.setSoundBalance(SoundBalance(voice: $0, scene: balance.scene)) }
+                            )
+                            Fader(
+                                title: "EVERYTHING ELSE", value: balance.scene,
+                                onChange: { model.applyLevels(balance: SoundBalance(voice: balance.voice, scene: $0)) },
+                                onCommit: { model.setSoundBalance(SoundBalance(voice: balance.voice, scene: $0)) }
+                            )
+                        }
+                        .id(clip.id)  // a new clip starts a fresh drag, never inherits another's draft
+                        .padding(.horizontal, 4)
                     }
                     status(clip, source)
                 } else {
@@ -50,11 +67,10 @@ struct AudioDeck: View {
     }
 
     private func option(
-        _ title: String, _ detail: String, _ treatment: VoiceTreatment?, _ clip: TimelineClip
+        _ title: String, _ detail: String, isOn: Bool, _ clip: TimelineClip, balance: @escaping () -> SoundBalance?
     ) -> some View {
-        let isOn = clip.voice == treatment
-        return Button {
-            model.setVoiceTreatment(treatment)
+        Button {
+            model.setSoundBalance(balance())
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -69,21 +85,16 @@ struct AudioDeck: View {
         }
         .buttonStyle(AudioOptionKeyStyle(isOn: isOn))
         .accessibilityLabel(title)
-        .accessibilityHint(hint(treatment))
-    }
-
-    private func hint(_ treatment: VoiceTreatment?) -> String {
-        switch treatment {
-        case nil: return "Plays the clip's sound as recorded."
-        case .voiceOnly: return "Keeps the voices and takes out background noise."
-        case .reduceVoice: return "Turns voices down and keeps the rest of the scene."
-        }
+        .accessibilityHint(
+            title == "Original"
+                ? "Plays the clip's sound as recorded."
+                : "Splits the voices from everything else, each with its own level. Starts with the voices out.")
     }
 
     /// Processing progress, or what the chosen treatment can and can't do.
     @ViewBuilder
     private func status(_ clip: TimelineClip, _ source: SourceAsset) -> some View {
-        if let progress = model.voiceProgress[source.id], clip.voice != nil {
+        if let progress = model.voiceProgress[source.id], clip.balance != nil {
             HStack(spacing: 8) {
                 LED(isOn: true)
                 Text("PROCESSING \(Int(progress * 100))%")
@@ -95,8 +106,8 @@ struct AudioDeck: View {
                     .foregroundStyle(Theme.secondaryLabel)
             }
             .accessibilityElement(children: .combine)
-        } else if clip.voice == .reduceVoice {
-            Text("Voices are lowered, not removed: some may still be heard.")
+        } else if let balance = clip.balance, balance.voice == 0, balance.scene > 0 {
+            Text("Separated on this iPhone: faint traces of voice may remain.")
                 .font(Theme.caption)
                 .foregroundStyle(Theme.secondaryLabel)
         } else {
@@ -107,7 +118,7 @@ struct AudioDeck: View {
     }
 }
 
-/// A compact option key for a row of three: centred, lit when chosen.
+/// A compact option key for a row: centred, lit when chosen.
 private struct AudioOptionKeyStyle: ButtonStyle {
     var isOn: Bool
     @Environment(\.isEnabled) private var isEnabled
@@ -168,7 +179,7 @@ private struct AudioClipPicker: View {
                         .foregroundStyle(isSelected ? Theme.signal : Theme.secondaryLabel)
                     Text(badge(clip, hasAudio: hasAudio))
                         .font(Theme.mono(8, weight: .heavy))
-                        .foregroundStyle(clip.voice != nil ? Theme.signal : Theme.secondaryLabel)
+                        .foregroundStyle(clip.balance != nil ? Theme.signal : Theme.secondaryLabel)
                 }
                 .frame(minWidth: 28, alignment: .leading)
             }
@@ -191,19 +202,18 @@ private struct AudioClipPicker: View {
 
     private func badge(_ clip: TimelineClip, hasAudio: Bool) -> String {
         guard hasAudio else { return "MUTE" }
-        switch clip.voice {
+        switch clip.balance {
         case nil: return "ORIG"
         case .voiceOnly: return "VOX"
-        case .reduceVoice: return "−VOX"
+        case .removeVoice: return "−VOX"
+        default: return "MIX"
         }
     }
 
     private func spoken(_ clip: TimelineClip, hasAudio: Bool) -> String {
         guard hasAudio else { return "No sound" }
-        switch clip.voice {
-        case nil: return "Original"
-        case .voiceOnly: return "Voice only"
-        case .reduceVoice: return "Voice reduced"
-        }
+        guard let balance = clip.balance else { return "Original" }
+        func percent(_ v: Float) -> Int { Int((v * 100).rounded()) }
+        return "Voice \(percent(balance.voice)) percent, everything else \(percent(balance.scene)) percent"
     }
 }
