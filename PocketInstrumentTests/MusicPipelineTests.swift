@@ -244,6 +244,60 @@ final class MusicPipelineTests: XCTestCase {
         XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 10), 0)
     }
 
+    /// The master EQ runs on what's heard: flat it passes the mix through untouched, and cutting
+    /// the lows and highs takes most of a click's energy away, changing as soon as its settings do.
+    func testMasterEQShapesTheMix() async throws {
+        let project = try await makeProject()
+        let musicURL = project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) }
+        func render(_ equalizer: EQSettings?) async throws -> [Float] {
+            let built = try await CompositionBuilder.build(
+                project: project, renderSize: CGSize(width: 1080, height: 1920), frameRate: 30,
+                includeClipAudio: true, includeMusic: true,
+                mediaURL: { self.store.mediaURL(for: $0, projectID: project.id) }, musicURL: musicURL,
+                equalizer: equalizer)
+            let tracks = try await built.composition.loadTracks(withMediaType: .audio)
+            let reader = try AVAssetReader(asset: built.composition)
+            let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
+                AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false,
+                AVNumberOfChannelsKey: 1, AVSampleRateKey: 44_100,
+            ])
+            output.audioMix = built.audioMix
+            reader.add(output)
+            XCTAssertTrue(reader.startReading())
+            var all: [Float] = []
+            while let buffer = output.copyNextSampleBuffer(), let block = CMSampleBufferGetDataBuffer(buffer) {
+                var samples = [Float](repeating: 0, count: CMBlockBufferGetDataLength(block) / 4)
+                samples.withUnsafeMutableBytes {
+                    _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!)
+                }
+                all += samples
+            }
+            return all
+        }
+        func energy(_ x: [Float]) -> Double { x.reduce(0) { $0 + Double($1 * $1) } }
+
+        let plain = try await render(nil)
+        XCTAssertGreaterThan(energy(plain), 0)
+        let flat = try await render(EQSettings(.flat))
+        XCTAssertEqual(flat, plain, "flat changes nothing")
+
+        var cut = MasterEQ.flat
+        cut.lowCut = 300
+        cut.lowGain = -12
+        cut.midGain = -12
+        cut.midFrequency = 1_500
+        cut.midWidth = 3
+        cut.highGain = -12
+        let shaped = try await render(EQSettings(cut))
+        XCTAssertEqual(shaped.count, plain.count)
+        XCTAssertLessThan(energy(shaped), energy(plain) * 0.5)
+
+        cut.isOn = false
+        let off = try await render(EQSettings(cut))
+        XCTAssertEqual(off, plain, "off plays the mix as it is")
+    }
+
     /// Preview and export share one mix, and it plays the project's level envelopes.
     func testMixFollowsRecordedCurves() async throws {
         var project = try await makeProject()

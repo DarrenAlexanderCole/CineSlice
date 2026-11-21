@@ -61,6 +61,8 @@ final class WorkspaceModel {
     private(set) var isRebuilding = false
 
     let engine = PlaybackEngine()
+    /// The master EQ the player hears: the project's, or a knob's while it's being turned.
+    let equalizer = EQSettings()
     let store: ProjectStore
 
     @ObservationIgnored private var undoStack = UndoStack()
@@ -79,6 +81,7 @@ final class WorkspaceModel {
         self.project = project
         self.store = store
         self.selectedClipID = project.clips.first?.id
+        equalizer.set(project.masterEQ)
     }
 
     // MARK: Derived
@@ -163,6 +166,7 @@ final class WorkspaceModel {
         scheduleSave()
         extendGuideIfNeeded()
         makeMissingVoiceAudio()
+        equalizer.set(project.masterEQ)
         if selectedClip == nil { isCropping = false }
         if mode != .explore, Self.playbackShape(previewed(previous)) == Self.playbackShape(previewed(project)) {
             // Levels or loop only: adjust the live item instead of reloading it, so playback doesn't stutter.
@@ -189,6 +193,7 @@ final class WorkspaceModel {
         shape.loop = nil
         shape.exportSettings.soundPolicy = nil  // preview always plays the full mix; the policy is export-only
         shape.exportSettings.cutsToFeed = false  // preview shows the whole frame, with the feed's cut marked
+        shape.masterEQ = .flat  // heard through `equalizer`, which follows it without a reload
         return shape
     }
 
@@ -254,7 +259,8 @@ final class WorkspaceModel {
                             ? nil : store.mediaURL(for: $0, projectID: snapshot.id)
                     },
                     musicURL: snapshot.referenceAudio.flatMap { store.audioURL(for: $0, projectID: snapshot.id) },
-                    clipStems: { store.stemURLs(for: $0, source: $1, projectID: snapshot.id) })
+                    clipStems: { store.stemURLs(for: $0, source: $1, projectID: snapshot.id) },
+                    equalizer: self.equalizer)
                 guard !Task.isCancelled, self.mode != .explore else { return }
                 let item = AVPlayerItem(asset: built.composition)
                 item.videoComposition = built.videoComposition
@@ -289,13 +295,27 @@ final class WorkspaceModel {
     /// for live fader previews, as `balance` does the selected clip's voice and scene levels. A
     /// fader being recorded is always heard as it is.
     func applyLevels(clip: Float? = nil, music: Float? = nil, balance: SoundBalance? = nil) {
+        equalizer.set(project.masterEQ)
         guard mode != .explore, let item = engine.player.currentItem else { return }
         item.audioMix = CompositionBuilder.audioMix(
             project: mixProject, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
             voiceTrackID: loadedTrackIDs.voice, separated: loadedTrackIDs.separated,
             clipLevel: clip.flatMap { level in selectedClipID.map { (id: $0, volume: level) } }, musicLevel: music,
             balance: balance.flatMap { b in selectedClipID.map { (id: $0, balance: b) } },
-            writing: recording.map { ($0.target, recordLevel) })
+            writing: recording.map { ($0.target, recordLevel) },
+            equalizer: equalizer)
+    }
+
+    /// Plays the master EQ at `eq` while a knob is turned, without an undo step.
+    func previewEQ(_ eq: MasterEQ) { equalizer.set(eq) }
+
+    /// Sets the master EQ, as one undo step.
+    func setMasterEQ(_ eq: MasterEQ) {
+        guard eq != project.masterEQ else {
+            equalizer.set(eq)
+            return
+        }
+        perform(SetMasterEQCommand(eq: eq))
     }
 
     // MARK: Selection & modes

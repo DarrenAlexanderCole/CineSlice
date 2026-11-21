@@ -276,6 +276,30 @@ final class WorkspaceTourTests: XCTestCase {
         shot("Audio, silent clips")
     }
 
+    /// The Audio state's EQ page: a knob turns its band and the change is one undo step.
+    func testMasterEQKnobsTurn() {
+        XCTAssertTrue(button("New").waitForExistence(timeout: 10))
+        button("New").tap()
+        button("Demo clips").tap()
+        XCTAssertTrue(button("Audio").waitForExistence(timeout: 60), "demo clips never arrived")
+        button("Audio").tap()
+        button("Master EQ").tap()
+        let high = app.otherElements["HIGH"]
+        XCTAssertTrue(high.waitForExistence(timeout: 5))
+        XCTAssertEqual(high.value as? String, "0 dB")
+        func turn(_ knob: XCUIElement, up: Bool) {
+            let centre = knob.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            centre.press(forDuration: 0.05, thenDragTo: centre.withOffset(CGVector(dx: 0, dy: up ? -40 : 40)))
+        }
+        turn(high, up: true)
+        XCTAssertTrue((high.value as? String)?.hasPrefix("+") == true, "\(String(describing: high.value))")
+        let mid = app.otherElements["MID GAIN"]
+        turn(mid, up: false)
+        XCTAssertTrue((mid.value as? String)?.hasPrefix("-") == true, "\(String(describing: mid.value))")
+        sleep(1)
+        shot("Audio, master EQ")
+    }
+
     func testClipStripScrollsAndReordersLongSequence() {
         button("New").tap()
         button("Demo clips").tap()

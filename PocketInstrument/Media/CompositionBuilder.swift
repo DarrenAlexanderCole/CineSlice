@@ -49,7 +49,8 @@ enum CompositionBuilder {
         includeMusic: Bool,
         mediaURL: (SourceAsset) -> URL?,
         musicURL: URL?,
-        clipStems: (TimelineClip, SourceAsset) -> (voice: URL, scene: URL)? = { _, _ in nil }
+        clipStems: (TimelineClip, SourceAsset) -> (voice: URL, scene: URL)? = { _, _ in nil },
+        equalizer: EQSettings? = nil
     ) async throws -> BuiltComposition {
         guard !project.clips.isEmpty else { throw CompositionError.empty }
 
@@ -188,7 +189,7 @@ enum CompositionBuilder {
             composition: composition, videoComposition: videoComposition,
             audioMix: audioMix(
                 project: project, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID,
-                voiceTrackID: voiceTrackID, separated: separated),
+                voiceTrackID: voiceTrackID, separated: separated, equalizer: equalizer),
             duration: cursor, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID,
             voiceTrackID: voiceTrackID, separatedClipIDs: separated)
     }
@@ -225,12 +226,15 @@ enum CompositionBuilder {
     /// Split clips (`separated`) play their scene on the clip audio track and their voices on
     /// `voiceTrackID`, each scaled by the clip's level for it; clips set to split whose split isn't
     /// made yet are silent. `balance` replaces one clip's levels for a live fader preview.
+    ///
+    /// `equalizer` runs the master EQ on every track, reading its settings as it plays.
     static func audioMix(
         project: Project, clipAudioTrackID: CMPersistentTrackID?, musicTrackID: CMPersistentTrackID?,
         voiceTrackID: CMPersistentTrackID? = nil, separated: Set<UUID> = [],
         clipLevel: (id: UUID, volume: Float)? = nil, musicLevel: Float? = nil,
         balance: (id: UUID, balance: SoundBalance)? = nil,
-        writing: (target: AutomationTarget, level: Float)? = nil
+        writing: (target: AutomationTarget, level: Float)? = nil,
+        equalizer: EQSettings? = nil
     ) -> AVAudioMix? {
         var mixed = project
         if let clipLevel, let i = mixed.index(ofClip: clipLevel.id) { mixed.clips[i].volume = clipLevel.volume }
@@ -253,6 +257,7 @@ enum CompositionBuilder {
             guard let trackID else { return nil }
             let p = AVMutableAudioMixInputParameters()
             p.trackID = trackID
+            if let equalizer { p.audioTapProcessor = MasterEQTap.make(equalizer) }
             if let writing, writing.target == target {
                 if let gain {
                     for entry in SequenceMap(project: mixed).entries {

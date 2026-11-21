@@ -1,25 +1,52 @@
 import EditCore
 import SwiftUI
 
-/// Audio state: each clip's own sound, split on the device. Pick a clip in the row, then play it
-/// as recorded, or split into voices and everything else with a fader for each (voices down for
-/// someone talking behind the camera). Splitting runs once per source in the background and the
-/// clip is silent until it's ready; each change is one undo step and never touches the
-/// footage. Play and loop to audition it in the sequence.
+/// Audio state, in two pages. SPLIT works on each clip's own sound, split on the device: pick a
+/// clip in the row, then play it as recorded, or split into voices and everything else with a
+/// fader for each (voices down for someone talking behind the camera). Splitting runs once per
+/// source in the background and the clip is silent until it's ready. EQ shapes the whole mix
+/// (`MasterEQPanel`). Each change is one undo step and never touches the footage. Play and loop
+/// to audition it in the sequence.
 struct AudioDeck: View {
     var model: WorkspaceModel
 
+    enum Page { case split, eq }
+    @State private var page = Page.split
+
     var body: some View {
         VStack(spacing: 10) {
-            AudioClipPicker(model: model)
+            HStack(spacing: 6) {
+                pageKey(.split, "SPLIT", "Take sound out of a clip")
+                pageKey(.eq, "EQ", "Shape the whole mix")
+            }
+            if page == .split { AudioClipPicker(model: model) }
             SequenceLane(model: model)
-            treatmentPanel
+            if page == .split { treatmentPanel } else { MasterEQPanel(model: model) }
             TransportRow(model: model, compact: true) {
                 EmptyView()
             } trailing: {
                 LoopButton(model: model)
             }
         }
+    }
+
+    private func pageKey(_ which: Page, _ title: String, _ detail: String) -> some View {
+        Button {
+            page = which
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(page == which ? Theme.signal : Theme.label)
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.secondaryLabel)
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        }
+        .buttonStyle(AudioOptionKeyStyle(isOn: page == which))
+        .accessibilityLabel(title == "EQ" ? "Master EQ" : "Split")
     }
 
     @ViewBuilder

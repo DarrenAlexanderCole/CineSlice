@@ -11,8 +11,11 @@
 		1D71D7B57361209E3EF06134 /* TigerStep.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = BFE6E096ADE5D307BAB58C60 /* TigerStep.mlpackage */; };
 		1FE55A59329B9D6B636FB00C /* PlaybackEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */; };
 		22AE35DC3C163BB7F434BA86 /* TigerBack.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 51CFC24872A6D1E97A3CE09D /* TigerBack.mlpackage */; };
+		28F1607F7F472E2A970579A7 /* Knob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9225AD893DC2E03BDB310CF1 /* Knob.swift */; };
 		2A72F952C5B8947F6E4B9B24 /* MediaImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52E32BB34441D429E1B49272 /* MediaImporter.swift */; };
+		3FA3191E45FE0DE41E971CE6 /* MasterEQPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 775929E92ABBA2BEB1BC1599 /* MasterEQPanel.swift */; };
 		427005A74781C23E00CC7BEF /* RhythmGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */; };
+		43B2FE3EDF62D5F271CF5090 /* MasterEQTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34D20784FF42C95346D10BD0 /* MasterEQTap.swift */; };
 		46B518839A7A4B1DCDC972B6 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */; };
 		4DE251C57513F0C5A47BCA57 /* CompositionBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF21A29882624124DD5AC043 /* CompositionBuilder.swift */; };
 		535E9AD80E6A0EC919AA0CCA /* TigerStepFirst.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */; };
@@ -74,6 +77,7 @@
 		21D8DA783D9BCFAC63BA389C /* PocketInstrumentUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
 		2599198CE9D4302B2AECE3FD /* SequenceLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceLane.swift; sourceTree = "<group>"; };
+		34D20784FF42C95346D10BD0 /* MasterEQTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterEQTap.swift; sourceTree = "<group>"; };
 		37A3717594FF3F9958CF2E4D /* MusicSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicSources.swift; sourceTree = "<group>"; };
 		48E6F5D7028543BECDE616A1 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		51CFC24872A6D1E97A3CE09D /* TigerBack.mlpackage */ = {isa = PBXFileReference; path = TigerBack.mlpackage; sourceTree = "<group>"; };
@@ -83,12 +87,14 @@
 		63F6E64CBA156AFCC78BDDA6 /* ArrangeDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArrangeDeck.swift; sourceTree = "<group>"; };
 		651AE1474F00FFA80A0637CC /* VoiceSeparator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSeparator.swift; sourceTree = "<group>"; };
 		7743A7E0A879B3DFFC5F64FB /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		775929E92ABBA2BEB1BC1599 /* MasterEQPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterEQPanel.swift; sourceTree = "<group>"; };
 		7CD2F88F2097660E608C9055 /* WorkspaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceModel.swift; sourceTree = "<group>"; };
 		8015626D0D83837F0166B600 /* Fader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fader.swift; sourceTree = "<group>"; };
 		89E08EC4889646EA88576B37 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		8D2D6B1E8FD79E15B152394E /* MusicPipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicPipelineTests.swift; sourceTree = "<group>"; };
 		8D3BD010507DB5CBA8581C6A /* WaveformAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformAnalyzer.swift; sourceTree = "<group>"; };
 		8E6B70F463559A3468CDEE1E /* EditCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = EditCore; path = Packages/EditCore; sourceTree = SOURCE_ROOT; };
+		9225AD893DC2E03BDB310CF1 /* Knob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Knob.swift; sourceTree = "<group>"; };
 		95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */ = {isa = PBXFileReference; path = TigerStepFirst.mlpackage; sourceTree = "<group>"; };
 		98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreDeck.swift; sourceTree = "<group>"; };
 		AF21A29882624124DD5AC043 /* CompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionBuilder.swift; sourceTree = "<group>"; };
@@ -122,6 +128,7 @@
 				AF21A29882624124DD5AC043 /* CompositionBuilder.swift */,
 				0EA6B02B6AFBAA3969D56E58 /* DemoMediaGenerator.swift */,
 				F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */,
+				34D20784FF42C95346D10BD0 /* MasterEQTap.swift */,
 				52E32BB34441D429E1B49272 /* MediaImporter.swift */,
 				547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */,
 				EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */,
@@ -152,6 +159,7 @@
 				038E3C0A33C5DD257FEF8DEA /* AudioDeck.swift */,
 				98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */,
 				14C7FB958DDC81A57CE3883A /* ExportSheet.swift */,
+				775929E92ABBA2BEB1BC1599 /* MasterEQPanel.swift */,
 				00DF8AE6F304D0E552467BBF /* MixDeck.swift */,
 				37A3717594FF3F9958CF2E4D /* MusicSources.swift */,
 				7743A7E0A879B3DFFC5F64FB /* PlayerView.swift */,
@@ -183,6 +191,7 @@
 			children = (
 				48E6F5D7028543BECDE616A1 /* Components.swift */,
 				8015626D0D83837F0166B600 /* Fader.swift */,
+				9225AD893DC2E03BDB310CF1 /* Knob.swift */,
 				0CE8CE8ECB7F6B0E87452B91 /* Theme.swift */,
 			);
 			path = Design;
@@ -395,7 +404,10 @@
 				CF5BB531EC77106A70E817FF /* ExportService.swift in Sources */,
 				6A64129068E57B9FF8A29FC4 /* ExportSheet.swift in Sources */,
 				DE1BA5383C706993E73E2F1E /* Fader.swift in Sources */,
+				28F1607F7F472E2A970579A7 /* Knob.swift in Sources */,
 				DAC2166A9E5E40909E01B190 /* LibraryView.swift in Sources */,
+				3FA3191E45FE0DE41E971CE6 /* MasterEQPanel.swift in Sources */,
+				43B2FE3EDF62D5F271CF5090 /* MasterEQTap.swift in Sources */,
 				2A72F952C5B8947F6E4B9B24 /* MediaImporter.swift in Sources */,
 				ABB5BAC565BB1FCD6EC0B081 /* MixDeck.swift in Sources */,
 				8E02F1B29679A4F741F5B911 /* MusicSources.swift in Sources */,

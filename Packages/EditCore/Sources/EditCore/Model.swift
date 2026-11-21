@@ -408,6 +408,8 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     public var automation: Automation
     public var loop: LoopRange?
     public var exportSettings: ExportSettings
+    /// The EQ on the whole mix.
+    public var masterEQ: MasterEQ
 
     public init(id: UUID = UUID(), name: String, createdAt: Date = Date()) {
         self.schemaVersion = Project.currentSchemaVersion
@@ -421,12 +423,13 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         self.automation = Automation()
         self.loop = nil
         self.exportSettings = .vertical1080
+        self.masterEQ = .flat
     }
 
     // Tolerant decoding: new optional fields can be added without breaking old files.
     enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, createdAt, modifiedAt, sources, clips
-        case referenceAudio, automation, loop, exportSettings
+        case referenceAudio, automation, loop, exportSettings, masterEQ
     }
 
     /// Keys older files wrote that are no longer stored.
@@ -455,6 +458,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         automation = try c.decodeIfPresent(Automation.self, forKey: .automation) ?? Automation()
         loop = try c.decodeIfPresent(LoopRange.self, forKey: .loop)
         exportSettings = try c.decodeIfPresent(ExportSettings.self, forKey: .exportSettings) ?? .vertical1080
+        masterEQ = try c.decodeIfPresent(MasterEQ.self, forKey: .masterEQ) ?? .flat
         // Phase 3 builds kept the clip curve project-wide in composition time; hand it to the clips.
         if let old = try c.decodeIfPresent(LegacyAutomation.self, forKey: .automation)?.clipAudio {
             for pass in old.segments { writeClipLevel(pass) }

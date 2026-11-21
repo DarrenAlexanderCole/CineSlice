@@ -164,6 +164,18 @@ public struct SetSoundBalanceCommand: EditingCommand {
 
 private func clamp01(_ v: Float) -> Float { min(max(v, 0), 1) }
 
+public struct SetMasterEQCommand: EditingCommand {
+    public let eq: MasterEQ
+    /// Clamps each setting to its range.
+    public init(eq: MasterEQ) {
+        self.eq = MasterEQ(
+            isOn: eq.isOn, lowCut: eq.lowCut, lowGain: eq.lowGain, midFrequency: eq.midFrequency,
+            midGain: eq.midGain, midWidth: eq.midWidth, highGain: eq.highGain)
+    }
+    public var actionName: String { "Master EQ" }
+    public func apply(to project: inout Project) throws { project.masterEQ = eq }
+}
+
 public struct RenameProjectCommand: EditingCommand {
     public let name: String
     public init(name: String) { self.name = name }
