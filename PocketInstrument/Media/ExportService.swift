@@ -56,7 +56,7 @@ enum ExportService {
             },
             musicURL: project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) },
             clipStems: { store.stemURLs(for: $0, source: $1, projectID: project.id) },
-            equalizer: project.masterEQ.isActive ? EQSettings(project.masterEQ) : nil)
+            equalizer: project.masterEQ.isActive ? MasterEQTaps(EQSettings(project.masterEQ)) : nil)
 
         guard
             let session = AVAssetExportSession(

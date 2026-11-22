@@ -202,11 +202,26 @@ struct GlassChip<Content: View>: View {
 /// Small LED dot that lights in Signal.
 struct LED: View {
     var isOn: Bool
+    /// Blinks while lit, to show work going on (e.g. a split being made), even while its
+    /// percentage holds still.
+    var blinks = false
+
     var body: some View {
+        if isOn && blinks {
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                lamp(lit: Int(context.date.timeIntervalSinceReferenceDate * 2) % 2 == 0)
+                    .animation(.easeInOut(duration: 0.2), value: Int(context.date.timeIntervalSinceReferenceDate * 2))
+            }
+        } else {
+            lamp(lit: isOn)
+        }
+    }
+
+    private func lamp(lit: Bool) -> some View {
         Circle()
-            .fill(isOn ? Theme.signal : Theme.instrument)
+            .fill(lit ? Theme.signal : Theme.instrument)
             .frame(width: 6, height: 6)
-            .shadow(color: isOn ? Theme.signal.opacity(0.9) : .clear, radius: 4)
+            .shadow(color: lit ? Theme.signal.opacity(0.9) : .clear, radius: 4)
             .accessibilityHidden(true)
     }
 }

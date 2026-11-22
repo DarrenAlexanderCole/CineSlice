@@ -655,8 +655,14 @@ struct StateSwitcher: View {
                 Button {
                     model.setMode(mode)
                 } label: {
-                    Text(mode.title).font(Theme.mono(10, weight: .bold)).frame(maxWidth: .infinity)
+                    HStack(spacing: 4) {
+                        // A split being made carries on whatever state is showing: say so here too.
+                        if mode == .audio, model.isProcessingVoice { LED(isOn: true, blinks: true) }
+                        Text(mode.title).font(Theme.mono(10, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity)
                 }
+                .accessibilityValue(mode == .audio && model.isProcessingVoice ? "Processing sound" : "")
                 .buttonStyle(.instrument(.dark, active: isCurrent, height: 28))
                 .disabled(mode == .explore && model.selectedClip == nil)
                 .accessibilityAddTraits(isCurrent ? .isSelected : [])

@@ -50,7 +50,7 @@ enum CompositionBuilder {
         mediaURL: (SourceAsset) -> URL?,
         musicURL: URL?,
         clipStems: (TimelineClip, SourceAsset) -> (voice: URL, scene: URL)? = { _, _ in nil },
-        equalizer: EQSettings? = nil
+        equalizer: MasterEQTaps? = nil
     ) async throws -> BuiltComposition {
         guard !project.clips.isEmpty else { throw CompositionError.empty }
 
@@ -227,14 +227,15 @@ enum CompositionBuilder {
     /// `voiceTrackID`, each scaled by the clip's level for it; clips set to split whose split isn't
     /// made yet are silent. `balance` replaces one clip's levels for a live fader preview.
     ///
-    /// `equalizer` runs the master EQ on every track, reading its settings as it plays.
+    /// `equalizer` runs the master EQ on every track, reading its settings as it plays; pass the same
+    /// one each time an item's mix is replaced, so its taps carry over.
     static func audioMix(
         project: Project, clipAudioTrackID: CMPersistentTrackID?, musicTrackID: CMPersistentTrackID?,
         voiceTrackID: CMPersistentTrackID? = nil, separated: Set<UUID> = [],
         clipLevel: (id: UUID, volume: Float)? = nil, musicLevel: Float? = nil,
         balance: (id: UUID, balance: SoundBalance)? = nil,
         writing: (target: AutomationTarget, level: Float)? = nil,
-        equalizer: EQSettings? = nil
+        equalizer: MasterEQTaps? = nil
     ) -> AVAudioMix? {
         var mixed = project
         if let clipLevel, let i = mixed.index(ofClip: clipLevel.id) { mixed.clips[i].volume = clipLevel.volume }
@@ -257,7 +258,7 @@ enum CompositionBuilder {
             guard let trackID else { return nil }
             let p = AVMutableAudioMixInputParameters()
             p.trackID = trackID
-            if let equalizer { p.audioTapProcessor = MasterEQTap.make(equalizer) }
+            p.audioTapProcessor = equalizer?.tap(for: trackID)
             if let writing, writing.target == target {
                 if let gain {
                     for entry in SequenceMap(project: mixed).entries {

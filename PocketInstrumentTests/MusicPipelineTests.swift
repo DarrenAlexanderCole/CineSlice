@@ -254,7 +254,7 @@ final class MusicPipelineTests: XCTestCase {
                 project: project, renderSize: CGSize(width: 1080, height: 1920), frameRate: 30,
                 includeClipAudio: true, includeMusic: true,
                 mediaURL: { self.store.mediaURL(for: $0, projectID: project.id) }, musicURL: musicURL,
-                equalizer: equalizer)
+                equalizer: equalizer.map(MasterEQTaps.init))
             let tracks = try await built.composition.loadTracks(withMediaType: .audio)
             let reader = try AVAssetReader(asset: built.composition)
             let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [
@@ -416,6 +416,47 @@ final class MusicPipelineTests: XCTestCase {
         model.faderSet(.music, to: 0.2)
         XCTAssertEqual(model.undoName, "Music Level")
         XCTAssertEqual(model.project.referenceAudio?.volume, 0.2)
+    }
+
+    /// Riding a fader while writing automation, and turning EQ knobs, replace the playing item's
+    /// levels many times a second; playback must carry on through it (fresh EQ taps on every
+    /// change used to stall it completely).
+    func testPlaybackKeepsGoingWhileRidingFadersAndTurningTheEQ() async throws {
+        let project = try await makeProject()
+        let model = WorkspaceModel(project: project, store: store)
+        model.open()
+        defer { model.close() }
+        model.setMode(.mix)
+        for _ in 0..<100 where model.engine.duration == .zero {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        model.scrub(to: .zero, precise: true)
+        model.isWriting = true
+        model.engine.play()
+        for _ in 0..<50 where model.currentTime.seconds < 0.1 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        func played(_ ride: (Int) -> Void) async throws -> Double {
+            let start = model.currentTime.seconds
+            for n in 0..<45 {
+                ride(n)
+                try await Task.sleep(nanoseconds: 33_000_000)
+            }
+            return model.currentTime.seconds - start
+        }
+        let writing = try await played { n in model.faderMoved(.clipAudio, to: 0.5 + Float(n % 10) / 40) }
+        XCTAssertTrue(model.faderReleased(.clipAudio, at: 0.6))
+        let undoName = model.undoName
+        var eq = MasterEQ.flat
+        let turning = try await played { n in
+            eq.midGain = Double(n % 13) - 6  // through 0 dB, where the band drops out
+            n % 5 == 4 ? model.setMasterEQ(eq) : model.previewEQ(eq)
+        }
+        try skipUnlessInForeground()
+        XCTAssertEqual(undoName, "Record Clip Level")
+        XCTAssertGreaterThan(writing, 1.0, "playback stalled while writing automation")
+        XCTAssertGreaterThan(turning, 1.0, "playback stalled while turning the EQ")
     }
 
     /// iOS pauses video playback while the phone is locked, so playback can't be judged then.

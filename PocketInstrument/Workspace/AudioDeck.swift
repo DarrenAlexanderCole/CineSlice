@@ -123,7 +123,7 @@ struct AudioDeck: View {
     private func status(_ clip: TimelineClip, _ source: SourceAsset) -> some View {
         if let progress = model.voiceProgress[source.id], clip.balance != nil {
             HStack(spacing: 8) {
-                LED(isOn: true)
+                LED(isOn: true, blinks: true)
                 Text("PROCESSING \(Int(progress * 100))%")
                     .font(Theme.mono(11, weight: .bold))
                     .foregroundStyle(Theme.signal)

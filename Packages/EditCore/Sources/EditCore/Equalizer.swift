@@ -59,6 +59,42 @@ public struct MasterEQ: Codable, Hashable, Sendable {
         return filters
     }
 
+    /// The four bands' filters in their fixed order (low cut, low shelf, mid, high shelf), each
+    /// one that does nothing (or all of them, when off) passing the sound through untouched. For
+    /// the audio thread: the same slots always hold the same band, so a band can glide in and out.
+    public func bands(sampleRate: Double) -> Bands {
+        guard isOn else { return Bands() }
+        var bands = Bands()
+        if lowCut > Self.lowCutRange.lowerBound { bands.lowCut = .highPass(lowCut, sampleRate: sampleRate) }
+        if lowGain != 0 { bands.low = .lowShelf(Self.lowShelfFrequency, gain: lowGain, sampleRate: sampleRate) }
+        if midGain != 0 { bands.mid = .peak(midFrequency, gain: midGain, octaves: midWidth, sampleRate: sampleRate) }
+        if highGain != 0 { bands.high = .highShelf(Self.highShelfFrequency, gain: highGain, sampleRate: sampleRate) }
+        return bands
+    }
+
+    /// The four bands' filters, without an array, so the audio thread never allocates.
+    public struct Bands: Hashable, Sendable {
+        public var lowCut = Biquad.identity
+        public var low = Biquad.identity
+        public var mid = Biquad.identity
+        public var high = Biquad.identity
+
+        public init() {}
+
+        public static let count = 4
+
+        public subscript(index: Int) -> Biquad {
+            switch index {
+            case 0: lowCut
+            case 1: low
+            case 2: mid
+            default: high
+            }
+        }
+
+        public var isIdentity: Bool { self == Bands() }
+    }
+
     /// How much louder or quieter (dB) it makes `frequency`, for drawing its curve.
     public func response(at frequency: Double, sampleRate: Double = 44_100) -> Double {
         filters(sampleRate: sampleRate).reduce(0) { $0 + $1.response(at: frequency, sampleRate: sampleRate) }
@@ -76,6 +112,21 @@ public struct Biquad: Hashable, Sendable {
         self.b2 = b2 / a0
         self.a1 = a1 / a0
         self.a2 = a2 / a0
+    }
+
+    /// Passes the sound through untouched.
+    public static let identity = Biquad(b0: 1, b1: 0, b2: 0, a0: 1, a1: 0, a2: 0)
+
+    /// Partway (`t`, 0…1) from `self` to `other`, coefficient by coefficient.
+    @inline(__always)
+    public func mixed(with other: Biquad, _ t: Double) -> Biquad {
+        var q = self
+        q.b0 += (other.b0 - b0) * t
+        q.b1 += (other.b1 - b1) * t
+        q.b2 += (other.b2 - b2) * t
+        q.a1 += (other.a1 - a1) * t
+        q.a2 += (other.a2 - a2) * t
+        return q
     }
 
     /// A 12 dB/octave cut below `frequency`.

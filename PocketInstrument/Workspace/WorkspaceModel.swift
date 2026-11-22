@@ -63,6 +63,8 @@ final class WorkspaceModel {
     let engine = PlaybackEngine()
     /// The master EQ the player hears: the project's, or a knob's while it's being turned.
     let equalizer = EQSettings()
+    /// The master EQ's taps on the loaded item, kept for every later change to its levels.
+    @ObservationIgnored private var equalizerTaps: MasterEQTaps?
     let store: ProjectStore
 
     @ObservationIgnored private var undoStack = UndoStack()
@@ -238,6 +240,7 @@ final class WorkspaceModel {
         rebuildTask?.cancel()
         let snapshot = previewed(project)
         let store = self.store
+        let taps = MasterEQTaps(equalizer)
         isRebuilding = true
         rebuildTask = Task { [weak self] in
             guard let self else { return }
@@ -260,11 +263,12 @@ final class WorkspaceModel {
                     },
                     musicURL: snapshot.referenceAudio.flatMap { store.audioURL(for: $0, projectID: snapshot.id) },
                     clipStems: { store.stemURLs(for: $0, source: $1, projectID: snapshot.id) },
-                    equalizer: self.equalizer)
+                    equalizer: taps)
                 guard !Task.isCancelled, self.mode != .explore else { return }
                 let item = AVPlayerItem(asset: built.composition)
                 item.videoComposition = built.videoComposition
                 item.audioMix = built.audioMix
+                self.equalizerTaps = taps
                 self.loadedTrackIDs = (
                     built.clipAudioTrackID, built.musicTrackID, built.voiceTrackID, built.separatedClipIDs
                 )
@@ -303,7 +307,7 @@ final class WorkspaceModel {
             clipLevel: clip.flatMap { level in selectedClipID.map { (id: $0, volume: level) } }, musicLevel: music,
             balance: balance.flatMap { b in selectedClipID.map { (id: $0, balance: b) } },
             writing: recording.map { ($0.target, recordLevel) },
-            equalizer: equalizer)
+            equalizer: equalizerTaps)
     }
 
     /// Plays the master EQ at `eq` while a knob is turned, without an undo step.
