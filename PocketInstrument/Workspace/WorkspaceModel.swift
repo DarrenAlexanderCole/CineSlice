@@ -193,8 +193,11 @@ final class WorkspaceModel {
         shape.referenceAudio?.volume = 1
         shape.automation = Automation()
         shape.loop = nil
-        shape.exportSettings.soundPolicy = nil  // preview always plays the full mix; the policy is export-only
-        shape.exportSettings.cutsToFeed = false  // preview shows the whole frame, with the feed's cut marked
+        // Only the frame and its rate reach the preview. It always plays the full mix (the sound
+        // policy is export-only), shows the whole frame with the feed's cut marked, and plays the
+        // 1080 sequence frame whatever the file's resolution, codec and bitrates.
+        let frame = shape.exportSettings
+        shape.exportSettings = ExportSettings(width: frame.width, height: frame.height, frameRate: frame.frameRate)
         shape.masterEQ = .flat  // heard through `equalizer`, which follows it without a reload
         return shape
     }
@@ -377,7 +380,8 @@ final class WorkspaceModel {
     private func loadExploreItem(_ clip: TimelineClip, source: SourceAsset, url: URL, at time: CMTime, resume: Bool?) {
         let stems = store.stemURLs(for: clip, source: source, projectID: project.id)
         guard stems != nil || clip.balance != nil else {
-            engine.load(AVPlayerItem(asset: AVURLAsset(url: url)), duration: source.duration.cmTime, at: time, resume: resume)
+            engine.load(
+                AVPlayerItem(asset: AVURLAsset(url: url)), duration: source.duration.cmTime, at: time, resume: resume)
             updateLoopRange()
             return
         }
@@ -507,6 +511,10 @@ final class WorkspaceModel {
     func setFeedCut(_ on: Bool) {
         var settings = project.exportSettings
         settings.cutsToFeed = on
+        perform(SetExportSettingsCommand(settings: settings))
+    }
+    /// Resolution, codec, bitrates, frame rate or a preset: one undo step each.
+    func setExportSettings(_ settings: ExportSettings) {
         perform(SetExportSettingsCommand(settings: settings))
     }
     func setSoundPolicy(_ policy: SoundPolicy) {

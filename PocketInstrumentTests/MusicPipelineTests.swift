@@ -766,6 +766,39 @@ final class MusicPipelineTests: XCTestCase {
         }
     }
 
+    /// The manual export settings reach the file: codec, size, frame rate and both bitrates.
+    func testExportFollowsResolutionCodecFrameRateAndBitrates() async throws {
+        var project = try await makeProject()
+        var settings = project.exportSettings
+        settings.soundPolicy = .clipsAndMusic
+        settings.resolution = 1440
+        settings.frameRate = 60
+        settings.codec = .hevc
+        settings.videoBitrate = 2_000_000
+        settings.audioBitrate = 128_000
+        settings.keyframeInterval = 1
+        try SetExportSettingsCommand(settings: settings).apply(to: &project)
+        project.masterEQ.lowGain = 6  // the EQ tap runs through the reader's mix too
+
+        let low = try await ExportService.export(project: project, store: store) { _ in }
+        let asset = AVURLAsset(url: low.videoURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let video = try XCTUnwrap(videoTracks.first)
+        let (size, fps, rate, formats) = try await video.load(
+            .naturalSize, .nominalFrameRate, .estimatedDataRate, .formatDescriptions)
+        XCTAssertEqual(size, CGSize(width: 1440, height: 2560))
+        XCTAssertEqual(fps, 60, accuracy: 0.5)
+        XCTAssertEqual(formats.first.map(CMFormatDescriptionGetMediaSubType), kCMVideoCodecType_HEVC)
+        // A bitrate is a ceiling: simple pictures (like these test cards) use less.
+        XCTAssertLessThan(rate, 3_000_000, "asked for 2 Mbps, auto would be \(settings.autoVideoBitrate)")
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        let audio = try XCTUnwrap(audioTracks.first)
+        let audioRate = try await audio.load(.estimatedDataRate)
+        XCTAssertLessThan(audioRate, 140_000, "asked for 128 kbps")
+        let duration = try await asset.load(.duration)
+        XCTAssertEqual(duration.seconds, 13, accuracy: 0.05)
+    }
+
     /// The feed cut keeps the centre 4:5 of the 9:16 frame. The still has red bands at its top and
     /// bottom, inside the part the feed drops, so the cut file's edges are green.
     func testFeedExportIsTheCentreFourByFive() async throws {

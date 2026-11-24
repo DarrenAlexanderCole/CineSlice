@@ -2,6 +2,8 @@ import AVFoundation
 import EditCore
 import Photos
 import UIKit
+import VideoToolbox
+import os
 
 enum ExportError: LocalizedError {
     case cannotCreateSession
@@ -33,9 +35,10 @@ struct ExportResult: Equatable {
 }
 
 /// Renders the project with the same CompositionBuilder the preview uses.
-/// Output: H.264 MP4 at the project's export size (default 1080×1920, 30 fps; 1080×1350 cut
-/// to the feed),
-/// with the sound chosen by `Project.exportSoundPolicy`.
+/// Output: MP4 at the project's export size, frame rate, codec and bitrates (default 1080×1920,
+/// 30 fps, H.264 at an automatic bitrate; 1080×1350 cut to the feed), with the sound chosen by
+/// `Project.exportSoundPolicy`. Encoded with AVAssetReader → AVAssetWriter, since
+/// AVAssetExportSession's presets can't be given a bitrate.
 enum ExportService {
     static func export(
         project: Project, store: ProjectStore,
@@ -46,7 +49,7 @@ enum ExportService {
         let built = try await CompositionBuilder.build(
             project: project,
             renderSize: CGSize(width: settings.outputWidth, height: settings.outputHeight),
-            frameSize: CGSize(width: settings.width, height: settings.height),
+            frameSize: CGSize(width: settings.frameWidth, height: settings.frameHeight),
             frameRate: Int32(settings.frameRate),
             includeClipAudio: policy.includesClipAudio,
             includeMusic: policy.includesMusic,
@@ -58,14 +61,6 @@ enum ExportService {
             clipStems: { store.stemURLs(for: $0, source: $1, projectID: project.id) },
             equalizer: project.masterEQ.isActive ? MasterEQTaps(EQSettings(project.masterEQ)) : nil)
 
-        guard
-            let session = AVAssetExportSession(
-                asset: built.composition,
-                presetName: AVAssetExportPresetHighestQuality)
-        else {
-            throw ExportError.cannotCreateSession
-        }
-
         let folder = store.exportsDirectory(for: project.id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let safeName = project.name.components(separatedBy: CharacterSet.alphanumerics.inverted)
@@ -74,26 +69,9 @@ enum ExportService {
         let url = folder.appendingPathComponent("\(safeName.isEmpty ? "Export" : safeName)-\(stamp).mp4")
         try? FileManager.default.removeItem(at: url)
 
-        session.outputURL = url
-        session.outputFileType = .mp4
-        session.videoComposition = built.videoComposition
-        // A silent export has no audio tracks at all, so there's no mix to apply.
-        session.audioMix = built.audioMix
-        session.shouldOptimizeForNetworkUse = true
-
-        let box = ExportSessionBox(session: session)
-
-        // Poll progress while the export runs.
-        let poller = Task { @MainActor in
-            while !Task.isCancelled {
-                progress(Double(box.session.progress))
-                try? await Task.sleep(nanoseconds: 100_000_000)
-            }
-        }
-        defer { poller.cancel() }
-
         do {
-            try await run(session)
+            let encoder = try await Encoder(built: built, settings: settings, url: url)
+            try await encoder.run(progress: progress)
         } catch {
             // A cancelled or failed render leaves no half-written file behind.
             try? FileManager.default.removeItem(at: url)
@@ -113,6 +91,193 @@ enum ExportService {
         }
         await progress(1)
         return ExportResult(videoURL: url, syncNoteURL: noteURL, syncNote: note)
+    }
+
+    /// The writer's picture settings: codec, size, SDR Rec. 709 (as AVAssetExportSession's H.264
+    /// presets gave), bitrate and keyframe spacing.
+    static func videoSettings(_ settings: ExportSettings) -> [String: Any] {
+        let keyframeFrames = max(1, Int((settings.keyframeInterval * Double(settings.frameRate)).rounded()))
+        var compression: [String: Any] = [
+            AVVideoAverageBitRateKey: settings.effectiveVideoBitrate,
+            AVVideoExpectedSourceFrameRateKey: settings.frameRate,
+            AVVideoMaxKeyFrameIntervalKey: keyframeFrames,
+            AVVideoMaxKeyFrameIntervalDurationKey: settings.keyframeInterval,
+            AVVideoAllowFrameReorderingKey: true,
+        ]
+        switch settings.codec {
+        case .h264: compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
+        case .hevc: compression[AVVideoProfileLevelKey] = kVTProfileLevel_HEVC_Main_AutoLevel as String
+        }
+        return [
+            AVVideoCodecKey: settings.codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
+            AVVideoWidthKey: settings.outputWidth,
+            AVVideoHeightKey: settings.outputHeight,
+            AVVideoColorPropertiesKey: rec709,
+            AVVideoCompressionPropertiesKey: compression,
+        ]
+    }
+
+    private static let rec709: [String: Any] = [
+        AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+        AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+        AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+    ]
+
+    /// One render: reads the composited frames and mixed sound, and feeds the writer.
+    /// AVAssetReader/Writer are thread-safe for this use (each input is pulled on its own queue)
+    /// but not annotated Sendable.
+    private final class Encoder: @unchecked Sendable {
+        let reader: AVAssetReader
+        let writer: AVAssetWriter
+        let videoOutput: AVAssetReaderVideoCompositionOutput
+        let videoInput: AVAssetWriterInput
+        let audio: (output: AVAssetReaderAudioMixOutput, input: AVAssetWriterInput)?
+        let duration: CMTime
+        /// Seconds of picture written so far, read for progress.
+        private let written = OSAllocatedUnfairLock(initialState: 0.0)
+
+        init(built: BuiltComposition, settings: ExportSettings, url: URL) async throws {
+            let asset = built.composition
+            reader = try AVAssetReader(asset: asset)
+            reader.timeRange = CMTimeRange(start: .zero, duration: built.duration)
+            writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+            writer.shouldOptimizeForNetworkUse = true
+            duration = built.duration
+
+            let composition = built.videoComposition.mutableCopy() as! AVMutableVideoComposition
+            composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+            composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+            composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+            let videoTracks = try await asset.loadTracks(withMediaType: .video)
+            videoOutput = AVAssetReaderVideoCompositionOutput(
+                videoTracks: videoTracks,
+                videoSettings: [
+                    kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+                ])
+            videoOutput.videoComposition = composition
+            videoOutput.alwaysCopiesSampleData = false
+            guard reader.canAdd(videoOutput) else { throw ExportError.cannotCreateSession }
+            reader.add(videoOutput)
+
+            let videoSettings = ExportService.videoSettings(settings)
+            guard writer.canApply(outputSettings: videoSettings, forMediaType: .video) else {
+                throw ExportError.cannotCreateSession
+            }
+            videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+            videoInput.expectsMediaDataInRealTime = false
+            guard writer.canAdd(videoInput) else { throw ExportError.cannotCreateSession }
+            writer.add(videoInput)
+
+            // A silent export has no audio tracks at all, so there's no mix to apply.
+            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            if audioTracks.isEmpty {
+                audio = nil
+            } else {
+                let output = AVAssetReaderAudioMixOutput(
+                    audioTracks: audioTracks,
+                    audioSettings: [
+                        AVFormatIDKey: kAudioFormatLinearPCM,
+                        AVSampleRateKey: 48_000,
+                        AVNumberOfChannelsKey: 2,
+                        AVLinearPCMBitDepthKey: 32,
+                        AVLinearPCMIsFloatKey: true,
+                        AVLinearPCMIsNonInterleaved: false,
+                        AVLinearPCMIsBigEndianKey: false,
+                    ])
+                output.audioMix = built.audioMix
+                output.alwaysCopiesSampleData = false
+                let input = AVAssetWriterInput(
+                    mediaType: .audio,
+                    outputSettings: [
+                        AVFormatIDKey: kAudioFormatMPEG4AAC,
+                        AVSampleRateKey: 48_000,
+                        AVNumberOfChannelsKey: 2,
+                        AVEncoderBitRateKey: settings.audioBitrate,
+                    ])
+                input.expectsMediaDataInRealTime = false
+                guard reader.canAdd(output), writer.canAdd(input) else { throw ExportError.cannotCreateSession }
+                reader.add(output)
+                writer.add(input)
+                audio = (output, input)
+            }
+        }
+
+        /// Encodes to the end; cancelling the calling task cancels the render.
+        func run(progress: @escaping @MainActor (Double) -> Void) async throws {
+            let poller = Task { @MainActor [written, duration] in
+                while !Task.isCancelled {
+                    progress(min(0.99, written.withLock { $0 } / max(duration.seconds, 0.001)))
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+            }
+            defer { poller.cancel() }
+
+            try await withTaskCancellationHandler {
+                guard reader.startReading() else {
+                    throw ExportError.failed(reader.error?.localizedDescription ?? "Couldn't read the sequence.")
+                }
+                guard writer.startWriting() else {
+                    reader.cancelReading()
+                    throw ExportError.failed(writer.error?.localizedDescription ?? "Couldn't start the file.")
+                }
+                writer.startSession(atSourceTime: .zero)
+
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask { await self.pump(self.videoOutput, into: self.videoInput, isVideo: true) }
+                    if let audio = self.audio {
+                        group.addTask { await self.pump(audio.output, into: audio.input, isVideo: false) }
+                    }
+                }
+
+                if writer.status == .failed {
+                    reader.cancelReading()
+                    throw ExportError.failed(writer.error?.localizedDescription ?? "Writing the file failed.")
+                }
+                if Task.isCancelled || reader.status == .cancelled {
+                    writer.cancelWriting()
+                    throw ExportError.cancelled
+                }
+                if reader.status == .failed {
+                    writer.cancelWriting()
+                    throw ExportError.failed(reader.error?.localizedDescription ?? "Reading the sequence failed.")
+                }
+                await writer.finishWriting()
+                guard writer.status == .completed else {
+                    throw ExportError.failed(writer.error?.localizedDescription ?? "Unknown error")
+                }
+            } onCancel: {
+                self.reader.cancelReading()
+            }
+        }
+
+        /// Moves samples from one reader output to its writer input until the output runs dry.
+        private func pump(_ output: AVAssetReaderOutput, into input: AVAssetWriterInput, isVideo: Bool) async {
+            let queue = DispatchQueue(label: "cineslice.export.\(isVideo ? "video" : "audio")")
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                var finished = false
+                input.requestMediaDataWhenReady(on: queue) {
+                    while input.isReadyForMoreMediaData, !finished {
+                        guard self.reader.status == .reading, let sample = output.copyNextSampleBuffer() else {
+                            finished = true
+                            input.markAsFinished()
+                            done.resume()
+                            return
+                        }
+                        if isVideo {
+                            let end = CMSampleBufferGetPresentationTimeStamp(sample).seconds
+                            self.written.withLock { $0 = end }
+                        }
+                        if !input.append(sample) {
+                            finished = true
+                            self.reader.cancelReading()
+                            input.markAsFinished()
+                            done.resume()
+                            return
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Runs a configured session to completion; cancelling the calling task cancels the export.

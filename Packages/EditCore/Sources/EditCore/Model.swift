@@ -306,7 +306,17 @@ public enum SoundPolicy: String, Codable, CaseIterable, Sendable {
     public var includesMusic: Bool { self == .clipsAndMusic }
 }
 
+/// How the picture is compressed in the file.
+public enum VideoCodec: String, Codable, CaseIterable, Sendable {
+    /// Plays everywhere.
+    case h264
+    /// About a third smaller at the same quality; some older computers and apps can't play it.
+    case hevc
+}
+
 public struct ExportSettings: Codable, Hashable, Sendable {
+    /// The sequence's frame, in which clips are framed: 1080 on its short side. The file is
+    /// this frame scaled to `resolution`.
     public var width: Int
     public var height: Int
     public var frameRate: Int
@@ -315,20 +325,42 @@ public struct ExportSettings: Codable, Hashable, Sendable {
     /// A vertical sequence exported for the feed: the centre 4:5 of the 9:16 frame (the part a
     /// feed shows), at the same width. Ignored for a horizontal sequence.
     public var cutsToFeed: Bool
+    /// The file's short side in pixels (1080 is 1080p, 2160 is 4K); the frame keeps its shape.
+    public var resolution: Int
+    public var codec: VideoCodec
+    /// Bits per second of picture; nil picks `autoVideoBitrate` for the resolution and frame rate.
+    public var videoBitrate: Int?
+    /// Bits per second of AAC sound.
+    public var audioBitrate: Int
+    /// Seconds between full frames: shorter scrubs better in other editors, longer is smaller.
+    public var keyframeInterval: Double
+
+    public static let resolutionRange = 480...2160
+    public static let videoBitrateRange = 1_000_000...150_000_000
+    public static let audioBitrateRange = 64_000...320_000
+    public static let keyframeIntervalRange = 0.5...10.0
+    public static let frameRates = [24, 25, 30, 48, 50, 60]
 
     public init(
         width: Int = 1080, height: Int = 1920, frameRate: Int = 30, soundPolicy: SoundPolicy? = nil,
-        cutsToFeed: Bool = false
+        cutsToFeed: Bool = false, resolution: Int = 1080, codec: VideoCodec = .h264, videoBitrate: Int? = nil,
+        audioBitrate: Int = 256_000, keyframeInterval: Double = 2
     ) {
         self.width = width
         self.height = height
         self.frameRate = frameRate
         self.soundPolicy = soundPolicy
         self.cutsToFeed = cutsToFeed
+        self.resolution = resolution
+        self.codec = codec
+        self.videoBitrate = videoBitrate
+        self.audioBitrate = audioBitrate
+        self.keyframeInterval = keyframeInterval
     }
 
     enum CodingKeys: String, CodingKey {
         case width, height, frameRate, soundPolicy, cutsToFeed
+        case resolution, codec, videoBitrate, audioBitrate, keyframeInterval
         /// Phase 1: false meant a silent export.
         case includeClipAudio
     }
@@ -346,6 +378,12 @@ public struct ExportSettings: Codable, Hashable, Sendable {
             soundPolicy = clipAudio ? nil : .silent
         }
         cutsToFeed = try c.decodeIfPresent(Bool.self, forKey: .cutsToFeed) ?? false
+        // Before these, every export was 1080p H.264 at an automatic bitrate.
+        resolution = try c.decodeIfPresent(Int.self, forKey: .resolution) ?? 1080
+        codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? .h264
+        videoBitrate = try c.decodeIfPresent(Int.self, forKey: .videoBitrate)
+        audioBitrate = try c.decodeIfPresent(Int.self, forKey: .audioBitrate) ?? 256_000
+        keyframeInterval = try c.decodeIfPresent(Double.self, forKey: .keyframeInterval) ?? 2
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -355,14 +393,29 @@ public struct ExportSettings: Codable, Hashable, Sendable {
         try c.encode(frameRate, forKey: .frameRate)
         try c.encodeIfPresent(soundPolicy, forKey: .soundPolicy)
         if cutsToFeed { try c.encode(true, forKey: .cutsToFeed) }
+        try c.encode(resolution, forKey: .resolution)
+        try c.encode(codec, forKey: .codec)
+        try c.encodeIfPresent(videoBitrate, forKey: .videoBitrate)
+        try c.encode(audioBitrate, forKey: .audioBitrate)
+        try c.encode(keyframeInterval, forKey: .keyframeInterval)
     }
 
     /// Whether the export is the feed's 4:5 cut of a vertical sequence.
     public var exportsFeedCut: Bool { cutsToFeed && !isLandscape }
 
+    /// From the sequence frame to the file's pixels.
+    private var scale: Double { Double(resolution) / Double(max(1, min(width, height))) }
+
+    /// Encoders want even dimensions.
+    private static func even(_ value: Double) -> Int { max(2, Int((value / 2).rounded()) * 2) }
+
+    /// The sequence frame at the file's resolution: what clips are framed in for export.
+    public var frameWidth: Int { Self.even(Double(width) * scale) }
+    public var frameHeight: Int { Self.even(Double(height) * scale) }
+
     /// The exported file's frame: the sequence frame, or its centre 4:5 for the feed.
-    public var outputWidth: Int { width }
-    public var outputHeight: Int { exportsFeedCut ? width * 5 / 4 : height }
+    public var outputWidth: Int { frameWidth }
+    public var outputHeight: Int { exportsFeedCut ? Self.even(Double(frameWidth) * 5 / 4) : frameHeight }
 
     /// The exported frame's shape, e.g. "9:16", "4:5".
     public var outputAspectLabel: String { exportsFeedCut ? "4:5" : aspectLabel }

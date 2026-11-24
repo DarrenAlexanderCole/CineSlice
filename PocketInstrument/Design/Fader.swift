@@ -4,9 +4,12 @@ import SwiftUI
 /// was, so grabbing anywhere on the track never makes it jump. `onChange`
 /// fires on touch and live while dragging; `onCommit` fires once on release (one undo step)
 /// unless `onRelease` returns true to say the release was handled (e.g. a recorded pass).
+/// `display` labels a position (a percent by default); `detents` are where it ticks.
 struct Fader: View {
     let title: String
     let value: Float
+    var detents: [Float] = [0, 0.5, 1]
+    var display: (Float) -> String = { "\(Int(($0 * 100).rounded()))%" }
     var onChange: (Float) -> Void = { _ in }
     var onRelease: (Float) -> Bool = { _ in false }
     var onCommit: (Float) -> Void
@@ -15,7 +18,6 @@ struct Fader: View {
     @State private var draft: Float?
     @State private var base: Float = 0
 
-    private static let detents: [Float] = [0, 0.5, 1]
     private let thumbWidth: CGFloat = 14
 
     var body: some View {
@@ -24,7 +26,7 @@ struct Fader: View {
             HStack {
                 Text(title).font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
                 Spacer()
-                Text("\(Int((shown * 100).rounded()))%")
+                Text(display(shown))
                     .font(Theme.mono(11))
                     .monospacedDigit()
                     .foregroundStyle(draft == nil ? Theme.label : Theme.signal)
@@ -85,7 +87,7 @@ struct Fader: View {
         .opacity(isEnabled ? 1 : 0.4)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
-        .accessibilityValue("\(Int((value * 100).rounded())) percent")
+        .accessibilityValue(display(value))
         .accessibilityAdjustableAction { direction in
             onCommit(min(max(value + (direction == .increment ? 0.05 : -0.05), 0), 1))
         }
@@ -102,8 +104,7 @@ struct Fader: View {
                 }
                 let previous = draft ?? value
                 let next = min(max(base + Float(g.translation.width / travel), 0), 1)
-                if Self.detents.contains(where: { (previous - $0) * (next - $0) < 0 || (next == $0 && previous != $0) })
-                {
+                if detents.contains(where: { (previous - $0) * (next - $0) < 0 || (next == $0 && previous != $0) }) {
                     Haptics.detent()
                 }
                 draft = next

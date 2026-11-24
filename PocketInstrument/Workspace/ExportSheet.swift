@@ -2,9 +2,11 @@ import EditCore
 import SwiftUI
 import UIKit
 
-/// Release: H.264 at the sequence's frame (a vertical one can be cut to the feed's 4:5), a sound
-/// policy (including silent for Instagram music), the Instagram handoff (where to start the song),
-/// progress + cancel, then Save to Photos / Open Instagram / Share. It rises over the deck as
+/// Release: presets (1080p / 4K, 9:16 / 16:9), the sequence's frame (a vertical one can be cut to
+/// the feed's 4:5), picture settings on faders and keys (resolution, frame rate, codec, bitrate,
+/// keyframes) with a guide to what they'll give, a sound policy (including silent for Instagram
+/// music) and its bitrate, the Instagram handoff (where to start the song), progress + cancel,
+/// then Save to Photos / Open Instagram / Share. It rises over the deck as
 /// more of the instrument: an aluminum title plate, engraved sections in recessed wells, choices
 /// as keys that light, and a segment meter while it renders.
 struct ExportSheet: View {
@@ -24,15 +26,20 @@ struct ExportSheet: View {
     @State private var copiedSync = false
     /// The saved video's Photos identifier, to open Instagram on it.
     @State private var photosIdentifier: String?
+    /// The settings while a fader is held, so the readouts and guide follow it; committed on release.
+    @State private var draft: ExportSettings?
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        let settings = model.project.exportSettings
+        let settings = draft ?? model.project.exportSettings
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 details(settings)
+                presets(settings)
                 if !settings.isLandscape { framePicker(settings) }
-                soundPicker()
+                picture(settings)
+                guide(settings)
+                soundPicker(settings)
                 if let note = MusicSyncNote(project: model.project) {
                     handoff(note)
                 }
@@ -52,7 +59,7 @@ struct ExportSheet: View {
 
     @ViewBuilder
     private func details(_ settings: ExportSettings) -> some View {
-        TitlePlate(title: "Release", subtitle: "H.264 MP4 · \(settings.frameRate) fps")
+        TitlePlate(title: "Release", subtitle: "\(codecName(settings.codec)) MP4 · \(settings.frameRate) fps")
         HStack(spacing: 0) {
             readout("Duration", String(format: "%.2fs", model.project.duration.seconds))
             readout("Frame", "\(settings.outputAspectLabel) · \(settings.outputWidth)×\(settings.outputHeight)")
@@ -110,17 +117,261 @@ struct ExportSheet: View {
         .accessibilityElement(children: .combine)
     }
 
+    // MARK: Presets
+
+    /// One tap to a common shape and size; the faders below fine-tune from there.
+    private func presets(_ settings: ExportSettings) -> some View {
+        PanelSection(title: "Presets") {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(ExportPreset.all) { preset in
+                    option(preset.name, preset.detail, isOn: preset.matches(settings)) {
+                        model.setExportSettings(preset.applied(to: model.project.exportSettings))
+                    }
+                    .accessibilityHint(
+                        preset.landscape != settings.isLandscape
+                            ? "Also turns the picture \(preset.landscape ? "horizontal" : "vertical")." : "")
+                }
+            }
+        }
+        .disabled(isExporting)
+    }
+
+    // MARK: Picture
+
+    /// A fader position (0…1) and the value it stands for.
+    struct Scale<Value> {
+        let position: (Value) -> Float
+        let value: (Float) -> Value
+    }
+
+    /// 480…2160 px on the short side, snapping to the standard sizes near them.
+    static let resolutionScale = Scale<Int>(
+        position: { Float($0 - 480) / 1680 },
+        value: { p in
+            let raw = 480 + Int((Float(1680) * p).rounded())
+            if let standard = standardResolutions.first(where: { abs($0 - raw) <= 30 }) { return standard }
+            return (raw / 8) * 8
+        })
+    static let standardResolutions = [720, 1080, 1440, 2160]
+
+    /// 1…150 Mbps on a log scale: as much travel from 2 to 10 as from 30 to 150.
+    static let bitrateScale = Scale<Int>(
+        position: { Float(log(Double($0) / 1e6) / log(150)) },
+        value: { p in
+            let mbps = pow(150, Double(p))
+            let step = mbps < 10 ? 0.5 : 1
+            return Int((mbps / step).rounded() * step * 1e6)
+        })
+
+    /// 64…320 kbps in steps of 32.
+    static let audioScale = Scale<Int>(
+        position: { Float($0 - 64_000) / 256_000 },
+        value: { p in 64_000 + Int((p * 8).rounded()) * 32_000 })
+
+    /// 0.5…10 s in half seconds.
+    static let keyframeScale = Scale<Double>(
+        position: { Float(($0 - 0.5) / 9.5) },
+        value: { p in 0.5 + (Double(p) * 19).rounded() / 2 })
+
+    private func picture(_ settings: ExportSettings) -> some View {
+        PanelSection(title: "Picture") {
+            setting(
+                "RESOLUTION", settings, Self.resolutionScale, \.resolution,
+                detents: Self.standardResolutions.map(Self.resolutionScale.position)
+            ) { r in
+                let name = r == 2160 ? "4K" : "\(r)p"
+                var s = settings
+                s.resolution = r
+                return "\(name) · \(s.outputWidth)×\(s.outputHeight)"
+            }
+
+            keyRow("FRAME RATE", ExportSettings.frameRates, selected: settings.frameRate) {
+                "\($0)"
+            } set: {
+                var s = model.project.exportSettings
+                s.frameRate = $0
+                model.setExportSettings(s)
+            }
+            keyRow("CODEC", VideoCodec.allCases, selected: settings.codec, label: codecName) {
+                var s = model.project.exportSettings
+                s.codec = $0
+                model.setExportSettings(s)
+            }
+
+            bitrateFader(settings)
+
+            setting(
+                "KEYFRAME EVERY", settings, Self.keyframeScale, \.keyframeInterval,
+                detents: [Self.keyframeScale.position(2)]
+            ) { String(format: "%.1f s", $0) }
+        }
+        .disabled(isExporting)
+    }
+
+    /// The video bitrate, on auto (following resolution, frame rate and codec) until it's moved.
+    private func bitrateFader(_ settings: ExportSettings) -> some View {
+        let scale = Self.bitrateScale
+        return HStack(alignment: .bottom, spacing: 10) {
+            Fader(
+                title: "VIDEO BITRATE",
+                value: scale.position(settings.effectiveVideoBitrate),
+                detents: [scale.position(settings.autoVideoBitrate)],
+                display: { p in
+                    let bits = draft?.videoBitrate ?? (settings.videoBitrate == nil ? nil : scale.value(p))
+                    return bits.map(Self.mbps) ?? "AUTO · \(Self.mbps(settings.autoVideoBitrate))"
+                },
+                onChange: { p in
+                    var s = model.project.exportSettings
+                    s.videoBitrate = scale.value(p)
+                    draft = s
+                },
+                onCommit: { p in
+                    var s = model.project.exportSettings
+                    s.videoBitrate = scale.value(p)
+                    draft = nil
+                    model.setExportSettings(s)
+                })
+            Button("Auto") {
+                var s = model.project.exportSettings
+                s.videoBitrate = nil
+                model.setExportSettings(s)
+            }
+            .buttonStyle(StepKeyStyle(isOn: settings.videoBitrate == nil))
+            .frame(width: 64)
+            .accessibilityHint("Picks a bitrate for the resolution, frame rate and codec.")
+        }
+    }
+
+    /// A fader for one numeric setting: the readout and guide follow it live, and release is one undo step.
+    private func setting<Value>(
+        _ title: String, _ settings: ExportSettings, _ scale: Scale<Value>,
+        _ key: WritableKeyPath<ExportSettings, Value>, detents: [Float],
+        display: @escaping (Value) -> String
+    ) -> some View {
+        Fader(
+            title: title, value: scale.position(settings[keyPath: key]), detents: detents,
+            display: { display(scale.value($0)) },
+            onChange: { p in
+                var s = model.project.exportSettings
+                s[keyPath: key] = scale.value(p)
+                draft = s
+            },
+            onCommit: { p in
+                var s = model.project.exportSettings
+                s[keyPath: key] = scale.value(p)
+                draft = nil
+                model.setExportSettings(s)
+            })
+    }
+
+    /// A row of small keys, one lit: a choice among a few fixed values.
+    private func keyRow<Value: Hashable>(
+        _ title: String, _ values: [Value], selected: Value, label: @escaping (Value) -> String,
+        set: @escaping (Value) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(Theme.caption).foregroundStyle(Theme.secondaryLabel)
+            HStack(spacing: 6) {
+                ForEach(values, id: \.self) { value in
+                    Button(label(value)) {
+                        set(value)
+                        Haptics.detent()
+                    }
+                    .buttonStyle(StepKeyStyle(isOn: value == selected))
+                    .accessibilityLabel("\(title.capitalized) \(label(value))")
+                }
+            }
+        }
+    }
+
+    private func codecName(_ codec: VideoCodec) -> String {
+        switch codec {
+        case .h264: return "H.264"
+        case .hevc: return "HEVC"
+        }
+    }
+
+    private static func mbps(_ bits: Int) -> String {
+        let m = Double(bits) / 1e6
+        return m.rounded() == m && m >= 10 ? "\(Int(m)) Mbps" : String(format: "%.1f Mbps", m)
+    }
+
+    // MARK: Guide
+
+    /// What the settings will give: a quality rating, the file size, and notes on anything that
+    /// costs size without adding picture (upscaling, frame rates above the footage's).
+    private func guide(_ settings: ExportSettings) -> some View {
+        let quality = settings.quality
+        let hasSound = model.project.exportSoundPolicy != .silent
+        let bytes = settings.estimatedBytes(seconds: model.project.duration.seconds, hasSound: hasSound)
+        return PanelSection(title: "Guide") {
+            HStack(spacing: 0) {
+                readout("Quality", quality.label)
+                readout("File size", "≈ " + ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))
+                readout("Bits/pixel", String(format: "%.2f", settings.bitsPerPixel))
+            }
+            .padding(.vertical, 8)
+            .recessed(cornerRadius: 12)
+            SegmentMeter(
+                value: Double(quality.rawValue + 1) / Double(ExportQuality.allCases.count),
+                segments: ExportQuality.allCases.count * 4)
+            Text(quality.advice).font(.system(size: 13)).foregroundStyle(Theme.label)
+            ForEach(notes(settings), id: \.self) { note in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("•").foregroundStyle(Theme.signal)
+                    Text(note)
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondaryLabel)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func notes(_ settings: ExportSettings) -> [String] {
+        var notes: [String] = []
+        let sources = model.project.clips.compactMap { model.project.source(for: $0) }
+        if let sharpest = sources.map({ min($0.width, $0.height) }).max(), settings.resolution > sharpest {
+            notes.append("Your sharpest clip is \(sharpest)p, so above that the picture is enlarged, not sharper.")
+        }
+        if let fastest = sources.map(\.frameRate).max(), Double(settings.frameRate) > fastest.rounded() + 0.5 {
+            notes.append(
+                "Your clips run at up to \(Int(fastest.rounded())) fps; \(settings.frameRate) fps repeats frames "
+                    + "and makes a bigger file.")
+        }
+        if settings.resolution > 1080 && !settings.isLandscape {
+            notes.append("Instagram and TikTok show 1080p at most; keep 4K for your own master copy.")
+        }
+        if settings.codec == .hevc {
+            notes.append(
+                "HEVC plays on Apple devices and most new phones; some Windows PCs and older apps can't open it.")
+        }
+        if settings.keyframeInterval > 4 {
+            notes.append("Long keyframe gaps make the file smaller but slower to scrub in other editors.")
+        }
+        return notes
+    }
+
     // MARK: Sound
 
     private var policies: [SoundPolicy] {
         model.project.referenceAudio == nil ? [.clipsOnly, .silent] : [.silent, .clipsOnly, .clipsAndMusic]
     }
 
-    private func soundPicker() -> some View {
+    private func soundPicker(_ settings: ExportSettings) -> some View {
         let current = model.project.exportSoundPolicy
         return PanelSection(title: "Sound") {
             ForEach(policies, id: \.self) { policy in
                 option(title(policy), detail(policy), isOn: current == policy) { model.setSoundPolicy(policy) }
+            }
+            if current != .silent {
+                setting(
+                    "AUDIO BITRATE", settings, Self.audioScale, \.audioBitrate,
+                    detents: [128_000, 256_000].map(Self.audioScale.position)
+                ) { "\($0 / 1000) kbps" }
+                Text("AAC stereo, 48 kHz. 128 kbps is fine for speech; 256 is transparent for music.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.secondaryLabel)
             }
         }
         .disabled(isExporting)
@@ -338,5 +589,28 @@ struct ExportSheet: View {
                 Haptics.warning()
             }
         }
+    }
+}
+
+/// A small key in a row of choices: lit (Signal ring) when it's the one chosen.
+private struct StepKeyStyle: ButtonStyle {
+    var isOn: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Theme.mono(12, weight: .bold))
+            .foregroundStyle(isOn ? Theme.signal : Theme.label)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(maxWidth: .infinity, minHeight: Theme.minTouch)
+            .offset(y: configuration.isPressed ? 1.5 : 0)
+            .background(KeyCap(kind: .dark, isLit: isOn, isPressed: configuration.isPressed))
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(Rectangle())
+            .onChange(of: configuration.isPressed) { _, down in
+                if down { Haptics.press() }
+            }
+            .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
