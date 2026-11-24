@@ -14,7 +14,7 @@ struct ArrangeDeck: View {
     var body: some View {
         VStack(spacing: 8) {
             ClipStrip(model: model, onAddPhotos: onAddPhotos, onAddFiles: onAddFiles)
-            SequenceLane(model: model)
+            SequenceLane(model: model).helpTopic(.lane)
             selectedClipBar
             // Play and Loop at the wheel's ends: no row of their own, so the picture gets the room.
             TransportRow(model: model, compact: true) {
@@ -57,6 +57,7 @@ struct ArrangeDeck: View {
                         .buttonStyle(.instrument(height: 28))
                         .disabled(clip.crop == nil)
                         .accessibilityLabel("Reset crop")
+                        .helpTopic(.crop)
                 } else {
                     Button {
                         model.toggleFraming(clip.id)
@@ -68,6 +69,7 @@ struct ArrangeDeck: View {
                     .buttonStyle(.instrument(height: 28))
                     .accessibilityLabel(
                         clip.framing == .fill ? "Framing: fill. Switch to fit" : "Framing: fit. Switch to fill")
+                    .helpTopic(.framing)
 
                     Button {
                         model.duplicate(clip.id)
@@ -76,6 +78,7 @@ struct ArrangeDeck: View {
                     }
                     .buttonStyle(.instrument(height: 28))
                     .accessibilityLabel("Duplicate clip")
+                    .helpTopic(.duplicate)
 
                     Button(role: .destructive) {
                         model.remove(clip.id)
@@ -84,6 +87,7 @@ struct ArrangeDeck: View {
                     }
                     .buttonStyle(.instrument(height: 28))
                     .accessibilityLabel("Remove clip from sequence")
+                    .helpTopic(.remove)
                 }
                 Button {
                     model.setCropping(!model.isCropping)
@@ -94,6 +98,7 @@ struct ArrangeDeck: View {
                 .accessibilityLabel(model.isCropping ? "Done cropping" : "Crop")
                 .accessibilityValue(clip.crop.map { String(format: "%.2f times", $0.magnification) } ?? "Whole frame")
                 .accessibilityHint("Push in on this clip: drag and pinch its crop over the picture.")
+                .helpTopic(.crop)
                 LaneZoomKey(model: model, compact: true)
             }
             .frame(minHeight: 32)
@@ -153,7 +158,7 @@ struct ClipStrip: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: spacing) {
                     ForEach(Array(model.project.clips.enumerated()), id: \.element.id) { index, clip in
-                        tile(clip, index: index)
+                        tile(clip, index: index).helpTopic(.clips)
                     }
                     addMenu
                 }
@@ -389,6 +394,7 @@ struct ClipStrip: View {
                 )
         }
         .accessibilityLabel("Add clips")
+        .helpTopic(.addClips)
 
     }
 }

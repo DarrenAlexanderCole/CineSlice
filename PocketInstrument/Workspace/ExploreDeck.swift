@@ -12,11 +12,13 @@ struct ExploreDeck: View {
     var body: some View {
         VStack(spacing: 12) {
             if let clip = model.selectedClip, let source = model.selectedSource {
-                Filmstrip(model: model, clip: clip, source: source)
+                Filmstrip(model: model, clip: clip, source: source).helpTopic(.filmstrip)
                 if let music = model.project.referenceAudio, let waveform = model.waveform {
                     TrimMusicStrip(model: model, clip: clip, source: source, music: music, waveform: waveform)
+                        .helpTopic(.trimMusic)
                 }
                 readouts(range: model.draftRange ?? clip.sourceRange, frameRate: source.frameRate)
+                    .helpTopic(.trimReadouts)
             }
             // In and Zoom on the left of play, Loop and Out on the right.
             TransportRow(model: model) {
@@ -24,6 +26,7 @@ struct ExploreDeck: View {
                     Button("In") { model.markIn() }
                         .buttonStyle(.instrument(.key))
                         .accessibilityLabel("Mark in at playhead")
+                        .helpTopic(.markInOut)
                     zoomKey
                 }
             } trailing: {
@@ -32,6 +35,7 @@ struct ExploreDeck: View {
                     Button("Out") { model.markOut() }
                         .buttonStyle(.instrument(.key))
                         .accessibilityLabel("Mark out at playhead")
+                        .helpTopic(.markInOut)
                 }
             }
         }
@@ -49,6 +53,7 @@ struct ExploreDeck: View {
         .accessibilityLabel("Zoom to clip")
         .accessibilityValue(model.trimZoom ? "On" : "Off")
         .accessibilityHint("Fits the filmstrip to the clip's in and out points, for finer trims.")
+        .helpTopic(.trimZoom)
     }
 
     private func readouts(range: MediaTimeRange, frameRate: Double) -> some View {

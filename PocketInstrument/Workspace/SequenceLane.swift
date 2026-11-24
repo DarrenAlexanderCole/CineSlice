@@ -718,6 +718,7 @@ struct LaneZoomKey: View {
         .disabled(model.project.clips.isEmpty)
         .accessibilityLabel("Zoom sequence")
         .accessibilityValue(label(zoom))
+        .helpTopic(.laneZoom)
         .accessibilityHint("Magnifies the sequence around the playhead. Pinch the sequence for any zoom.")
         .accessibilityAdjustableAction { direction in
             model.laneZoom = direction == .increment ? min(zoom * 2, maxZoom) : max(zoom / 2, 1)

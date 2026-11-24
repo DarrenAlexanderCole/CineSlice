@@ -23,7 +23,7 @@ struct MixDeck: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            SequenceLane(model: model, waveformDrag: .slideMusic, showsAutomation: true)
+            SequenceLane(model: model, waveformDrag: .slideMusic, showsAutomation: true).helpTopic(.lane)
             if model.curveEditTarget != nil {
                 // Editing a curve, the lane grows; the music's alignment steps aside to make room.
                 EmptyView()
@@ -36,7 +36,7 @@ struct MixDeck: View {
                 WriteKey(model: model)
                 EditKey(model: model)
                 ClearKey(model: model)
-                MixClipPicker(model: model)
+                MixClipPicker(model: model).helpTopic(.mixClips)
             }
             HStack(spacing: 14) {
                 Fader(
@@ -47,6 +47,7 @@ struct MixDeck: View {
                 )
                 .id(model.selectedClipID)  // a new clip starts a fresh drag, never inherits another's draft
                 .disabled(model.selectedClip == nil)
+                .helpTopic(.clipFader)
                 Fader(
                     title: faderTitle("MUSIC", .music), value: model.faderLevel(.music),
                     onChange: { model.faderMoved(.music, to: $0) },
@@ -54,6 +55,7 @@ struct MixDeck: View {
                     onCommit: { model.faderSet(.music, to: $0) }
                 )
                 .disabled(model.project.referenceAudio == nil)
+                .helpTopic(.musicFader)
             }
             .padding(.horizontal, 4)
             TransportRow(
@@ -88,6 +90,7 @@ struct MixDeck: View {
         .accessibilityLabel("Snap to beats")
         .accessibilityValue(model.snapsToBeats ? "On" : "Off")
         .accessibilityHint("Scrubbing and the loop handles catch on the guide's beats.")
+        .helpTopic(.snap)
     }
 
     /// Opens the system picker the source sheet asked for, now that it has closed.
@@ -125,6 +128,7 @@ struct MixDeck: View {
             }
             .buttonStyle(.instrument(.key))
             .accessibilityHint("My Music, Quick Click or Billboards")
+            .helpTopic(.music)
         }
         .frame(maxWidth: .infinity, minHeight: 100)
     }
@@ -163,6 +167,7 @@ struct MixDeck: View {
                     + (startsBefore ? ", song at video start, " : ", song enters at ") + clock
             )
             .accessibilityHint("Keeps the song lined up: no sliding or nudging until unlocked.")
+            .helpTopic(.musicLock)
             nudge("+10MS", by: fine, label: "Music 10 milliseconds later")
             nudge("+1F", by: frame, label: "Music one frame later")
         }
@@ -174,6 +179,7 @@ struct MixDeck: View {
             .buttonStyle(.instrument())
             .disabled(model.isMusicLocked)
             .accessibilityLabel(label)
+            .helpTopic(.nudge)
     }
 
     private var musicMenu: some View {
@@ -185,6 +191,7 @@ struct MixDeck: View {
         .buttonStyle(.round(40, lit: model.project.referenceAudio != nil))
         .accessibilityLabel("Music")
         .accessibilityHint("Choose the reference: My Music, Quick Click or Billboards")
+        .helpTopic(.music)
     }
 }
 
@@ -206,6 +213,7 @@ private struct WriteKey: View {
         .accessibilityLabel("Write automation")
         .accessibilityValue(isRecording ? "Recording" : isOn ? "On" : "Off")
         .accessibilityHint("When on, moving a fader during playback records it.")
+        .helpTopic(.write)
     }
 }
 
@@ -226,6 +234,7 @@ private struct EditKey: View {
             .accessibilityLabel("Edit curve")
             .accessibilityValue(target == .music ? "Editing music curve" : "Editing \(clipTitle.lowercased()) curve")
             .accessibilityHint("Stops editing the curve.")
+            .helpTopic(.editCurve)
         } else {
             Menu {
                 Button {
@@ -248,6 +257,7 @@ private struct EditKey: View {
             .accessibilityValue("Off")
             .accessibilityHint(
                 "Drag points to move them, tap the curve band to add one, double-tap a point to delete it.")
+            .helpTopic(.editCurve)
         }
     }
 
@@ -296,6 +306,7 @@ private struct ClearKey: View {
         .disabled(!clipCurves && !musicCurve)
         .opacity(clipCurves || musicCurve ? 1 : 0.4)
         .accessibilityLabel("Clear automation")
+        .helpTopic(.clearCurve)
     }
 
     private var selectedClipCurveTitle: String {

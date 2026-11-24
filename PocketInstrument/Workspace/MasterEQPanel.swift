@@ -15,6 +15,7 @@ struct MasterEQPanel: View {
         PanelSection(title: "Master EQ · whole mix") {
             EQCurve(eq: eq)
                 .frame(height: 64)
+                .helpTopic(.eqCurve)
             HStack(spacing: 0) {
                 knob("LOW CUT", eq, \.lowCut, LogScale(MasterEQ.lowCutRange), reset: 0) { pos, hz in
                     pos == 0 ? "OFF" : Self.hertz(hz)
@@ -30,6 +31,7 @@ struct MasterEQPanel: View {
                 gainKnob("HIGH", eq, \.highGain)
             }
             .disabled(!eq.isOn)
+            .helpTopic(.eqKnobs)
             HStack(spacing: 6) {
                 Button {
                     var next = model.project.masterEQ
@@ -41,6 +43,7 @@ struct MasterEQPanel: View {
                 .buttonStyle(OptionKeyStyle(isOn: eq.isOn))
                 .accessibilityLabel("EQ on")
                 .accessibilityValue(eq.isOn ? "On" : "Off")
+                .helpTopic(.eqOn)
                 Button {
                     var flat = MasterEQ.flat
                     flat.isOn = model.project.masterEQ.isOn
@@ -52,6 +55,7 @@ struct MasterEQPanel: View {
                 .disabled(model.project.masterEQ.filters(sampleRate: 44_100).isEmpty)
                 .accessibilityLabel("Flat")
                 .accessibilityHint("Sets every band back to no change.")
+                .helpTopic(.eqFlat)
             }
         }
     }

@@ -22,6 +22,7 @@ struct WorkspaceView: View {
     @State private var showExport = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var isWatching = false
+    @State private var help = HelpCenter()
 
     var body: some View {
         ZStack {
@@ -39,6 +40,8 @@ struct WorkspaceView: View {
             }
         }
         .background(Theme.obsidian.ignoresSafeArea())
+        // Set outside the sheets below, so Release's controls have help too.
+        .environment(\.helpCenter, help)
         .toolbar(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
         .onAppear { model.open() }
@@ -98,11 +101,13 @@ struct WorkspaceView: View {
             }
             .buttonStyle(.instrument(height: 36))
             .accessibilityLabel("Projects")
+            .helpTopic(.projects)
             Text(model.project.name)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.label)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            HelpKey(help: help)
             Button {
                 model.undo()
             } label: {
@@ -111,6 +116,7 @@ struct WorkspaceView: View {
             .buttonStyle(.instrument(height: 36))
             .disabled(model.undoName == nil)
             .accessibilityLabel(model.undoName.map { "Undo \($0)" } ?? "Undo")
+            .helpTopic(.undoRedo)
             Button {
                 model.redo()
             } label: {
@@ -119,6 +125,7 @@ struct WorkspaceView: View {
             .buttonStyle(.instrument(height: 36))
             .disabled(model.redoName == nil)
             .accessibilityLabel(model.redoName.map { "Redo \($0)" } ?? "Redo")
+            .helpTopic(.undoRedo)
             Button {
                 model.engine.pause()
                 showExport = true
@@ -128,6 +135,7 @@ struct WorkspaceView: View {
             .buttonStyle(.instrument(height: 36))
             .disabled(model.project.clips.isEmpty)
             .accessibilityLabel("Export")
+            .helpTopic(.release)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
@@ -143,6 +151,8 @@ struct WorkspaceView: View {
             } else {
                 PlayerView(player: model.engine.player)
                     .padding(Viewfinder.margin)
+                // Under the chips and the crop frame, which have help of their own.
+                Color.clear.helpTopic(.viewer)
                 Viewfinder(
                     aspect: pictureAspect,
                     showsFeedCrop: model.mode != .explore && !model.isLandscape && !model.isCropping
@@ -162,6 +172,7 @@ struct WorkspaceView: View {
                                 .foregroundStyle(Theme.label)
                         }
                     }
+                    .helpTopic(.pages)
                     Spacer()
                     if !model.project.clips.isEmpty {
                         // Small and stacked, so it sits on the gate off the picture.
@@ -174,6 +185,7 @@ struct WorkspaceView: View {
                             }
                             .padding(.vertical, 2)
                         }
+                        .helpTopic(.timecode)
                     }
                 }
                 Spacer()
@@ -203,11 +215,21 @@ struct WorkspaceView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Watch")
                         .accessibilityHint("Shows just the video and plays it. Tap the video for controls.")
+                        .helpTopic(.watch)
                     }
                 }
             }
             .padding(6)
+            if help.isOn {
+                VStack {
+                    HelpBar(help: help)
+                    Spacer()
+                }
+                .padding(6)
+                .transition(.opacity)
+            }
         }
+        .helpCardOverlay(help, alignment: .bottom)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
@@ -258,6 +280,7 @@ struct WorkspaceView: View {
         .accessibilityLabel("Picture shape")
         .accessibilityValue(model.isLandscape ? "16:9 horizontal" : "9:16 vertical")
         .accessibilityHint("Turns the picture between vertical and horizontal.")
+        .helpTopic(.pictureShape)
     }
 
     /// Watch starts playback, since it is for watching; leaving it keeps whatever is playing.
@@ -548,6 +571,7 @@ struct TransportRow<Leading: View, Trailing: View>: View {
             onShuttle: shuttles ? { model.shuttle($0) } : nil, onEnd: onJogEnd
         )
         .disabled(model.project.clips.isEmpty)
+        .helpTopic(.jog)
     }
 
     private func playKey(diameter: CGFloat) -> some View {
@@ -560,6 +584,7 @@ struct TransportRow<Leading: View, Trailing: View>: View {
         .buttonStyle(.round(diameter, lit: model.engine.isPlaying, prominent: true))
         .disabled(model.project.clips.isEmpty)
         .accessibilityLabel(model.engine.isPlaying ? "Pause" : "Play")
+        .helpTopic(.play)
     }
 
     private var full: some View {
@@ -595,6 +620,7 @@ struct StepKey: View {
         .buttonStyle(.round(34))
         .padding(.bottom, 9)
         .accessibilityLabel(frames < 0 ? "Back one frame" : "Forward one frame")
+        .helpTopic(.frameStep)
     }
 }
 
@@ -619,6 +645,7 @@ struct LoopButton: View {
             .disabled(model.selectedClip == nil)
             .accessibilityLabel("Loop in to out")
             .accessibilityValue(isOn ? "On" : "Off")
+            .helpTopic(.loop)
         } else {
             Menu {
                 Button(action: model.setLoopIn) { Label("Loop In at playhead", systemImage: "chevron.left.to.line") }
@@ -639,6 +666,7 @@ struct LoopButton: View {
             .accessibilityLabel("Loop region")
             .accessibilityValue(isOn ? "On" : "Off")
             .accessibilityHint("Toggles the loop. Hold for Loop In, Loop Out and more.")
+            .helpTopic(.loop)
         }
     }
 }
@@ -669,6 +697,7 @@ struct StateSwitcher: View {
             }
         }
         .recessed(cornerRadius: 11, padding: 3)
+        .helpTopic(.pages)
     }
 }
 

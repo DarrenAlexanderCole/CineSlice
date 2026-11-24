@@ -28,6 +28,7 @@ struct ExportSheet: View {
     @State private var photosIdentifier: String?
     /// The settings while a fader is held, so the readouts and guide follow it; committed on release.
     @State private var draft: ExportSettings?
+    @Environment(\.helpCenter) private var help
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -53,13 +54,17 @@ struct ExportSheet: View {
         .presentationBackground { Chassis(cornerRadius: 0) }
         .presentationCornerRadius(26)
         .preferredColorScheme(.dark)
+        .helpCardOverlay(help, alignment: .bottom)
         .interactiveDismissDisabled(isExporting)
         .onDisappear { exportTask?.cancel() }
     }
 
     @ViewBuilder
     private func details(_ settings: ExportSettings) -> some View {
-        TitlePlate(title: "Release", subtitle: "\(codecName(settings.codec)) MP4 · \(settings.frameRate) fps")
+        HStack(spacing: 8) {
+            TitlePlate(title: "Release", subtitle: "\(codecName(settings.codec)) MP4 · \(settings.frameRate) fps")
+            if let help { HelpKey(help: help) }
+        }
         HStack(spacing: 0) {
             readout("Duration", String(format: "%.2fs", model.project.duration.seconds))
             readout("Frame", "\(settings.outputAspectLabel) · \(settings.outputWidth)×\(settings.outputHeight)")
@@ -74,14 +79,19 @@ struct ExportSheet: View {
 
     /// Full 9:16 for Reels and Stories, or the centre 4:5 the feed shows (the dashed lines in the viewer).
     private func framePicker(_ settings: ExportSettings) -> some View {
-        PanelSection(title: "Frame") {
+        var feed = settings
+        feed.cutsToFeed = true
+        return PanelSection(title: "Frame") {
             option(
                 "Reels · Stories  9:16", "The whole vertical frame.", isOn: !settings.cutsToFeed
             ) { model.setFeedCut(false) }
+            .helpTopic(.feedCut)
             option(
-                "Feed  4:5", "The centre of the frame, between the viewer's dashed lines. 1080×1350.",
+                "Feed  4:5",
+                "The centre of the frame, between the viewer's dashed lines. \(feed.outputWidth)×\(feed.outputHeight).",
                 isOn: settings.cutsToFeed
             ) { model.setFeedCut(true) }
+            .helpTopic(.feedCut)
         }
         .disabled(isExporting)
     }
@@ -132,6 +142,7 @@ struct ExportSheet: View {
                             ? "Also turns the picture \(preset.landscape ? "horizontal" : "vertical")." : "")
                 }
             }
+            .helpTopic(.presets)
         }
         .disabled(isExporting)
     }
@@ -184,6 +195,7 @@ struct ExportSheet: View {
                 s.resolution = r
                 return "\(name) · \(s.outputWidth)×\(s.outputHeight)"
             }
+            .helpTopic(.resolution)
 
             keyRow("FRAME RATE", ExportSettings.frameRates, selected: settings.frameRate) {
                 "\($0)"
@@ -192,18 +204,21 @@ struct ExportSheet: View {
                 s.frameRate = $0
                 model.setExportSettings(s)
             }
+            .helpTopic(.frameRate)
             keyRow("CODEC", VideoCodec.allCases, selected: settings.codec, label: codecName) {
                 var s = model.project.exportSettings
                 s.codec = $0
                 model.setExportSettings(s)
             }
+            .helpTopic(.codec)
 
-            bitrateFader(settings)
+            bitrateFader(settings).helpTopic(.videoBitrate)
 
             setting(
                 "KEYFRAME EVERY", settings, Self.keyframeScale, \.keyframeInterval,
                 detents: [Self.keyframeScale.position(2)]
             ) { String(format: "%.1f s", $0) }
+            .helpTopic(.keyframes)
         }
         .disabled(isExporting)
     }
@@ -325,6 +340,7 @@ struct ExportSheet: View {
                 .foregroundStyle(Theme.secondaryLabel)
             }
         }
+        .helpTopic(.guide)
         .accessibilityElement(children: .combine)
     }
 
@@ -363,12 +379,14 @@ struct ExportSheet: View {
         return PanelSection(title: "Sound") {
             ForEach(policies, id: \.self) { policy in
                 option(title(policy), detail(policy), isOn: current == policy) { model.setSoundPolicy(policy) }
+                    .helpTopic(.sound)
             }
             if current != .silent {
                 setting(
                     "AUDIO BITRATE", settings, Self.audioScale, \.audioBitrate,
                     detents: [128_000, 256_000].map(Self.audioScale.position)
                 ) { "\($0 / 1000) kbps" }
+                .helpTopic(.audioBitrate)
                 Text("AAC stereo, 48 kHz. 128 kbps is fine for speech; 256 is transparent for music.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.secondaryLabel)
@@ -461,6 +479,7 @@ struct ExportSheet: View {
             .buttonStyle(.instrument(height: 34))
             .accessibilityLabel("Copy sync instruction")
         }
+        .helpTopic(.handoff)
     }
 
     private func step(_ number: Int, _ text: String) -> some View {
@@ -487,6 +506,7 @@ struct ExportSheet: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.instrument(.prominent, height: 52))
+            .helpTopic(.render)
             // Until then, clips set to split would render silent.
             .disabled(model.isProcessingVoice && model.project.exportSoundPolicy.includesClipAudio)
             if model.isProcessingVoice && model.project.exportSoundPolicy.includesClipAudio {

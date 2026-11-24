@@ -359,6 +359,14 @@ struct LibraryView: View {
                     )
                     .shadow(color: .black.opacity(0.6), radius: 2, y: 2)
             )
+            if let url = HelpManual.url {
+                ShareLink(item: url) {
+                    Image(systemName: "book")
+                }
+                .buttonStyle(.round(30))
+                .accessibilityLabel("Manual")
+                .accessibilityHint("Shares the CineSlice manual as a PDF, to save, print or send.")
+            }
             Button {
                 showsStorage = true
             } label: {

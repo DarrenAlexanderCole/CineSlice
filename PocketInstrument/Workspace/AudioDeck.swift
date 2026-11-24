@@ -19,8 +19,8 @@ struct AudioDeck: View {
                 pageKey(.split, "SPLIT", "Take sound out of a clip")
                 pageKey(.eq, "EQ", "Shape the whole mix")
             }
-            if page == .split { AudioClipPicker(model: model) }
-            SequenceLane(model: model)
+            if page == .split { AudioClipPicker(model: model).helpTopic(.audioClips) }
+            SequenceLane(model: model).helpTopic(.lane)
             if page == .split { treatmentPanel } else { MasterEQPanel(model: model) }
             TransportRow(model: model, compact: true) {
                 EmptyView()
@@ -47,6 +47,7 @@ struct AudioDeck: View {
         }
         .buttonStyle(AudioOptionKeyStyle(isOn: page == which))
         .accessibilityLabel(title == "EQ" ? "Master EQ" : "Split")
+        .helpTopic(.audioPages)
     }
 
     @ViewBuilder
@@ -76,6 +77,7 @@ struct AudioDeck: View {
                         }
                         .id(clip.id)  // a new clip starts a fresh drag, never inherits another's draft
                         .padding(.horizontal, 4)
+                        .helpTopic(.splitFaders)
                     }
                     status(clip, source)
                 } else {
@@ -116,6 +118,7 @@ struct AudioDeck: View {
             title == "Original"
                 ? "Plays the clip's sound as recorded."
                 : "Splits the voices from everything else, each with its own level. Starts with the voices out.")
+        .helpTopic(.splitOption)
     }
 
     /// Processing progress, or what the chosen treatment can and can't do.

@@ -209,6 +209,16 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertEqual(seconds(), shuttled, "playback should stop when the dial is let go")
 
         button("Arrange").tap()
+
+        // Help mode: a tapped control explains itself instead of acting.
+        button("Help").tap()
+        button("Play and pause, help").tap()
+        XCTAssertTrue(app.staticTexts["Play and pause"].waitForExistence(timeout: 3), "no help card")
+        XCTAssertTrue(button("Play").exists, "help mode must not start playback")
+        shot("6b Help")
+        button("Done").tap()
+        XCTAssertFalse(app.staticTexts["Play and pause"].exists)
+
         button("Export").tap()
         XCTAssertTrue(button("Render video").waitForExistence(timeout: 5))
         shot("7 Release")
