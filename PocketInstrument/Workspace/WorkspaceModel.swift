@@ -464,6 +464,27 @@ final class WorkspaceModel {
         perform(command)
         selectedClipID = command.newClipID
     }
+    /// Where a split at the playhead would cut, in Arrange: the clip under it and the source time
+    /// there. nil on a cut, or too near one to leave two halves.
+    var splitPoint: (clipID: UUID, sourceTime: MediaTime)? {
+        guard mode != .explore, let hit = sequenceMap.sourceTime(atComposition: currentTime),
+            let clip = project.clip(id: hit.clipID), SplitClipCommand.canSplit(clip, at: hit.sourceTime)
+        else { return nil }
+        return hit
+    }
+
+    /// Cuts the clip under the playhead in two there, and selects the second half, which starts
+    /// at the playhead. Playback carries on; nothing moves in the sequence.
+    func splitAtPlayhead() {
+        guard let point = splitPoint else {
+            Haptics.warning()
+            return
+        }
+        let command = SplitClipCommand(clipID: point.clipID, sourceTime: point.sourceTime)
+        perform(command)
+        selectedClipID = command.newClipID
+        Haptics.press()
+    }
     func toggleFraming(_ clipID: UUID) {
         guard let clip = project.clip(id: clipID) else { return }
         perform(SetFramingCommand(clipID: clipID, framing: clip.framing == .fill ? .fit : .fill))

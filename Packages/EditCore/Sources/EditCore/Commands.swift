@@ -88,6 +88,41 @@ public struct DuplicateClipCommand: EditingCommand {
     }
 }
 
+/// Cuts a clip in two at a source time: the first half keeps the clip's ID, the second gets
+/// `newClipID` and follows it. Both keep its framing, crop, level, split sound and level curve
+/// (the curve is in source time, so each half plays its own part), and the sequence's length and
+/// everything after the cut stay where they were. Each half must be at least `minimumClipDuration`.
+public struct SplitClipCommand: EditingCommand {
+    public let clipID: UUID
+    public let sourceTime: MediaTime
+    public let newClipID: UUID
+    public init(clipID: UUID, sourceTime: MediaTime, newClipID: UUID = UUID()) {
+        self.clipID = clipID
+        self.sourceTime = sourceTime
+        self.newClipID = newClipID
+    }
+    public var actionName: String { "Split Clip" }
+
+    /// Whether `sourceTime` leaves two halves long enough to keep.
+    public static func canSplit(_ clip: TimelineClip, at sourceTime: MediaTime) -> Bool {
+        sourceTime - clip.sourceRange.start >= minimumClipDuration
+            && clip.sourceRange.end - sourceTime >= minimumClipDuration
+    }
+
+    public func apply(to project: inout Project) throws {
+        guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
+        let clip = project.clips[i]
+        guard Self.canSplit(clip, at: sourceTime) else { throw EditError.invalidRange }
+        var first = clip
+        first.sourceRange = MediaTimeRange(start: clip.sourceRange.start, end: sourceTime)
+        var second = clip
+        second.id = newClipID
+        second.sourceRange = MediaTimeRange(start: sourceTime, end: clip.sourceRange.end)
+        project.clips[i] = first
+        project.clips.insert(second, at: i + 1)
+    }
+}
+
 /// Sets a clip's in/out on the source. The range is clamped to the source and
 /// to `minimumClipDuration`; the original file is untouched.
 public struct TrimClipCommand: EditingCommand {

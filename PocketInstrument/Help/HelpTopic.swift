@@ -40,7 +40,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
     case projects, undoRedo, release, help, viewer, timecode, pictureShape, watch, pages
     case play, jog, frameStep, loop, lane, laneZoom
     // Arrange
-    case clips, addClips, framing, duplicate, remove, crop
+    case clips, addClips, split, framing, duplicate, remove, crop
     // Explore
     case filmstrip, trimMusic, trimReadouts, markInOut, trimZoom
     // Mix
@@ -58,7 +58,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
         case .projects, .undoRedo, .release, .help, .viewer, .timecode, .pictureShape, .watch, .pages, .play, .jog,
             .frameStep, .loop, .lane, .laneZoom:
             return .basics
-        case .clips, .addClips, .framing, .duplicate, .remove, .crop: return .arrange
+        case .clips, .addClips, .split, .framing, .duplicate, .remove, .crop: return .arrange
         case .filmstrip, .trimMusic, .trimReadouts, .markInOut, .trimZoom: return .explore
         case .music, .nudge, .musicLock, .write, .editCurve, .clearCurve, .mixClips, .clipFader, .musicFader, .snap:
             return .mix
@@ -88,6 +88,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
         case .laneZoom: return "Lane zoom"
         case .clips: return "Clips"
         case .addClips: return "Add clips"
+        case .split: return "Split"
         case .framing: return "Fill or fit"
         case .duplicate: return "Duplicate"
         case .remove: return "Remove"
@@ -180,6 +181,10 @@ enum HelpTopic: String, CaseIterable, Identifiable {
         case .addClips:
             return "Brings in videos or photos from Photos or Files. They're copied into the project; the originals "
                 + "are never changed."
+        case .split:
+            return "Cuts the clip under the playhead in two, right there, so each part can be moved, trimmed or "
+                + "removed on its own. Both parts keep the clip's framing and sound. It's dark when the playhead "
+                + "is on a cut or too close to one."
         case .framing:
             return "Fill covers the frame, cutting off what overhangs. Fit shows the whole picture, with bars where "
                 + "it doesn't reach."

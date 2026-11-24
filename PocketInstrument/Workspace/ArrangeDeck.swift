@@ -16,11 +16,15 @@ struct ArrangeDeck: View {
             ClipStrip(model: model, onAddPhotos: onAddPhotos, onAddFiles: onAddFiles)
             SequenceLane(model: model).helpTopic(.lane)
             selectedClipBar
-            // Play and Loop at the wheel's ends: no row of their own, so the picture gets the room.
+            // Play, then Split and Loop, at the wheel's ends: no row of their own, so the picture
+            // gets the room.
             TransportRow(model: model, compact: true) {
                 EmptyView()
             } trailing: {
-                LoopButton(model: model)
+                HStack(spacing: 6) {
+                    SplitKey(model: model)
+                    LoopButton(model: model)
+                }
             }
         }
     }
@@ -117,6 +121,24 @@ struct ArrangeDeck: View {
         ]
         if let crop = clip.crop { parts.append(String(format: "%.2f× crop", crop.magnification)) }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Cuts the clip under the playhead in two, there. Dark on a cut or too near one to leave two halves.
+struct SplitKey: View {
+    var model: WorkspaceModel
+
+    var body: some View {
+        Button {
+            model.splitAtPlayhead()
+        } label: {
+            Image(systemName: "scissors").font(.system(size: 15, weight: .bold))
+        }
+        .buttonStyle(.round(42))
+        .disabled(model.splitPoint == nil)
+        .accessibilityLabel("Split at playhead")
+        .accessibilityHint("Cuts the clip under the playhead in two.")
+        .helpTopic(.split)
     }
 }
 

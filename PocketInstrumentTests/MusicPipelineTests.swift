@@ -421,6 +421,38 @@ final class MusicPipelineTests: XCTestCase {
     /// Riding a fader while writing automation, and turning EQ knobs, replace the playing item's
     /// levels many times a second; playback must carry on through it (fresh EQ taps on every
     /// change used to stall it completely).
+    /// Split cuts the clip under the playhead there, leaves the sequence as long as it was, and
+    /// renders the same length. It's off on a cut, and undo puts the clip back whole.
+    func testSplitAtPlayheadCutsTheClipUnderIt() async throws {
+        let project = try await makeProject()
+        let model = WorkspaceModel(project: project, store: store)
+        model.open()
+        defer { model.close() }
+        for _ in 0..<100 where model.engine.duration == .zero {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        // The first clip is source 0.5–4.5 s, so composition 4 s is the first cut.
+        model.scrub(to: MediaTime(seconds: 4), precise: true)
+        XCTAssertNil(model.splitPoint, "no split on a cut")
+
+        model.scrub(to: MediaTime(seconds: 1.5), precise: true)
+        let first = model.project.clips[0]
+        XCTAssertEqual(model.splitPoint?.clipID, first.id)
+        model.splitAtPlayhead()
+        XCTAssertEqual(model.project.clips.count, 4)
+        XCTAssertEqual(model.project.clips[0].sourceRange.end, MediaTime(seconds: 2))
+        XCTAssertEqual(model.project.clips[1].sourceRange.start, MediaTime(seconds: 2))
+        XCTAssertEqual(model.selectedClipID, model.project.clips[1].id)
+        XCTAssertEqual(model.project.duration, MediaTime(seconds: 13))
+        XCTAssertEqual(model.undoName, "Split Clip")
+
+        let result = try await ExportService.export(project: model.project, store: store) { _ in }
+        try await assertVideo(AVURLAsset(url: result.videoURL), seconds: 13)
+
+        model.undo()
+        XCTAssertEqual(model.project.clips, project.clips)
+    }
+
     func testPlaybackKeepsGoingWhileRidingFadersAndTurningTheEQ() async throws {
         let project = try await makeProject()
         let model = WorkspaceModel(project: project, store: store)
