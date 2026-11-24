@@ -137,11 +137,11 @@ struct AudioDeck: View {
             }
             .accessibilityElement(children: .combine)
         } else if let balance = clip.balance, balance.voice == 0, balance.scene > 0 {
-            Text("Separated on this iPhone: faint traces of voice may remain.")
+            Text("Separated on this \(UIDevice.current.model): faint traces of voice may remain.")
                 .font(Theme.caption)
                 .foregroundStyle(Theme.secondaryLabel)
         } else {
-            Text("Processed on this iPhone. Your footage isn't changed.")
+            Text("Processed on this \(UIDevice.current.model). Your footage isn't changed.")
                 .font(Theme.caption)
                 .foregroundStyle(Theme.secondaryLabel)
         }

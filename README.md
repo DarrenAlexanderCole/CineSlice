@@ -15,7 +15,7 @@ the user sees is **CineSlice**. `CLAUDE.md` holds the original product brief and
 > Repo: https://github.com/DarrenAlexanderCole/CineSlice (private).
 
 ## Tech
-- Swift 5 / SwiftUI, iOS 17+, iPhone only, portrait.
+- Swift 5 / SwiftUI, iOS 17+, iPhone and iPad, portrait (Watch turns sideways for 16:9).
 - AVFoundation (`AVMutableComposition`, `AVVideoComposition`, `AVAudioMix`, `AVPlayer`,
   `AVAssetReader` → `AVAssetWriter` for export), PhotosUI, Accelerate (waveforms), Core Haptics via a
   small `Haptics` helper.

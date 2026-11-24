@@ -153,7 +153,8 @@ enum HelpTopic: String, CaseIterable, Identifiable {
             return "Turns the whole sequence between vertical 9:16 and horizontal 16:9. Each clip keeps its framing."
         case .watch:
             return "Just your footage, full screen, playing. Tap for play, In, Out and Done; triple-tap or swipe "
-                + "down to come back. Watching is where the best edits come from: mark In and Out as moments land."
+                + "down to come back. A 16:9 edit fills the screen when you turn the phone sideways. Watching is where "
+                + "the best edits come from: mark In and Out as moments land."
         case .pages:
             return "Arrange, Trim, Mix and Audio are views of the same edit. Switch whenever you like; the "
                 + "picture and the playhead stay put. Trim opens the selected clip."

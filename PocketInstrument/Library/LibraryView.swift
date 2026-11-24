@@ -162,7 +162,7 @@ struct LibraryView: View {
                 showsStorage = false
                 deleting = project
             }
-            .presentationDetents([.medium, .large])
+            .halfSheet()
         }
         .alert("Rename project", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $renameText)
@@ -597,7 +597,8 @@ private struct StorageSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                TitlePlate(title: "Storage", subtitle: "\(library.projects.count) reels on this iPhone")
+                TitlePlate(
+                    title: "Storage", subtitle: "\(library.projects.count) reels on this \(UIDevice.current.model)")
                 PanelSection(title: "In use") { gauge }
                 PanelSection(title: "Temporary files") { temporary }
                 EngravedLabel("Projects · biggest first").padding(.leading, 4)

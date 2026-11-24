@@ -3,6 +3,8 @@ import SwiftUI
 
 @main
 struct PocketInstrumentApp: App {
+    /// Only for the orientation lock (`OrientationLock`).
+    @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
     /// UI tests launch with `-skipIntro` so their first taps reach the library.
     @State private var showsIntro = !ProcessInfo.processInfo.arguments.contains("-skipIntro")
 

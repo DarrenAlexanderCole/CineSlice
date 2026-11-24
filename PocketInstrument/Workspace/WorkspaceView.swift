@@ -76,7 +76,7 @@ struct WorkspaceView: View {
         }
         .sheet(isPresented: $showExport) {
             ExportSheet(model: model)
-                .presentationDetents([.medium, .large])
+                .halfSheet()
         }
         .alert(
             "Heads up",
@@ -419,7 +419,10 @@ private struct WatchView: View {
         )
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
+        // A 16:9 picture fills the screen with the phone turned sideways; editing stays portrait.
+        .onAppear { if model.isLandscape { OrientationLock.allow(.allButUpsideDown) } }
         .onDisappear {
+            OrientationLock.allow(.portrait)
             hideTask?.cancel()
             flashTask?.cancel()
         }

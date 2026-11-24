@@ -760,3 +760,12 @@ struct SegmentMeter: View {
         .accessibilityHidden(true)
     }
 }
+
+extension View {
+    /// Half height on iPhone, so the picture stays in view above the sheet; full height on iPad,
+    /// where the sheet floats as a card and half of it would cut its controls off.
+    /// (The device, not the size class: inside an iPad sheet the size class is compact.)
+    func halfSheet() -> some View {
+        presentationDetents(UIDevice.current.userInterfaceIdiom == .pad ? [.large] : [.medium, .large])
+    }
+}

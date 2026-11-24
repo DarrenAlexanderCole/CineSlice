@@ -72,7 +72,7 @@ struct MusicSourceSheet: View {
     @ViewBuilder
     private var myMusic: some View {
         choice(
-            1, "My Music", "A song on this iPhone: from Files, or the sound of a video.", icon: "music.note.list",
+            1, "My Music", "A song on this \(UIDevice.current.model): from Files, or the sound of a video.", icon: "music.note.list",
             isOn: showsMyMusic || current == .myMusic
         ) {
             withAnimation(.easeOut(duration: 0.2)) { showsMyMusic.toggle() }

@@ -25,6 +25,7 @@
 		62D4FF0BD29F0BE5A1F5E087 /* HelpMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC5249D0F44ED89559168F2F /* HelpMode.swift */; };
 		69CC894138522AB840191D94 /* TigerFront.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = C8B666C98A969E96EAFB5102 /* TigerFront.mlpackage */; };
 		6A64129068E57B9FF8A29FC4 /* ExportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14C7FB958DDC81A57CE3883A /* ExportSheet.swift */; };
+		6F602109B64D2F484E6ED445 /* OrientationLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8B2D726C06E3A7F82F9C937 /* OrientationLock.swift */; };
 		730D29CB6C69B0B2737DF5EB /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CE8CE8ECB7F6B0E87452B91 /* Theme.swift */; };
 		7C78BBA48CB402CA8EA6C7CD /* PocketInstrumentApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00BC1811B0F9CE64F2BBD505 /* PocketInstrumentApp.swift */; };
 		7F4E9BFD364C70B097EBBD63 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D9302D4DEAE15B1873C5D585 /* PrivacyInfo.xcprivacy */; };
@@ -115,6 +116,7 @@
 		EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhythmGuide.swift; sourceTree = "<group>"; };
 		EE4CB30A85115C146D89F422 /* WorkspaceTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTourTests.swift; sourceTree = "<group>"; };
 		F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
+		F8B2D726C06E3A7F82F9C937 /* OrientationLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrientationLock.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -190,6 +192,7 @@
 		50BE08420DFE5A464C9C0FAA /* App */ = {
 			isa = PBXGroup;
 			children = (
+				F8B2D726C06E3A7F82F9C937 /* OrientationLock.swift */,
 				00BC1811B0F9CE64F2BBD505 /* PocketInstrumentApp.swift */,
 			);
 			path = App;
@@ -434,6 +437,7 @@
 				2A72F952C5B8947F6E4B9B24 /* MediaImporter.swift in Sources */,
 				ABB5BAC565BB1FCD6EC0B081 /* MixDeck.swift in Sources */,
 				8E02F1B29679A4F741F5B911 /* MusicSources.swift in Sources */,
+				6F602109B64D2F484E6ED445 /* OrientationLock.swift in Sources */,
 				1FE55A59329B9D6B636FB00C /* PlaybackEngine.swift in Sources */,
 				560C4C0C405E460B82A70CAF /* PlayerView.swift in Sources */,
 				7C78BBA48CB402CA8EA6C7CD /* PocketInstrumentApp.swift in Sources */,
@@ -501,7 +505,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.studio4.cineslice;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -575,7 +579,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -634,7 +638,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -699,7 +703,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.studio4.cineslice;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
