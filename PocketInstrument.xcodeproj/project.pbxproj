@@ -18,9 +18,11 @@
 		43B2FE3EDF62D5F271CF5090 /* MasterEQTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34D20784FF42C95346D10BD0 /* MasterEQTap.swift */; };
 		46B518839A7A4B1DCDC972B6 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */; };
 		4DE251C57513F0C5A47BCA57 /* CompositionBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF21A29882624124DD5AC043 /* CompositionBuilder.swift */; };
+		50A33966A1F3D27DAB6645BC /* HelpManualTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B0C3A1C8C4892E6D55422F /* HelpManualTests.swift */; };
 		535E9AD80E6A0EC919AA0CCA /* TigerStepFirst.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */; };
 		536FAAB3E6079EF37372F3BE /* Tiger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14B3D5C32E59E6456E05202C /* Tiger.swift */; };
 		560C4C0C405E460B82A70CAF /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7743A7E0A879B3DFFC5F64FB /* PlayerView.swift */; };
+		62D4FF0BD29F0BE5A1F5E087 /* HelpMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC5249D0F44ED89559168F2F /* HelpMode.swift */; };
 		69CC894138522AB840191D94 /* TigerFront.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = C8B666C98A969E96EAFB5102 /* TigerFront.mlpackage */; };
 		6A64129068E57B9FF8A29FC4 /* ExportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14C7FB958DDC81A57CE3883A /* ExportSheet.swift */; };
 		730D29CB6C69B0B2737DF5EB /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CE8CE8ECB7F6B0E87452B91 /* Theme.swift */; };
@@ -36,6 +38,7 @@
 		B234F02052D46C663B23BBA8 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48E6F5D7028543BECDE616A1 /* Components.swift */; };
 		BFB165C710BD0850B9B40822 /* AudioDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 038E3C0A33C5DD257FEF8DEA /* AudioDeck.swift */; };
 		C0228B4F6A3E9F01DCAA4E98 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2133A967A46DCA109FA477EF /* Assets.xcassets */; };
+		C8B11F57AE86FBAE7F682592 /* HelpManual.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD67B4D0218E28E94105F11E /* HelpManual.swift */; };
 		C9390A56870EA3FC61699B82 /* WorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CD2F88F2097660E608C9055 /* WorkspaceModel.swift */; };
 		CE7775B19245B4B80D1BAB01 /* VoiceSeparator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 651AE1474F00FFA80A0637CC /* VoiceSeparator.swift */; };
 		CF5BB531EC77106A70E817FF /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */; };
@@ -44,6 +47,7 @@
 		DE1BA5383C706993E73E2F1E /* Fader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8015626D0D83837F0166B600 /* Fader.swift */; };
 		E5252CA082B1E7104E74BC7F /* WorkspaceTourTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE4CB30A85115C146D89F422 /* WorkspaceTourTests.swift */; };
 		E5CA5674EEECBFD49415E6B7 /* ArrangeDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63F6E64CBA156AFCC78BDDA6 /* ArrangeDeck.swift */; };
+		F1A76F881AE1B73670C18AE4 /* HelpTopic.swift in Sources */ = {isa = PBXBuildFile; fileRef = C75D056A78186D7396308549 /* HelpTopic.swift */; };
 		F78ADA3B97060B3A89D95A88 /* ExploreDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */; };
 /* End PBXBuildFile section */
 
@@ -98,12 +102,16 @@
 		95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */ = {isa = PBXFileReference; path = TigerStepFirst.mlpackage; sourceTree = "<group>"; };
 		98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreDeck.swift; sourceTree = "<group>"; };
 		AF21A29882624124DD5AC043 /* CompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionBuilder.swift; sourceTree = "<group>"; };
+		B9B0C3A1C8C4892E6D55422F /* HelpManualTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpManualTests.swift; sourceTree = "<group>"; };
 		BB503F9E82671553893CF232 /* PocketInstrument.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PocketInstrument.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFE6E096ADE5D307BAB58C60 /* TigerStep.mlpackage */ = {isa = PBXFileReference; path = TigerStep.mlpackage; sourceTree = "<group>"; };
+		C75D056A78186D7396308549 /* HelpTopic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpTopic.swift; sourceTree = "<group>"; };
 		C8B666C98A969E96EAFB5102 /* TigerFront.mlpackage */ = {isa = PBXFileReference; path = TigerFront.mlpackage; sourceTree = "<group>"; };
+		CD67B4D0218E28E94105F11E /* HelpManual.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpManual.swift; sourceTree = "<group>"; };
 		D9302D4DEAE15B1873C5D585 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		DF56D275663E66C21D0907C4 /* CMTime+MediaTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMTime+MediaTime.swift"; sourceTree = "<group>"; };
+		EC5249D0F44ED89559168F2F /* HelpMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpMode.swift; sourceTree = "<group>"; };
 		EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhythmGuide.swift; sourceTree = "<group>"; };
 		EE4CB30A85115C146D89F422 /* WorkspaceTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTourTests.swift; sourceTree = "<group>"; };
 		F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportService.swift; sourceTree = "<group>"; };
@@ -147,6 +155,7 @@
 		2291C2EA5532EC289AE69453 /* PocketInstrumentTests */ = {
 			isa = PBXGroup;
 			children = (
+				B9B0C3A1C8C4892E6D55422F /* HelpManualTests.swift */,
 				8D2D6B1E8FD79E15B152394E /* MusicPipelineTests.swift */,
 			);
 			path = PocketInstrumentTests;
@@ -215,6 +224,7 @@
 				D9302D4DEAE15B1873C5D585 /* PrivacyInfo.xcprivacy */,
 				50BE08420DFE5A464C9C0FAA /* App */,
 				58006475C23C8624AE71205E /* Design */,
+				A2D973CAA524AA7DC3DF3527 /* Help */,
 				BED1602B710B0739942B4DC5 /* Library */,
 				102A3094A888D423EA86542F /* Media */,
 				3897DB901BA92F1F1657655F /* Workspace */,
@@ -228,6 +238,16 @@
 				EE4CB30A85115C146D89F422 /* WorkspaceTourTests.swift */,
 			);
 			path = PocketInstrumentUITests;
+			sourceTree = "<group>";
+		};
+		A2D973CAA524AA7DC3DF3527 /* Help */ = {
+			isa = PBXGroup;
+			children = (
+				CD67B4D0218E28E94105F11E /* HelpManual.swift */,
+				EC5249D0F44ED89559168F2F /* HelpMode.swift */,
+				C75D056A78186D7396308549 /* HelpTopic.swift */,
+			);
+			path = Help;
 			sourceTree = "<group>";
 		};
 		BED1602B710B0739942B4DC5 /* Library */ = {
@@ -404,6 +424,9 @@
 				CF5BB531EC77106A70E817FF /* ExportService.swift in Sources */,
 				6A64129068E57B9FF8A29FC4 /* ExportSheet.swift in Sources */,
 				DE1BA5383C706993E73E2F1E /* Fader.swift in Sources */,
+				C8B11F57AE86FBAE7F682592 /* HelpManual.swift in Sources */,
+				62D4FF0BD29F0BE5A1F5E087 /* HelpMode.swift in Sources */,
+				F1A76F881AE1B73670C18AE4 /* HelpTopic.swift in Sources */,
 				28F1607F7F472E2A970579A7 /* Knob.swift in Sources */,
 				DAC2166A9E5E40909E01B190 /* LibraryView.swift in Sources */,
 				3FA3191E45FE0DE41E971CE6 /* MasterEQPanel.swift in Sources */,
@@ -434,6 +457,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				50A33966A1F3D27DAB6645BC /* HelpManualTests.swift in Sources */,
 				ABC80865925DFE487980EC3C /* MusicPipelineTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -551,7 +575,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -610,7 +634,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
