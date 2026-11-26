@@ -251,11 +251,14 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
     /// How the track was made (Quick Click or Billboards guides); nil for older projects, which
     /// all used My Music.
     public var reference: MusicReference?
+    /// Which of LIGHTBOX's audio lanes it sits on (0 is the first); nil in projects from before
+    /// it could move between them, read as 0.
+    public var lane: Int?
 
     public init(
         id: UUID = UUID(), fileName: String, originalFilename: String? = nil,
         duration: MediaTime, offset: MediaTime = .zero, volume: Float = 1, isLocked: Bool = false,
-        reference: MusicReference? = nil
+        reference: MusicReference? = nil, lane: Int? = nil
     ) {
         self.id = id
         self.fileName = fileName
@@ -265,10 +268,20 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
         self.volume = volume
         self.isLocked = isLocked
         self.reference = reference
+        self.lane = lane
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, fileName, originalFilename, duration, offset, volume, isLocked, reference
+        case id, fileName, originalFilename, duration, offset, volume, isLocked, reference, lane
+    }
+
+    /// The audio lane it sits on.
+    public var audioLane: Int { lane ?? 0 }
+
+    /// The whole song on the timeline, from where it starts (or 0, if it starts before the
+    /// sequence) to its end, which may run past the sequence's.
+    public var timelineRange: MediaTimeRange {
+        MediaTimeRange(start: max(offset, .zero), end: max(offset + duration, .zero))
     }
 
     /// Where it came from; older tracks were all My Music.
@@ -284,6 +297,7 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
         volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
         isLocked = try c.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
         reference = try c.decodeIfPresent(MusicReference.self, forKey: .reference)
+        lane = try c.decodeIfPresent(Int.self, forKey: .lane)
     }
 }
 
@@ -452,9 +466,9 @@ public enum ProjectError: Error, Equatable {
 }
 
 public struct Project: Codable, Hashable, Identifiable, Sendable {
-    /// 2 added sound lanes and gaps between clips. A project with neither is still written as 1,
-    /// so builds from before them keep opening it; one with either is written as 2, which those
-    /// builds refuse rather than open and lose them on saving.
+    /// 2 added sound lanes, gaps between clips and stacked video lanes. A project with none of
+    /// them is still written as 1, so builds from before them keep opening it; one with any is
+    /// written as 2, which those builds refuse rather than open and lose them on saving.
     public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
@@ -467,6 +481,8 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     public var referenceAudio: AudioTrack?
     /// The audio lanes under the music, each holding sounds placed in time.
     public var soundTracks: [SoundTrack]
+    /// The video lanes above the sequence, lowest first, each holding clips placed in time.
+    public var videoLayers: [VideoLayer]
     /// The recorded music curve (Phase 3), in composition time. Clip curves live on the clips.
     public var automation: Automation
     public var loop: LoopRange?
@@ -484,6 +500,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         self.clips = []
         self.referenceAudio = nil
         self.soundTracks = []
+        self.videoLayers = []
         self.automation = Automation()
         self.loop = nil
         self.exportSettings = .vertical1080
@@ -493,13 +510,13 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     // Tolerant decoding: new optional fields can be added without breaking old files.
     enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, createdAt, modifiedAt, sources, clips
-        case referenceAudio, soundTracks, automation, loop, exportSettings, masterEQ
+        case referenceAudio, soundTracks, videoLayers, automation, loop, exportSettings, masterEQ
     }
 
-    /// The oldest schema that holds everything in the project: 2 for sound lanes or gaps
-    /// between clips, which version 1 builds would drop.
+    /// The oldest schema that holds everything in the project: 2 for sound lanes, gaps between
+    /// clips or stacked video lanes, which version 1 builds would drop.
     public var minimumSchemaVersion: Int {
-        soundTracks.isEmpty && clips.allSatisfy { $0.gap == .zero } ? 1 : 2
+        soundTracks.isEmpty && videoLayers.isEmpty && clips.allSatisfy { $0.gap == .zero } ? 1 : 2
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -513,6 +530,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         try c.encode(clips, forKey: .clips)
         try c.encodeIfPresent(referenceAudio, forKey: .referenceAudio)
         if !soundTracks.isEmpty { try c.encode(soundTracks, forKey: .soundTracks) }
+        if !videoLayers.isEmpty { try c.encode(videoLayers, forKey: .videoLayers) }
         try c.encode(automation, forKey: .automation)
         try c.encodeIfPresent(loop, forKey: .loop)
         try c.encode(exportSettings, forKey: .exportSettings)
@@ -543,6 +561,13 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         referenceAudio = try c.decodeIfPresent(AudioTrack.self, forKey: .referenceAudio)
         // Version 1 had no sound lanes.
         soundTracks = try c.decodeIfPresent([SoundTrack].self, forKey: .soundTracks) ?? []
+        // Before the music could move between lanes it had one of its own over the sounds: it
+        // keeps the first lane and the sounds move down one, so nothing lands on it.
+        if referenceAudio != nil, referenceAudio?.lane == nil {
+            if !soundTracks.isEmpty { soundTracks.insert(SoundTrack(), at: 0) }
+            referenceAudio?.lane = 0
+        }
+        videoLayers = try c.decodeIfPresent([VideoLayer].self, forKey: .videoLayers) ?? []
         // Older files wrote an always-empty `volumeAutomation` array; it is ignored.
         automation = try c.decodeIfPresent(Automation.self, forKey: .automation) ?? Automation()
         loop = try c.decodeIfPresent(LoopRange.self, forKey: .loop)

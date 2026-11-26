@@ -166,6 +166,7 @@ final class WorkspaceModel {
             selectedClipID = project.clips.first?.id
         }
         if let id = selectedSoundID, project.sound(id: id) == nil { selectedSoundID = nil }
+        if let id = selectedLayerClipID, project.layerClip(id: id) == nil { selectedLayerClipID = nil }
         if mode == .explore, selectedClip == nil { mode = .arrange }
         if previous.referenceAudio?.fileName != project.referenceAudio?.fileName { loadWaveform() }
         scheduleSave()
@@ -366,8 +367,9 @@ final class WorkspaceModel {
     /// LIGHTBOX: selects a clip (or clears the selection) without moving the playhead, so the
     /// scissors can cut the selected clip where the playhead already is.
     func selectInPlace(_ clipID: UUID?) {
-        guard clipID != selectedClipID || selectedSoundID != nil else { return }
+        guard clipID != selectedClipID || selectedSoundID != nil || selectedLayerClipID != nil else { return }
         selectedSoundID = nil
+        selectedLayerClipID = nil
         selectedClipID = clipID
         Haptics.detent()
     }
@@ -380,6 +382,7 @@ final class WorkspaceModel {
     func selectSound(_ id: UUID) {
         guard id != selectedSoundID else { return }
         selectedClipID = nil
+        selectedLayerClipID = nil
         selectedSoundID = id
         Haptics.detent()
     }
@@ -480,12 +483,84 @@ final class WorkspaceModel {
         Haptics.detent()
     }
 
-    /// Takes the selected sound off its lane, or the selected clip out of the sequence.
+    // MARK: Stacked video lanes (LIGHTBOX)
+
+    /// The clip selected on a video lane above the sequence. Selecting one clears the others.
+    private(set) var selectedLayerClipID: UUID?
+    var selectedLayerClip: LayerClip? { selectedLayerClipID.flatMap { project.layerClip(id: $0) } }
+
+    func selectLayerClip(_ id: UUID) {
+        guard id != selectedLayerClipID else { return }
+        selectedClipID = nil
+        selectedSoundID = nil
+        selectedLayerClipID = id
+        Haptics.detent()
+    }
+
+    /// Whether LIGHTBOX is showing: there, clips and music brought in land at the playhead.
+    var isInLightbox = false
+
+    /// Whether the next imported clips go in at the playhead, on the lowest video lane with room
+    /// (LIGHTBOX), rather than into the sequence at `importInsertIndex`.
+    var importsAtPlayhead = false
+
+    /// Moves a clip of the sequence or a stacked clip to `start` on video lane `lane` (0 for the
+    /// sequence). False, with a warning tap, when something is in the way there.
+    @discardableResult
+    func moveVideoClip(_ id: UUID, toLane lane: Int, start: MediaTime) -> Bool {
+        guard MoveVideoClipCommand.canMove(id, toLane: lane, start: start, in: project) else {
+            Haptics.warning()
+            return false
+        }
+        perform(MoveVideoClipCommand(clipID: id, lane: lane, start: start))
+        return true
+    }
+
+    /// Slides the music to `offset` on audio lane `lane`. False, with a warning tap, when it's
+    /// locked or a sound is in the way there.
+    @discardableResult
+    func placeMusic(lane: Int, offset: MediaTime) -> Bool {
+        guard var music = project.referenceAudio, !music.isLocked else {
+            Haptics.warning()
+            return false
+        }
+        music.offset = music.clampedOffset(offset, sequenceDuration: project.duration)
+        guard project.audioLaneFits(music.timelineRange, lane: lane, excludingMusic: true) else {
+            Haptics.warning()
+            return false
+        }
+        perform(PlaceMusicCommand(lane: lane, offset: offset))
+        return true
+    }
+
+    /// The selected stacked clip, when the playhead is inside it far enough from its ends to cut.
+    var layerSplitTime: MediaTime? {
+        guard let clip = selectedLayerClip, SplitLayerClipCommand.canSplit(clip, at: currentTime) else { return nil }
+        return currentTime
+    }
+
+    /// Cuts the selected stacked clip at the playhead and selects its second half.
+    func splitSelectedLayerClip() {
+        guard let id = selectedLayerClipID, let time = layerSplitTime else {
+            Haptics.warning()
+            return
+        }
+        let command = SplitLayerClipCommand(clipID: id, time: time)
+        perform(command)
+        selectedLayerClipID = command.newClipID
+        Haptics.press()
+    }
+
+    /// Takes the selected sound or stacked clip off its lane, or the selected clip out of the
+    /// sequence.
     func removeSelection() {
-        if let id = selectedSoundID {
+        if let id = selectedLayerClipID {
+            perform(RemoveLayerClipCommand(clipID: id))
+        } else if let id = selectedSoundID {
             perform(RemoveSoundCommand(clipID: id))
         } else if let id = selectedClipID {
-            remove(id)
+            // The rest stay where they are, lined up with the lanes above and below.
+            perform(RemoveClipCommand(clipID: id, leavesGap: true))
         } else {
             return
         }
@@ -649,6 +724,15 @@ final class WorkspaceModel {
 
     func addSources(_ sources: [SourceAsset]) {
         guard !sources.isEmpty else { return }
+        if importsAtPlayhead {
+            importsAtPlayhead = false
+            importInsertIndex = nil
+            let command = AddClipsAtCommand(sources: sources, start: currentTime)
+            perform(command)
+            guard let first = command.clipIDs.first, let lane = command.lane(in: project) else { return }
+            if lane == 0 { selectInPlace(first) } else { selectLayerClip(first) }
+            return
+        }
         let command = AddClipsCommand(sources: sources, insertIndex: importInsertIndex)
         importInsertIndex = nil
         perform(command)
@@ -1322,6 +1406,7 @@ final class WorkspaceModel {
             longer.offset = current.offset
             longer.volume = current.volume
             longer.isLocked = current.isLocked
+            longer.lane = current.lane
             amend(SetReferenceAudioCommand(track: longer))
         }
     }
@@ -1335,6 +1420,17 @@ final class WorkspaceModel {
 
     private func finishMusicImport(_ track: AudioTrack) {
         importStatus = nil
+        var track = track
+        if isInLightbox {
+            // In LIGHTBOX the song starts at the playhead, on the first audio lane with room.
+            track.offset = track.clampedOffset(currentTime, sequenceDuration: project.duration)
+            guard let lane = project.firstClearAudioLane(for: track.timelineRange, excludingMusic: true) else {
+                alertMessage = "No audio lane has room for the song at the playhead."
+                Haptics.warning()
+                return
+            }
+            track.lane = lane
+        }
         perform(SetReferenceAudioCommand(track: track))
         Haptics.success()
     }
@@ -1541,8 +1637,10 @@ final class WorkspaceModel {
         finishImport(sources, errors)
     }
 
-    func addDemoClips(at index: Int? = nil) async {
+    /// Demo clips into the sequence at `index`, or at the playhead on the lowest lane with room.
+    func addDemoClips(at index: Int? = nil, atPlayhead: Bool = false) async {
         importInsertIndex = index
+        importsAtPlayhead = atPlayhead
         importStatus = "Generating demo clips…"
         do {
             let sources = try await DemoMediaGenerator.makeDemoSources(store: store, projectID: project.id)

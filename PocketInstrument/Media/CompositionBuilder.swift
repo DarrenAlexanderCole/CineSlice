@@ -198,9 +198,20 @@ enum CompositionBuilder {
             ? try await insertSounds(project.soundTracks, url: soundURL, sequenceDuration: cursor, into: composition)
             : [:]
 
+        // Stacked lanes over the sequence, the highest on top; between their clips they're clear.
+        var layers = [layer]
+        for videoLayer in project.videoLayers {
+            if let stacked = try await insertLayer(
+                videoLayer, project: project, frame: frame, toOutput: toOutput, sequenceDuration: cursor,
+                mediaURL: mediaURL, into: composition)
+            {
+                layers.insert(stacked, at: 0)
+            }
+        }
+
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: cursor)
-        instruction.layerInstructions = [layer]
+        instruction.layerInstructions = layers
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
@@ -215,6 +226,57 @@ enum CompositionBuilder {
                 equalizer: equalizer),
             duration: cursor, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID,
             soundTrackIDs: soundTrackIDs, voiceTrackID: voiceTrackID, separatedClipIDs: separated)
+    }
+
+    /// One stacked lane on a video track of its own: each clip's picture where it sits, framed like
+    /// the sequence's, cut off at the sequence's end. Nil when nothing on it plays.
+    private static func insertLayer(
+        _ layer: VideoLayer, project: Project, frame: CGSize, toOutput: CGAffineTransform,
+        sequenceDuration: CMTime, mediaURL: (SourceAsset) -> URL?, into composition: AVMutableComposition
+    ) async throws -> AVMutableVideoCompositionLayerInstruction? {
+        guard
+            let track = composition.addMutableTrack(
+                withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+        else { throw CompositionError.cannotCreateTrack }
+        let instruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        var end = CMTime.zero
+        for item in layer.clips {
+            let start = item.start.cmTime
+            guard start < sequenceDuration, start >= end, let source = project.source(for: item.clip),
+                let url = mediaURL(source)
+            else { continue }
+            let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+            guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else { continue }
+            let wanted = item.clip.sourceRange.cmTimeRange
+            let fits = CMTimeRange(
+                start: wanted.start, duration: CMTimeMinimum(wanted.duration, sequenceDuration - start))
+            let usable = fits.intersection(try await sourceVideo.load(.timeRange))
+            guard usable.isValid, !usable.isEmpty else { continue }
+            if start > end {
+                track.insertEmptyTimeRange(CMTimeRange(start: end, end: start))
+                // Clear between clips: an empty stretch alone can hold the last frame on screen.
+                instruction.setOpacity(0, at: end)
+            }
+            try track.insertTimeRange(usable, of: sourceVideo, at: start)
+            instruction.setOpacity(1, at: start)
+            let (naturalSize, preferred) = try await sourceVideo.load(.naturalSize, .preferredTransform)
+            instruction.setTransform(
+                framingTransform(
+                    naturalSize: naturalSize, preferred: preferred, renderSize: frame, framing: item.clip.framing,
+                    crop: item.clip.crop
+                ).concatenating(toOutput),
+                at: start)
+            end = start + usable.duration
+        }
+        guard end > .zero else {
+            composition.removeTrack(track)
+            return nil
+        }
+        if end < sequenceDuration {
+            track.insertEmptyTimeRange(CMTimeRange(start: end, end: sequenceDuration))
+            instruction.setOpacity(0, at: end)
+        }
+        return instruction
     }
 
     /// Places the music per `MusicPlacement`, trimmed to the sequence. Returns its track ID, or nil if nothing overlaps.

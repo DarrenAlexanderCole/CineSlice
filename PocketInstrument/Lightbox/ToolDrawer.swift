@@ -3,9 +3,9 @@ import SwiftUI
 
 /// The hardware tray that drops out beside Tools: a row of keys, scrolling sideways if it runs
 /// out of room, and under it the panel of whichever adjusting tool is open. Only tools that work
-/// are live. Scissor cuts the selected clip or sound at the playhead (for a clip, the same split
-/// as upright Arrange; one undo step). Remove takes the selected sound off its lane or the
-/// selected clip out of the sequence. Volume sets the selected sound's or clip's level, and mutes
+/// are live. Scissor cuts the selected clip, stacked clip or sound at the playhead (for a clip,
+/// the same split as upright Arrange; one undo step). Remove takes the selected sound or stacked
+/// clip off its lane, or the selected clip out of the sequence. Volume sets the selected sound's or clip's level, and mutes
 /// a sound's lane; Fade sets a sound's fade in and out. Both are heard live while a fader moves
 /// and make one undo step when it's let go. Trim is shown dark and can't be pressed until it's
 /// built, so the tray's order is visible without dead buttons.
@@ -179,17 +179,20 @@ struct ToolDrawer: View {
     /// Scissor needs the playhead inside the selected sound, or the selected clip (any clip when
     /// nothing is selected), away from its ends.
     private var canCut: Bool {
+        if model.selectedLayerClipID != nil { return model.layerSplitTime != nil }
         if model.selectedSoundID != nil { return model.soundSplitTime != nil }
         guard let point = model.splitPoint else { return false }
         return model.selectedClipID == nil || model.selectedClipID == point.clipID
     }
 
+    /// Something with sound selected: a sound or a clip of the sequence (stacked clips are picture only).
     private var hasSelection: Bool { model.selectedSoundID != nil || model.selectedClipID != nil }
 
     private func isEnabled(_ tool: Tool) -> Bool {
         switch tool {
         case .scissor: canCut
-        case .remove, .volume: hasSelection
+        case .remove: hasSelection || model.selectedLayerClipID != nil
+        case .volume: hasSelection
         case .fade: model.selectedSoundID != nil
         case .trim: false
         }
@@ -201,7 +204,13 @@ struct ToolDrawer: View {
         return Button {
             switch tool {
             case .scissor:
-                if model.selectedSoundID != nil { model.splitSelectedSound() } else { model.splitAtPlayhead() }
+                if model.selectedLayerClipID != nil {
+                    model.splitSelectedLayerClip()
+                } else if model.selectedSoundID != nil {
+                    model.splitSelectedSound()
+                } else {
+                    model.splitAtPlayhead()
+                }
             case .remove: model.removeSelection()
             case .volume, .fade:
                 withAnimation(.easeInOut(duration: 0.2)) { panel = panel == tool ? nil : tool }

@@ -185,15 +185,18 @@ struct FilmStripClip: View {
 /// and light coming through. Dimmed when its level is down to nothing.
 struct AudioGlassClip: View {
     let music: AudioTrack
-    let placement: MusicPlacement
+    /// Where the sequence ends, in seconds: the song is cut off there.
+    let sequenceEnd: Double
     let waveform: Waveform?
     let viewport: TimelineViewport
     let lanesWidth: Double
     let height: Double
+    /// Held up by a long press and sliding: shows where the song now starts.
+    var isLifted = false
 
     var body: some View {
-        let start = placement.compositionRange.start.seconds
-        let end = placement.compositionRange.end.seconds
+        let start = music.timelineRange.start.seconds
+        let end = music.timelineRange.end.seconds
         let vx0 = max(viewport.x(for: start), -16)
         let vx1 = min(viewport.x(for: end), lanesWidth + 16)
         let shape = RoundedRectangle(cornerRadius: 5, style: .continuous)
@@ -221,13 +224,48 @@ struct AudioGlassClip: View {
             }
         }
         .frame(width: max(0, vx1 - vx0), height: height)
-        .overlay(shape.strokeBorder(Theme.acetateInk.opacity(0.35), lineWidth: 1))
+        .overlay(alignment: .leading) {
+            // Past the sequence's end the song doesn't play: shaded.
+            let cut = min(max(viewport.x(for: sequenceEnd) - vx0, 0), max(0, vx1 - vx0))
+            if cut < vx1 - vx0 {
+                shape.fill(Theme.obsidian.opacity(0.22))
+                    .frame(width: vx1 - vx0 - cut)
+                    .offset(x: cut)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if isLifted {
+                // Where the song's start sits against the sequence: before it (−) or after (+).
+                Text(String(format: "SONG %@%.2f s", music.offset.seconds < 0 ? "−" : "+", abs(music.offset.seconds)))
+                    .font(Theme.mono(8, weight: .bold))
+                    .foregroundStyle(Theme.acetateInk)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.white.opacity(0.6)))
+                    .padding(4)
+            } else if music.isLocked {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Theme.acetateInk.opacity(0.8))
+                    .padding(5)
+            }
+        }
+        .overlay(
+            shape.strokeBorder(
+                isLifted ? Theme.signal : Theme.acetateInk.opacity(0.35), lineWidth: isLifted ? 2.5 : 1)
+        )
         .opacity(audible ? 1 : 0.4)
         .shadow(color: Theme.acetate.opacity(0.5), radius: 3)
         .offset(x: vx0)
         .accessibilityElement()
         .accessibilityLabel("Music: \(music.originalFilename ?? "reference track")")
-        .accessibilityValue(audible ? "Level \(Int(music.volume * 100)) percent" : "Muted")
+        .accessibilityValue(
+            "Lane A\(music.audioLane + 1), " + (audible ? "level \(Int(music.volume * 100)) percent" : "muted")
+                + (music.isLocked ? ", locked" : "")
+        )
+        .accessibilityHint(
+            music.isLocked ? "Unlock it in Mix to move it." : "Hold and drag to slide it along or onto another lane.")
     }
 
     /// Position in the song at composition time `t`.

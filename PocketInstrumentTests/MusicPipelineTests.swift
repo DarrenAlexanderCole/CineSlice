@@ -187,7 +187,9 @@ final class MusicPipelineTests: XCTestCase {
         late.start = MediaTime(seconds: 12.5)
         try AddSoundCommand(clip: early).apply(to: &project)
         try AddSoundCommand(clip: late, preferredTrack: 1).apply(to: &project)
-        XCTAssertEqual(project.soundTracks.count, 1, "both fit on one lane")
+        // The song is on the first lane, so they share the next.
+        let lane = try XCTUnwrap(project.soundLocation(id: early.id)?.track)
+        XCTAssertEqual(project.soundLocation(id: late.id)?.track, lane, "both fit on one lane")
         project.exportSettings.soundPolicy = .clipsOnly
         try store.save(project)
 
@@ -216,13 +218,13 @@ final class MusicPipelineTests: XCTestCase {
         for (onset, want) in zip(exact, expected) { XCTAssertEqual(onset, want, accuracy: 0.003) }
 
         // The preview's mix holds each lane at its sounds' levels; a muted lane is silent.
-        project.soundTracks[0].isMuted = true
+        project.soundTracks[lane].isMuted = true
         let built = try await CompositionBuilder.build(
             project: project, renderSize: CGSize(width: 1080, height: 1920), frameRate: 30,
             includeClipAudio: true, includeMusic: false,
             mediaURL: { self.store.mediaURL(for: $0, projectID: project.id) }, musicURL: nil,
             soundURL: { self.store.soundURL(for: $0, projectID: project.id) })
-        let laneTrack = try XCTUnwrap(built.soundTrackIDs[project.soundTracks[0].id])
+        let laneTrack = try XCTUnwrap(built.soundTrackIDs[project.soundTracks[lane].id])
         let params = try XCTUnwrap(built.audioMix?.inputParameters.first { $0.trackID == laneTrack })
         XCTAssertEqual(level(params, at: 3.5), 0)
     }
@@ -247,7 +249,8 @@ final class MusicPipelineTests: XCTestCase {
             includeClipAudio: true, includeMusic: false,
             mediaURL: { self.store.mediaURL(for: $0, projectID: project.id) }, musicURL: nil,
             soundURL: { self.store.soundURL(for: $0, projectID: project.id) })
-        let laneTrack = try XCTUnwrap(built.soundTrackIDs[project.soundTracks[0].id])
+        let lane = try XCTUnwrap(project.soundLocation(id: sound.id)?.track)
+        let laneTrack = try XCTUnwrap(built.soundTrackIDs[project.soundTracks[lane].id])
         let params = try XCTUnwrap(built.audioMix?.inputParameters.first { $0.trackID == laneTrack })
         XCTAssertEqual(level(params, at: 3.5), 0.4, accuracy: 0.001, "halfway up the fade in")
         XCTAssertEqual(level(params, at: 4.2), 0.8, accuracy: 0.001, "held at its level")
@@ -279,6 +282,40 @@ final class MusicPipelineTests: XCTestCase {
         let clip = try await generator.image(at: CMTime(seconds: 3, preferredTimescale: 600)).image
         let (cr, cg, cb) = try pixel(clip, x: 0.5, y: 0.5)
         XCTAssertGreaterThan(cr + cg + cb, 60, "the clip plays after it")
+    }
+
+    /// A stacked clip covers the sequence while it plays, and the sequence shows again after it.
+    func testStackedClipsCoverTheSequence() async throws {
+        var project = try await makeProject()
+        // The green square clip stacked from 1 s: over brown A until 4 s, then over blue B.
+        let green = project.sources[2]
+        let stack = AddClipsAtCommand(sources: [green], start: MediaTime(seconds: 1))
+        try stack.apply(to: &project)
+        XCTAssertEqual(stack.lane(in: project), 1, "over the sequence it goes on V2")
+        let end = try XCTUnwrap(project.layerClip(id: stack.clipIDs[0])).timelineRange.end.seconds
+        XCTAssertGreaterThan(end, 4.5)
+        XCTAssertLessThan(end, 9)
+        project.exportSettings.soundPolicy = .silent
+        try store.save(project)
+        let result = try await ExportService.export(project: project, store: store) { _ in }
+        let asset = AVURLAsset(url: result.videoURL)
+        try await assertVideo(asset, seconds: 13)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        func color(at seconds: Double) async throws -> (Int, Int, Int) {
+            let image = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image
+            return try pixel(image, x: 0.15, y: 0.85)
+        }
+        let before = try await color(at: 0.5)
+        XCTAssertGreaterThan(before.0, before.1, "brown A before the stacked clip: \(before)")
+        for t in [1.5, (4 + end) / 2] {
+            let over = try await color(at: t)
+            XCTAssertGreaterThan(over.1, over.0, "green on top at \(t) s: \(over)")
+            XCTAssertGreaterThan(over.1, over.2, "green on top at \(t) s: \(over)")
+        }
+        let after = try await color(at: (end + 9) / 2)
+        XCTAssertGreaterThan(after.2, after.0, "blue B again after it: \(after)")
     }
 
     func testClipAudioOnlyExportLeavesMusicOut() async throws {

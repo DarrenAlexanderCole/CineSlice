@@ -120,13 +120,23 @@ public struct SequencePlacement: Sendable {
     }
 }
 
+/// Takes a clip out of the sequence. The clips after it close up, or, with `leavesGap` (LIGHTBOX,
+/// where the stacked lanes and sounds are lined up with them), stay where they are.
 public struct RemoveClipCommand: EditingCommand {
     public let clipID: UUID
-    public init(clipID: UUID) { self.clipID = clipID }
+    public let leavesGap: Bool
+    public init(clipID: UUID, leavesGap: Bool = false) {
+        self.clipID = clipID
+        self.leavesGap = leavesGap
+    }
     public var actionName: String { "Remove Clip" }
     public func apply(to project: inout Project) throws {
         guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
-        project.clips.remove(at: i)
+        if leavesGap {
+            project.setSequence(SequencePlacement(project: project).items.filter { $0.clip.id != clipID })
+        } else {
+            project.clips.remove(at: i)
+        }
         // The source stays in the project so undo (and re-adding) keeps working.
     }
 }

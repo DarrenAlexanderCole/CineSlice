@@ -44,7 +44,7 @@ struct WorkspaceView: View {
                         setWatching(true)
                     },
                     onDone: { OrientationLock.returnToPortrait() },
-                    onAddClips: { photos, index in pick(.clips, photos: photos, at: index) },
+                    onAddClips: { photos in pick(.clips, photos: photos, atPlayhead: true) },
                     onAddMusic: { fromVideo in pick(.music, photos: fromVideo) },
                     onAddSound: { fromVideo in pick(.sound, photos: fromVideo) }
                 )
@@ -64,6 +64,7 @@ struct WorkspaceView: View {
         } action: { wide in
             if wide { model.enterLightbox() }
             isLightbox = wide
+            model.isInLightbox = wide
         }
         // Set outside the sheets below, so Release's controls have help too.
         .environment(\.helpCenter, help)
@@ -358,10 +359,14 @@ struct WorkspaceView: View {
 
     // MARK: Deck
 
-    /// Opens a picker; clips go in at `index` in the sequence, or at the end.
-    private func pick(_ purpose: PickPurpose, photos: Bool, at index: Int? = nil) {
+    /// Opens a picker; clips go in at `index` in the sequence, or at the end, or at the playhead
+    /// on the lowest lane with room (LIGHTBOX).
+    private func pick(_ purpose: PickPurpose, photos: Bool, at index: Int? = nil, atPlayhead: Bool = false) {
         pickPurpose = purpose
-        if purpose == .clips { model.importInsertIndex = index }
+        if purpose == .clips {
+            model.importInsertIndex = index
+            model.importsAtPlayhead = atPlayhead
+        }
         if photos { showPhotos = true } else { showFiles = true }
     }
 

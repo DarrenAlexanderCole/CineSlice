@@ -137,7 +137,7 @@ public struct SoundTrack: Codable, Hashable, Identifiable, Sendable {
 }
 
 extension Project {
-    /// The most sound lanes a project may have, for now.
+    /// LIGHTBOX's audio lanes: always this many, empty or not, shared by the sounds and the music.
     public static let maxSoundTracks = 10
 
     public func sound(id: UUID) -> SoundClip? {
@@ -153,21 +153,47 @@ extension Project {
         return nil
     }
 
-    /// Whether a sound of `range` could go on lane `track` (a lane past the last is a new, empty one).
-    public func soundFits(_ range: MediaTimeRange, onTrack track: Int, excluding: UUID? = nil) -> Bool {
-        guard track >= 0 else { return false }
-        guard track < soundTracks.count else { return track < Self.maxSoundTracks }
-        return soundTracks[track].fits(range, excluding: excluding)
+    /// Whether `range` is clear on audio lane `lane`: of its sounds but `excludingSound`, and of
+    /// the music, if it sits there, unless `excludingMusic`.
+    public func audioLaneFits(
+        _ range: MediaTimeRange, lane: Int, excludingSound: UUID? = nil, excludingMusic: Bool = false
+    ) -> Bool {
+        guard lane >= 0, lane < Self.maxSoundTracks else { return false }
+        if !excludingMusic, let music = referenceAudio, music.audioLane == lane {
+            let song = music.timelineRange
+            if song.start < range.end && range.start < song.end { return false }
+        }
+        return lane >= soundTracks.count || soundTracks[lane].fits(range, excluding: excludingSound)
     }
 
-    /// Lanes emptied by an edit go away, so the lanes are always the ones in use.
+    /// Whether a sound of `range` could go on lane `track`.
+    public func soundFits(_ range: MediaTimeRange, onTrack track: Int, excluding: UUID? = nil) -> Bool {
+        audioLaneFits(range, lane: track, excludingSound: excluding)
+    }
+
+    /// The first audio lane from `from` up where `range` is clear.
+    public func firstClearAudioLane(
+        for range: MediaTimeRange, from: Int = 0, excludingSound: UUID? = nil, excludingMusic: Bool = false
+    ) -> Int? {
+        (max(0, from)..<Self.maxSoundTracks).first {
+            audioLaneFits(range, lane: $0, excludingSound: excludingSound, excludingMusic: excludingMusic)
+        }
+    }
+
+    /// Lane `lane` exists to put a sound on (lanes are numbered by place, so the ones before it
+    /// are made too, empty).
+    mutating func ensureSoundTrack(_ lane: Int) {
+        while soundTracks.count <= lane { soundTracks.append(SoundTrack()) }
+    }
+
+    /// Empty lanes at the end aren't kept; every lane always shows, so nothing moves.
     mutating func pruneSoundTracks() {
-        soundTracks.removeAll { $0.clips.isEmpty }
+        while soundTracks.last?.clips.isEmpty == true { soundTracks.removeLast() }
     }
 }
 
-/// Places a new sound: on lane `preferredTrack` if it's clear there, else the first lane below
-/// it that is, else a new lane under the others.
+/// Places a new sound on the first lane from `preferredTrack` on where it's clear, music
+/// included; refused when none of them is.
 public struct AddSoundCommand: EditingCommand {
     public let clip: SoundClip
     public let preferredTrack: Int
@@ -180,22 +206,15 @@ public struct AddSoundCommand: EditingCommand {
     public var actionName: String { "Add Sound" }
 
     public func apply(to project: inout Project) throws {
-        let range = clip.timelineRange
-        let lanes =
-            Array(max(0, preferredTrack)..<project.soundTracks.count)
-            + Array(0..<min(max(0, preferredTrack), project.soundTracks.count))
-        if let t = lanes.first(where: { project.soundTracks[$0].fits(range) }) {
-            project.soundTracks[t].insert(clip)
-        } else if project.soundTracks.count < Project.maxSoundTracks {
-            project.soundTracks.append(SoundTrack(clips: [clip]))
-        } else {
+        guard let lane = project.firstClearAudioLane(for: clip.timelineRange, from: preferredTrack) else {
             throw EditError.noRoom
         }
+        project.ensureSoundTrack(lane)
+        project.soundTracks[lane].insert(clip)
     }
 }
 
-/// Moves a sound to a new time and lane (`track` == the number of lanes makes a new lane under
-/// them). Refused if it would overlap a sound there.
+/// Moves a sound to a new time and lane. Refused if it would overlap a sound or the music there.
 public struct MoveSoundCommand: EditingCommand {
     public let clipID: UUID
     public let track: Int
@@ -215,11 +234,8 @@ public struct MoveSoundCommand: EditingCommand {
         clip.start = start
         guard project.soundFits(clip.timelineRange, onTrack: track, excluding: clipID) else { throw EditError.noRoom }
         project.soundTracks[at.track].clips.remove(at: at.index)
-        if track < project.soundTracks.count {
-            project.soundTracks[track].insert(clip)
-        } else {
-            project.soundTracks.append(SoundTrack(clips: [clip]))
-        }
+        project.ensureSoundTrack(track)
+        project.soundTracks[track].insert(clip)
         project.pruneSoundTracks()
     }
 }
@@ -336,5 +352,30 @@ public struct SetSoundTrackMuteCommand: EditingCommand {
             throw EditError.clipNotFound
         }
         project.soundTracks[t].isMuted = isMuted
+    }
+}
+
+/// Slides the music to a new start and puts it on audio lane `lane`. Refused if the song is
+/// locked, or would overlap a sound there.
+public struct PlaceMusicCommand: EditingCommand {
+    public let lane: Int
+    public let offset: MediaTime
+
+    public init(lane: Int, offset: MediaTime) {
+        self.lane = lane
+        self.offset = offset
+    }
+
+    public var actionName: String { "Move Music" }
+
+    public func apply(to project: inout Project) throws {
+        guard var music = project.referenceAudio else { throw EditError.sourceNotFound }
+        guard !music.isLocked else { throw EditError.locked }
+        music.offset = music.clampedOffset(offset, sequenceDuration: project.duration)
+        guard project.audioLaneFits(music.timelineRange, lane: lane, excludingMusic: true) else {
+            throw EditError.noRoom
+        }
+        music.lane = lane
+        project.referenceAudio = music
     }
 }

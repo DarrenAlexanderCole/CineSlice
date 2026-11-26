@@ -75,6 +75,45 @@ final class SoundTests: XCTestCase {
         XCTAssertThrowsError(try apply(SplitSoundCommand(clipID: id, time: MediaTime(seconds: 3)), to: &p))
     }
 
+    func testMusicSharesTheLanesAndMovesBetweenThem() throws {
+        var p = Project(name: "Music lanes")
+        // A sequence for the song to slide along.
+        try apply(
+            AddClipsAtCommand(
+                sources: [SourceAsset(fileName: "a.mov", duration: MediaTime(seconds: 20), width: 1080, height: 1920)],
+                start: .zero), to: &p)
+        let song = AudioTrack(fileName: "m.m4a", duration: MediaTime(seconds: 10), lane: 0)
+        p.referenceAudio = song
+        // A sound over the song goes on the next lane; clear of it, on the song's lane.
+        try apply(AddSoundCommand(clip: sound(2, at: 3)), to: &p)
+        XCTAssertEqual(p.soundTracks.count, 2)
+        XCTAssertTrue(p.soundTracks[0].clips.isEmpty)
+        try apply(AddSoundCommand(clip: sound(2, at: 11)), to: &p)
+        XCTAssertEqual(p.soundTracks[0].clips.count, 1)
+        // The song can't land on the sound, but slides to an empty lane, later.
+        XCTAssertThrowsError(try apply(PlaceMusicCommand(lane: 1, offset: .zero), to: &p))
+        try apply(PlaceMusicCommand(lane: 5, offset: MediaTime(seconds: 1)), to: &p)
+        XCTAssertEqual(p.referenceAudio?.audioLane, 5)
+        XCTAssertEqual(p.referenceAudio?.offset.seconds, 1)
+        // A locked song stays put.
+        p.referenceAudio?.isLocked = true
+        XCTAssertThrowsError(try apply(PlaceMusicCommand(lane: 6, offset: .zero), to: &p)) {
+            XCTAssertEqual($0 as? EditError, .locked)
+        }
+    }
+
+    func testOlderProjectsKeepTheMusicClearOfTheSounds() throws {
+        // Saved before the music had a lane: its sounds were drawn on lanes under it.
+        var old = Project(name: "Old")
+        old.referenceAudio = AudioTrack(fileName: "m.m4a", duration: MediaTime(seconds: 10))
+        old.soundTracks = [SoundTrack(clips: [sound(2, at: 0)])]
+        let reopened = try JSONDecoder().decode(Project.self, from: try JSONEncoder().encode(old))
+        XCTAssertEqual(reopened.referenceAudio?.lane, 0)
+        XCTAssertEqual(reopened.soundTracks.count, 2)
+        XCTAssertTrue(reopened.soundTracks[0].clips.isEmpty)
+        XCTAssertEqual(reopened.soundTracks[1].clips.count, 1)
+    }
+
     func testLevelAndFadesStayInRange() throws {
         var p = Project(name: "Level")
         let a = UUID()

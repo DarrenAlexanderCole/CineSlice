@@ -65,7 +65,12 @@ final class LightboxTourTests: XCTestCase {
         let sizeBefore = videoSize.value as? String
         videoSize.swipeUp(velocity: .slow)
         XCTAssertNotEqual(videoSize.value as? String, sizeBefore, "the size roller should resize video lanes")
-        element("Video lane scroll").swipeDown(velocity: .slow)
+        // All ten video lanes are always there: the scroll roller climbs them, and comes back to V1.
+        let videoScroll = element("Video lane scroll")
+        let scrolledFrom = videoScroll.value as? String
+        videoScroll.swipeDown(velocity: .slow)
+        XCTAssertNotEqual(videoScroll.value as? String, scrolledFrom, "the scroll roller should climb the lanes")
+        for _ in 0..<3 where videoScroll.value as? String != scrolledFrom { videoScroll.swipeUp(velocity: .fast) }
         // The A/V switch hands the same two rollers to the audio lanes.
         button("Roller lanes").tap()
         XCTAssertEqual(button("Roller lanes").value as? String, "Audio")
@@ -122,16 +127,41 @@ final class LightboxTourTests: XCTestCase {
         sleep(1)
         shot("L4b Clip moved")
 
-        // Footage and music straight onto the table.
+        // Footage straight onto the table, at the playhead: it's over the sequence, so the
+        // clips go on the lane above, V2, and nothing in the sequence moves.
         button("Add clips").tap()
         button("Demo clips").tap()
         XCTAssertTrue(button("Undo Add Clips").waitForExistence(timeout: 60), "demo clips should land on the table")
+        let stacked = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Stacked clip"))
+        XCTAssertTrue(stacked.firstMatch.waitForExistence(timeout: 5), "over the sequence they stack on V2")
+        XCTAssertEqual(stacked.firstMatch.value as? String, "Lane V2")
+        // The song, at the playhead on the first audio lane with room.
         button("Music").tap()
         button("My Music").tap()
         button("Demo click track").tap()
         XCTAssertTrue(roller.waitForExistence(timeout: 10))
         sleep(3)
         shot("L4c Brought in")
+
+        // The music slides along its lane: one undo step.
+        let music = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Music:"))
+            .firstMatch
+        XCTAssertTrue(music.waitForExistence(timeout: 5))
+        let musicGrab = music.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+        musicGrab.press(
+            forDuration: 0.6, thenDragTo: musicGrab.withOffset(CGVector(dx: 60, dy: 0)), withVelocity: 300,
+            thenHoldForDuration: 0.2)
+        XCTAssertTrue(button("Undo Move Music").waitForExistence(timeout: 5), "dropping the music moves it")
+
+        // A stacked clip lifted up onto the next lane: one undo step.
+        let selectedStack = stacked.matching(NSPredicate(format: "selected == true")).firstMatch
+        let stackGrab = selectedStack.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        stackGrab.press(
+            forDuration: 0.6, thenDragTo: stackGrab.withOffset(CGVector(dx: 40, dy: -70)), withVelocity: 300,
+            thenHoldForDuration: 0.3)
+        XCTAssertTrue(button("Undo Move Clip").waitForExistence(timeout: 5), "dropping it moves it")
+        sleep(1)
+        shot("L4c3 Stacked moved")
 
         // Sounds land at the playhead on the lanes under the music; the second, overlapping the
         // first, gets a lane of its own.

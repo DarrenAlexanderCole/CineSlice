@@ -135,8 +135,9 @@ extension View {
 }
 
 /// The keys that bring footage, music and sounds straight onto the table, as symbols beside Tools.
-/// Clips go in at the cut nearest the playhead; music opens the same sheet as upright Mix; a
-/// sound lands at the playhead on the first sound lane with room.
+/// Everything lands at the playhead on the lowest lane with room there, so nothing is covered or
+/// pushed: clips on the video lanes (the sequence first), and sounds and the song (chosen in the
+/// same sheet as upright Mix) on the audio lanes.
 struct LightboxBringInKeys: View {
     var model: WorkspaceModel
     /// A row of keys, or a column where the console is narrow.
@@ -166,7 +167,7 @@ struct LightboxBringInKeys: View {
                     Label("From Files", systemImage: "folder")
                 }
                 Button {
-                    Task { await model.addDemoClips(at: model.cutIndexNearPlayhead) }
+                    Task { await model.addDemoClips(atPlayhead: true) }
                 } label: {
                     Label("Demo clips", systemImage: "film.stack")
                 }
@@ -176,7 +177,7 @@ struct LightboxBringInKeys: View {
             .menuStyle(.button)
             .buttonStyle(.instrument(.key, height: 34))
             .accessibilityLabel("Add clips")
-            .accessibilityHint("New clips go in at the cut nearest the playhead.")
+            .accessibilityHint("New clips go in at the playhead, on the lowest video lane with room there.")
             Button {
                 model.engine.pause()
                 showsMusic = true

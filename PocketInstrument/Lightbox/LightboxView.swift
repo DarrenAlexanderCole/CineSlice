@@ -17,8 +17,9 @@ struct LightboxView: View {
     var state: LightboxState
     var onPreview: () -> Void
     var onDone: () -> Void
-    /// Opens Photos (true) or Files (false) for clips that go in at the given sequence index.
-    var onAddClips: (_ photos: Bool, _ index: Int) -> Void
+    /// Opens Photos (true) or Files (false) for clips that go in at the playhead, on the lowest
+    /// video lane with room.
+    var onAddClips: (_ photos: Bool) -> Void
     /// Opens Files (false) or a video's sound (true) for the music.
     var onAddMusic: (_ fromVideo: Bool) -> Void
     /// Opens Files (false) or a video's sound (true) for a sound at the playhead.
@@ -35,22 +36,15 @@ struct LightboxView: View {
     @State private var toolsKeyFrame: CGRect = .zero
     @State private var bodySize: CGSize = .zero
     @State private var trayHeight: CGFloat = 0
-    @State private var clipDrag: ClipDrag?
-    @State private var soundDrag: SoundDrag?
+    /// A clip of the sequence or a stacked clip, a sound, or the music, lifted and being moved.
+    @State private var videoDrag: LaneDrag?
+    @State private var soundDrag: LaneDrag?
+    @State private var musicDrag: LaneDrag?
 
-    /// A clip lifted by a long press and being moved along the sequence.
-    private struct ClipDrag: Equatable {
+    /// Something lifted by a long press, being moved in time and between lanes.
+    private struct LaneDrag: Equatable {
         var clipID: UUID
-        /// Seconds from the clip's start to where it was picked up.
-        var grab: Double
-        /// The finger, in the lanes' coordinates.
-        var fingerX: Double
-    }
-
-    /// A sound lifted by a long press, being moved in time and between the sound lanes.
-    private struct SoundDrag: Equatable {
-        var clipID: UUID
-        /// Seconds from the sound's start to where it was picked up.
+        /// Seconds from its start to where it was picked up.
         var grab: Double
         /// The finger, in the lanes' coordinates.
         var finger: CGPoint
@@ -124,6 +118,8 @@ struct LightboxView: View {
         .onChange(of: model.project.sources.count) { state.loadWaveforms(model) }
         .onChange(of: model.project.soundTracks) { state.loadWaveforms(model) }
         .onChange(of: model.selectedSoundID) { _, id in if let id { revealSound(id) } }
+        .onChange(of: model.selectedLayerClipID) { _, id in if let id { revealVideoClip(id) } }
+        .onChange(of: model.project.referenceAudio?.audioLane) { _, lane in if let lane { revealAudioLane(lane) } }
         .onChange(of: model.engine.currentTime) { old, new in followPlayhead(from: old.seconds, to: new.seconds) }
         .statusBarHidden()
     }
@@ -245,7 +241,7 @@ struct LightboxView: View {
 
     private func bringInKeys(_ axis: Axis) -> some View {
         LightboxBringInKeys(
-            model: model, axis: axis, onAddClips: { onAddClips($0, model.cutIndexNearPlayhead) },
+            model: model, axis: axis, onAddClips: onAddClips,
             onAddMusic: onAddMusic, onAddSound: onAddSound)
     }
 
@@ -290,13 +286,16 @@ struct LightboxView: View {
         .simultaneousGesture(panGesture)
         .simultaneousGesture(zoomGesture)
         .metalBezel(cornerRadius: 12, width: 4)
-        .onChange(of: clipLanding?.order) { old, new in
+        .onChange(of: videoLanding?.order) { old, new in
+            if old != nil, new != nil { Haptics.detent() }
+        }
+        .onChange(of: videoLanding?.lane) { old, new in
             if old != nil, new != nil { Haptics.detent() }
         }
         .onChange(of: soundLanding?.track) { old, new in
             if old != nil, new != nil { Haptics.detent() }
         }
-        .task(id: clipDrag?.clipID ?? soundDrag?.clipID) { await edgeScrollWhileDragging() }
+        .task(id: dragID) { await edgeScrollWhileDragging() }
     }
 
     /// The glowing ivory surface, faint grid lines at the ruler's labelled marks.
@@ -335,22 +334,27 @@ struct LightboxView: View {
     private var videoSection: some View {
         let section = state.viewport.video
         let lane = section.laneHeight
+        let pitch = lane + LaneSection.spacing
         return GeometryReader { geo in
             let map = model.sequenceMap
-            let landing = clipLanding
-            // The sequence is the base video lane, next to the divider. Lanes stack upwards from it.
+            let landing = videoLanding
+            // V1, the sequence, next to the divider; V2 to V10 stack upwards from it.
             let y = geo.size.height - LaneSection.spacing - lane + section.scroll
             ZStack(alignment: .topLeading) {
                 Color.clear.contentShape(Rectangle())
                     .onTapGesture { model.selectInPlace(nil) }
+                laneGuides(Project.videoLanes, prefix: "V", height: lane) { y - Double($0) * pitch }
                 ForEach(Array(map.entries.enumerated()), id: \.element.clipID) { index, entry in
-                    let lifted = clipDrag?.clipID == entry.clipID
-                    // While a clip is lifted it follows the finger, and the others stand where
-                    // they'd be once it's dropped (moved only if it lands on them).
+                    let lifted = videoDrag?.clipID == entry.clipID
+                    // While a clip is lifted it follows the finger. Moved along the sequence, the
+                    // others stand where they'd be once it's dropped (moved only if it lands on
+                    // them); taken to another lane, they stay put.
                     let start =
-                        landing.map { lifted ? $0.draggedStart : $0.starts[entry.clipID] ?? 0 }
-                        ?? entry.compositionRange.start.seconds
+                        lifted
+                        ? landing?.start ?? entry.compositionRange.start.seconds
+                        : landing?.starts?[entry.clipID] ?? entry.compositionRange.start.seconds
                     let length = entry.compositionRange.duration.seconds
+                    let k = lifted ? landing?.lane ?? 0 : 0
                     if lifted || state.viewport.isVisible(start, start + length, width: state.lanesWidth),
                         let clip = model.project.clip(id: entry.clipID)
                     {
@@ -361,9 +365,10 @@ struct LightboxView: View {
                             start: start, viewport: state.viewport, lanesWidth: state.lanesWidth,
                             height: lane, isSelected: model.selectedClipID == clip.id || lifted
                         )
+                        .overlay { blockedTint(lifted && landing?.fits == false) }
                         .shadow(color: .black.opacity(lifted ? 0.45 : 0), radius: 8, y: 6)
-                        .offset(y: lifted ? y - 5 : y)
-                        .zIndex(lifted ? 1 : 0)
+                        .offset(y: y - Double(k) * pitch - (lifted ? 5 : 0))
+                        .zIndex(lifted ? 2 : 0)
                         .animation(
                             lifted ? nil : .spring(response: 0.25, dampingFraction: 0.85), value: landing?.order
                         )
@@ -371,10 +376,10 @@ struct LightboxView: View {
                         .modifier(
                             ClipLiftGesture(space: Self.lanesSpace) { phase, point in
                                 switch phase {
-                                case .began: liftClip(clip.id, start: start, x: point.x)
-                                case .changed: clipDrag?.fingerX = point.x
-                                case .ended: dropClip(commit: true)
-                                case .cancelled: dropClip(commit: false)
+                                case .began: liftVideoClip(clip.id, start: start, at: point)
+                                case .changed: videoDrag?.finger = point
+                                case .ended: dropVideoClip(commit: true)
+                                case .cancelled: dropVideoClip(commit: false)
                                 }
                             }
                         )
@@ -385,10 +390,18 @@ struct LightboxView: View {
                             if index < map.entries.count - 1 {
                                 Button("Move later") { model.move(clip.id, to: index + 1) }
                             }
+                            Button("Move up a lane") {
+                                model.moveVideoClip(clip.id, toLane: 1, start: entry.compositionRange.start)
+                            }
                         }
                     }
                 }
-                if model.project.clips.isEmpty {
+                ForEach(Array(model.project.videoLayers.enumerated()), id: \.element.id) { layer, stacked in
+                    ForEach(stacked.clips) { item in
+                        layerClip(item, lane: layer + 1, baseY: y, landing: landing)
+                    }
+                }
+                if model.project.clips.isEmpty, model.project.videoLayers.isEmpty {
                     emptyNote("No footage yet · bring some in with Clips")
                 }
             }
@@ -396,17 +409,140 @@ struct LightboxView: View {
         }
     }
 
-    /// While a clip is lifted: where it is under the finger (on the frame grid, never before 0),
-    /// and where every clip would start were it dropped there, with their order.
-    private var clipLanding: (draggedStart: Double, starts: [UUID: Double], order: [UUID])? {
-        guard let drag = clipDrag else { return nil }
-        let start = onFrame(state.viewport.seconds(atX: drag.fingerX) - drag.grab)
-        let placed = SequencePlacement(project: model.project).placing(drag.clipID, at: start)
-        return (
-            start.seconds,
-            Dictionary(uniqueKeysWithValues: placed.map { ($0.clip.id, $0.start.seconds) }),
-            placed.map(\.clip.id)
-        )
+    /// Every lane drawn faintly on the table, empty or not, with its name pinned at the left edge.
+    private func laneGuides(_ count: Int, prefix: String, height: Double, top: @escaping (Int) -> Double)
+        -> some View
+    {
+        ForEach(0..<count, id: \.self) { k in
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.white.opacity(0.14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(Color(hex: 0x8A8268).opacity(0.22), lineWidth: 1)
+                )
+                .frame(height: height)
+                .offset(y: top(k))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+                .zIndex(-1)
+            laneTag("\(prefix)\(k + 1)")
+                .offset(x: 3, y: top(k) + 3)
+                .zIndex(3)
+        }
+    }
+
+    private func laneTag(_ text: String) -> some View {
+        Text(text)
+            .font(Theme.mono(7, weight: .heavy))
+            .foregroundStyle(Theme.ivory)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Theme.obsidian.opacity(0.75)))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    /// Red over something lifted where it can't land.
+    @ViewBuilder
+    private func blockedTint(_ blocked: Bool) -> some View {
+        if blocked {
+            RoundedRectangle(cornerRadius: 4).fill(Theme.playhead.opacity(0.35)).allowsHitTesting(false)
+        }
+    }
+
+    /// A clip stacked on video lane `lane` (V2 and up), `baseY` being V1's top.
+    @ViewBuilder
+    private func layerClip(_ item: LayerClip, lane: Int, baseY: Double, landing: VideoLanding?) -> some View {
+        let lifted = videoDrag?.clipID == item.id
+        let start = lifted ? landing?.start ?? item.start.seconds : item.start.seconds
+        let length = item.timelineRange.duration.seconds
+        let pitch = state.viewport.video.laneHeight + LaneSection.spacing
+        let k = lifted ? landing?.lane ?? lane : lane
+        if lifted || state.viewport.isVisible(start, start + length, width: state.lanesWidth) {
+            FilmStripClip(
+                clip: item.clip, source: model.project.source(for: item.clip), url: model.mediaURL(for: item.clip),
+                waveform: nil, start: start, viewport: state.viewport, lanesWidth: state.lanesWidth,
+                height: state.viewport.video.laneHeight,
+                isSelected: model.selectedLayerClipID == item.id || lifted
+            )
+            .overlay { blockedTint(lifted && landing?.fits == false) }
+            .shadow(color: .black.opacity(lifted ? 0.45 : 0.25), radius: lifted ? 8 : 3, y: lifted ? 6 : 2)
+            // Lifted, it stands on the lane it would land on.
+            .offset(y: baseY - Double(k) * pitch - (lifted ? 5 : 0))
+            .zIndex(lifted ? 2 : 1)
+            .onTapGesture { model.selectLayerClip(item.id) }
+            .modifier(
+                ClipLiftGesture(space: Self.lanesSpace) { phase, point in
+                    switch phase {
+                    case .began: liftVideoClip(item.id, start: item.start.seconds, at: point)
+                    case .changed: videoDrag?.finger = point
+                    case .ended: dropVideoClip(commit: true)
+                    case .cancelled: dropVideoClip(commit: false)
+                    }
+                }
+            )
+            .accessibilityLabel("Stacked clip")
+            .accessibilityValue("Lane V\(lane + 1)")
+            .accessibilityAddTraits(model.selectedLayerClipID == item.id ? [.isSelected] : [])
+            .accessibilityActions {
+                if lane + 1 < Project.videoLanes {
+                    Button("Move up a lane") { model.moveVideoClip(item.id, toLane: lane + 1, start: item.start) }
+                }
+                Button("Move down a lane") { model.moveVideoClip(item.id, toLane: lane - 1, start: item.start) }
+            }
+        }
+    }
+
+    /// Scrolls the video lanes just enough to show the lane holding clip `id` (clips brought in
+    /// can land on a lane above the ones in view).
+    private func revealVideoClip(_ id: UUID) {
+        guard let lane = model.project.videoLane(ofClip: id) else { return }
+        let section = state.viewport.video
+        let height = state.videoHeight
+        let pitch = section.laneHeight + LaneSection.spacing
+        // The lane's top and bottom in the section, lanes stacking up from the divider.
+        let top = height - LaneSection.spacing - section.laneHeight - Double(lane) * pitch + section.scroll
+        let bottom = top + section.laneHeight
+        let delta = top < 0 ? LaneSection.spacing - top : bottom > height ? height - bottom : 0
+        guard delta != 0 else { return }
+        withAnimation(.easeOut(duration: 0.25)) {
+            _ = state.viewport.video.scroll(by: delta, lanes: videoLanes, viewport: height)
+        }
+    }
+
+    /// The video lane under `y` in the lanes' coordinates: 0 (V1, the sequence) to 9 (V10).
+    private func videoLane(atY y: Double) -> Int {
+        let section = state.viewport.video
+        let fromDivider = Double(Self.rulerHeight) + state.videoHeight - y + section.scroll
+        let lane = Int(
+            ((fromDivider - LaneSection.spacing / 2) / (section.laneHeight + LaneSection.spacing)).rounded(.down))
+        return min(max(lane, 0), Project.videoLanes - 1)
+    }
+
+    /// Where a lifted clip would land.
+    private struct VideoLanding: Equatable {
+        /// Its start, on the frame grid.
+        var start: Double
+        var lane: Int
+        var fits: Bool
+        /// Moving along the sequence: where every clip of it would start, and their order.
+        var starts: [UUID: Double]?
+        var order: [UUID]?
+    }
+
+    private var videoLanding: VideoLanding? {
+        guard let drag = videoDrag, let from = model.project.videoLane(ofClip: drag.clipID) else { return nil }
+        let start = onFrame(state.viewport.seconds(atX: drag.finger.x) - drag.grab)
+        let lane = videoLane(atY: drag.finger.y)
+        if from == 0, lane == 0 {
+            let placed = SequencePlacement(project: model.project).placing(drag.clipID, at: start)
+            return VideoLanding(
+                start: start.seconds, lane: 0, fits: true,
+                starts: Dictionary(uniqueKeysWithValues: placed.map { ($0.clip.id, $0.start.seconds) }),
+                order: placed.map(\.clip.id))
+        }
+        let fits = MoveVideoClipCommand.canMove(drag.clipID, toLane: lane, start: start, in: model.project)
+        return VideoLanding(start: start.seconds, lane: lane, fits: fits)
     }
 
     /// A time on the sequence's frame grid, never before 0.
@@ -415,50 +551,73 @@ struct LightboxView: View {
         return MediaTime(value: Int64(max(0, seconds * Double(rate)).rounded()), timescale: rate)
     }
 
-    private func liftClip(_ clipID: UUID, start: Double, x: Double) {
+    private func liftVideoClip(_ clipID: UUID, start: Double, at point: CGPoint) {
         if model.engine.isPlaying { model.engine.pause() }
-        model.selectInPlace(clipID)
-        clipDrag = ClipDrag(clipID: clipID, grab: state.viewport.seconds(atX: x) - start, fingerX: x)
+        if model.project.index(ofClip: clipID) != nil {
+            model.selectInPlace(clipID)
+        } else {
+            model.selectLayerClip(clipID)
+        }
+        videoDrag = LaneDrag(clipID: clipID, grab: state.viewport.seconds(atX: point.x) - start, finger: point)
         Haptics.press()
     }
 
-    /// One undo step per move, committed on release: the clip where it was dropped, gaps and all.
-    private func dropClip(commit: Bool) {
-        guard let drag = clipDrag else { return }
-        if commit, let landing = clipLanding {
-            model.place(drag.clipID, at: onFrame(landing.draggedStart))
+    /// One undo step per move, committed on release. Along the sequence it lands where it's
+    /// dropped, gaps and all; onto another lane, only where it's clear, else it goes back.
+    private func dropVideoClip(commit: Bool) {
+        guard let drag = videoDrag else { return }
+        if commit, let landing = videoLanding {
+            if landing.starts != nil {
+                model.place(drag.clipID, at: onFrame(landing.start))
+            } else if landing.fits {
+                model.moveVideoClip(drag.clipID, toLane: landing.lane, start: onFrame(landing.start))
+            } else {
+                Haptics.warning()
+            }
         }
-        clipDrag = nil
+        videoDrag = nil
     }
 
-    /// Something lifted and being moved: a clip of the sequence or a sound.
-    private var isDragging: Bool { clipDrag != nil || soundDrag != nil }
+    /// Something lifted and being moved: a clip, a sound or the music.
+    private var isDragging: Bool { dragID != nil }
 
-    /// A lifted clip or sound held near either end of the lanes pans the table that way, faster
-    /// the closer. A sound held near the top or bottom of the sound lanes scrolls them too.
+    private var dragID: UUID? { videoDrag?.clipID ?? soundDrag?.clipID ?? musicDrag?.clipID }
+
+    /// A lifted clip, sound or song held near either end of the lanes pans the table that way,
+    /// faster the closer; held near the top or bottom of its section, it scrolls the lanes.
     private func edgeScrollWhileDragging() async {
         let edge = 44.0
-        while !Task.isCancelled, let x = clipDrag?.fingerX ?? soundDrag.map({ Double($0.finger.x) }) {
+        while !Task.isCancelled, let finger = (videoDrag ?? soundDrag ?? musicDrag)?.finger {
             let width = state.lanesWidth
+            let x = Double(finger.x)
             if x < edge {
                 state.viewport.pan(by: (edge - x) * 0.25, duration: duration, width: width)
             } else if x > width - edge {
                 state.viewport.pan(by: -(x - (width - edge)) * 0.25, duration: duration, width: width)
             }
-            if let y = soundDrag.map({ Double($0.finger.y) - audioTop }) {
+            if videoDrag != nil {
+                let y = Double(finger.y) - Double(Self.rulerHeight)
+                let height = state.videoHeight
+                // Lanes stack upwards: near the top shows higher ones.
+                if y < 24 {
+                    state.viewport.video.scroll(by: 4, lanes: videoLanes, viewport: height)
+                } else if y > height - 24 {
+                    state.viewport.video.scroll(by: -4, lanes: videoLanes, viewport: height)
+                }
+            } else {
+                let y = Double(finger.y) - audioTop
                 let height = state.audioHeight
-                // One lane more than there are, so a sound can be taken down onto a new lane.
                 if y > height - 24 {
-                    state.viewport.audio.scroll(by: 4, lanes: audioLanes + 1, viewport: height)
+                    state.viewport.audio.scroll(by: 4, lanes: audioLanes, viewport: height)
                 } else if y < 24 {
-                    state.viewport.audio.scroll(by: -4, lanes: audioLanes + 1, viewport: height)
+                    state.viewport.audio.scroll(by: -4, lanes: audioLanes, viewport: height)
                 }
             }
             try? await Task.sleep(for: .milliseconds(16))
         }
     }
 
-    /// The music on the first lane, then the sound lanes under it.
+    /// The ten audio lanes, the music on whichever one it sits on and the sounds on theirs.
     private var audioSection: some View {
         let section = state.viewport.audio
         let landing = soundLanding
@@ -466,25 +625,49 @@ struct LightboxView: View {
             ZStack(alignment: .topLeading) {
                 Color.clear.contentShape(Rectangle())
                     .onTapGesture { model.selectInPlace(nil) }
-                if let music = model.project.referenceAudio,
-                    let placement = MusicPlacement(track: music, sequenceDuration: model.project.duration),
-                    state.viewport.isVisible(
-                        placement.compositionRange.start.seconds, placement.compositionRange.end.seconds,
-                        width: state.lanesWidth)
-                {
-                    AudioGlassClip(
-                        music: music, placement: placement, waveform: model.waveform, viewport: state.viewport,
-                        lanesWidth: state.lanesWidth, height: section.laneHeight
-                    )
-                    .offset(y: laneY(0))
+                laneGuides(Project.maxSoundTracks, prefix: "A", height: section.laneHeight) { laneY($0) }
+                if let music = model.project.referenceAudio {
+                    let moving = musicLanding
+                    let shown = moving?.music ?? music
+                    if moving != nil
+                        || state.viewport.isVisible(
+                            shown.timelineRange.start.seconds, shown.timelineRange.end.seconds,
+                            width: state.lanesWidth)
+                    {
+                        AudioGlassClip(
+                            music: shown, sequenceEnd: model.project.duration.seconds, waveform: model.waveform,
+                            viewport: state.viewport, lanesWidth: state.lanesWidth, height: section.laneHeight,
+                            isLifted: moving != nil
+                        )
+                        .overlay { blockedTint(moving?.fits == false) }
+                        .shadow(color: .black.opacity(moving == nil ? 0 : 0.4), radius: 8, y: 6)
+                        .offset(y: laneY(shown.audioLane) - (moving == nil ? 0 : 4))
+                        .zIndex(moving == nil ? 0 : 2)
+                        .modifier(
+                            ClipLiftGesture(space: Self.lanesSpace) { phase, point in
+                                switch phase {
+                                case .began: liftMusic(at: point)
+                                case .changed: musicDrag?.finger = point
+                                case .ended: dropMusic(commit: true)
+                                case .cancelled: dropMusic(commit: false)
+                                }
+                            }
+                        )
+                        .accessibilityAction(named: "Move earlier by a beat") {
+                            model.nudgeMusic(by: MediaTime(seconds: -0.5))
+                        }
+                        .accessibilityAction(named: "Move later by a beat") {
+                            model.nudgeMusic(by: MediaTime(seconds: 0.5))
+                        }
+                        .accessibilityAction(named: "Move down a lane") {
+                            model.placeMusic(lane: music.audioLane + 1, offset: music.offset)
+                        }
+                    }
                 }
                 ForEach(Array(model.project.soundTracks.enumerated()), id: \.element.id) { track, lane in
                     ForEach(lane.clips) { clip in
                         soundClip(clip, track: track, lane: lane, landing: landing)
                     }
-                }
-                if model.project.referenceAudio == nil, model.project.soundTracks.isEmpty {
-                    emptyNote("No sound yet · bring in music or sounds")
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
@@ -509,8 +692,8 @@ struct LightboxView: View {
             )
             .shadow(color: .black.opacity(lifted ? 0.4 : 0), radius: 8, y: 6)
             // Lifted, it stands on the lane it would land on.
-            .offset(y: laneY(musicLanes + (lifted ? landing?.track ?? track : track)) - (lifted ? 4 : 0))
-            .zIndex(lifted ? 1 : 0)
+            .offset(y: laneY(lifted ? landing?.track ?? track : track) - (lifted ? 4 : 0))
+            .zIndex(lifted ? 2 : 1)
             .onTapGesture { model.selectSound(clip.id) }
             .modifier(
                 ClipLiftGesture(space: Self.lanesSpace) { phase, point in
@@ -523,28 +706,73 @@ struct LightboxView: View {
                 }
             )
             .accessibilityActions {
-                if track > 0 || musicLanes > 0 {
-                    Button("Move up a lane") {
-                        model.moveSound(clip.id, toTrack: max(0, track - 1), start: clip.start)
-                    }
+                if track > 0 {
+                    Button("Move up a lane") { model.moveSound(clip.id, toTrack: track - 1, start: clip.start) }
                 }
-                Button("Move down a lane") { model.moveSound(clip.id, toTrack: track + 1, start: clip.start) }
+                if track + 1 < Project.maxSoundTracks {
+                    Button("Move down a lane") { model.moveSound(clip.id, toTrack: track + 1, start: clip.start) }
+                }
             }
         }
     }
 
-    /// The top of audio lane `k` (the music is lane 0 when there is some) in the section.
+    /// While the music is lifted: the song where it would land (its start on the frame grid, kept
+    /// overlapping the sequence, on the lane under the finger), and whether it's clear there.
+    private var musicLanding: (music: AudioTrack, fits: Bool)? {
+        guard let drag = musicDrag, var music = model.project.referenceAudio else { return nil }
+        let wanted = state.viewport.seconds(atX: drag.finger.x) - drag.grab
+        let rate = Int32(model.project.exportSettings.frameRate)
+        let framed = MediaTime(value: Int64((wanted * Double(rate)).rounded()), timescale: rate)
+        music.offset = music.clampedOffset(framed, sequenceDuration: model.project.duration)
+        music.lane = audioLane(atY: drag.finger.y)
+        let fits = model.project.audioLaneFits(music.timelineRange, lane: music.audioLane, excludingMusic: true)
+        return (music, fits)
+    }
+
+    /// A locked song doesn't lift: a warning tap instead.
+    private func liftMusic(at point: CGPoint) {
+        guard let music = model.project.referenceAudio else { return }
+        guard !music.isLocked else {
+            Haptics.warning()
+            return
+        }
+        if model.engine.isPlaying { model.engine.pause() }
+        musicDrag = LaneDrag(
+            clipID: music.id, grab: state.viewport.seconds(atX: point.x) - music.offset.seconds, finger: point)
+        Haptics.press()
+    }
+
+    /// One undo step per move, committed on release; where a sound is in the way, it goes back.
+    private func dropMusic(commit: Bool) {
+        guard musicDrag != nil else { return }
+        if commit, let landing = musicLanding, let current = model.project.referenceAudio,
+            landing.music.offset != current.offset || landing.music.audioLane != current.audioLane
+        {
+            if landing.fits {
+                model.placeMusic(lane: landing.music.audioLane, offset: landing.music.offset)
+            } else {
+                Haptics.warning()
+            }
+        }
+        musicDrag = nil
+    }
+
+    /// The top of audio lane `k` in the section.
     private func laneY(_ k: Int) -> Double {
         let section = state.viewport.audio
         return LaneSection.spacing + Double(k) * (section.laneHeight + LaneSection.spacing) - section.scroll
     }
 
-    /// Scrolls the sound lanes just enough to show the lane holding sound `id` (a sound just
+    /// Scrolls the audio lanes just enough to show the lane holding sound `id` (a sound just
     /// brought in can land on a lane below the ones in view).
     private func revealSound(_ id: UUID) {
         guard let track = model.project.soundLocation(id: id)?.track else { return }
+        revealAudioLane(track)
+    }
+
+    private func revealAudioLane(_ lane: Int) {
         let section = state.viewport.audio
-        let top = laneY(musicLanes + track)
+        let top = laneY(lane)
         let bottom = top + section.laneHeight + LaneSection.spacing
         let height = state.audioHeight
         let delta = top < 0 ? top - LaneSection.spacing : bottom > height ? bottom - height : 0
@@ -554,22 +782,16 @@ struct LightboxView: View {
         }
     }
 
-    /// Lanes above the sounds: the music's, when there is some.
-    private var musicLanes: Int { model.project.referenceAudio == nil ? 0 : 1 }
-
     /// The audio section's top in the lanes' coordinates.
     private var audioTop: Double { Double(Self.rulerHeight) + state.videoHeight + Double(Self.dividerHeight) }
 
-    /// The sound lane under `y` in the lanes' coordinates: one past the last makes a new lane,
-    /// while there's room for one.
-    private func soundTrack(atY y: Double) -> Int {
+    /// The audio lane under `y` in the lanes' coordinates: 0 (A1) to 9 (A10).
+    private func audioLane(atY y: Double) -> Int {
         let section = state.viewport.audio
         let contentY = y - audioTop + section.scroll
         let lane = Int(
             ((contentY - LaneSection.spacing / 2) / (section.laneHeight + LaneSection.spacing)).rounded(.down))
-        let count = model.project.soundTracks.count
-        let last = count < Project.maxSoundTracks ? count : count - 1
-        return min(max(lane - musicLanes, 0), last)
+        return min(max(lane, 0), Project.maxSoundTracks - 1)
     }
 
     /// Where a lifted sound would land: its start (on the frame grid), its lane, and whether it
@@ -577,7 +799,7 @@ struct LightboxView: View {
     private var soundLanding: (start: Double, track: Int, fits: Bool)? {
         guard let drag = soundDrag, let clip = model.project.sound(id: drag.clipID) else { return nil }
         let start = onFrame(state.viewport.seconds(atX: drag.finger.x) - drag.grab)
-        let track = soundTrack(atY: drag.finger.y)
+        let track = audioLane(atY: drag.finger.y)
         let range = MediaTimeRange(start: start, duration: clip.sourceRange.duration)
         return (start.seconds, track, model.project.soundFits(range, onTrack: track, excluding: clip.id))
     }
@@ -585,7 +807,7 @@ struct LightboxView: View {
     private func liftSound(_ clip: SoundClip, at point: CGPoint) {
         if model.engine.isPlaying { model.engine.pause() }
         model.selectSound(clip.id)
-        soundDrag = SoundDrag(
+        soundDrag = LaneDrag(
             clipID: clip.id, grab: state.viewport.seconds(atX: point.x) - clip.start.seconds, finger: point)
         Haptics.press()
     }
@@ -694,8 +916,10 @@ struct LightboxView: View {
 
     // MARK: Rollers
 
-    private var videoLanes: Int { model.project.clips.isEmpty ? 0 : 1 }
-    private var audioLanes: Int { musicLanes + model.project.soundTracks.count }
+    /// Every lane is always there, empty or not: ten for picture (the sequence and nine stacked
+    /// above it) and ten for sound.
+    private var videoLanes: Int { Project.videoLanes }
+    private var audioLanes: Int { Project.maxSoundTracks }
 
     /// The A/V switch: a small slider set into the chassis. Its aluminium thumb sits at V or A,
     /// the letter lit, choosing which lanes the two rollers work. A tap moves it over.

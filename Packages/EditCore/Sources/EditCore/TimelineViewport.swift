@@ -19,7 +19,7 @@ public struct TimelineViewport: Equatable, Sendable {
 
     public init(
         start: Double = 0, pointsPerSecond: Double = 30,
-        video: LaneSection = LaneSection(laneHeight: 74, range: 30...220),
+        video: LaneSection = LaneSection(laneHeight: 56, range: 30...220),
         audio: LaneSection = LaneSection(laneHeight: 46, range: 22...160)
     ) {
         self.start = start
