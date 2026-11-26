@@ -215,6 +215,7 @@ extension Project {
             var segments: [AutomationSegment] = []
             var cursor = MediaTime.zero
             for clip in clips {
+                cursor += clip.gap
                 segments += clip.compositionCurve(startingAt: cursor)
                 cursor += clip.compositionDuration
             }
@@ -226,6 +227,7 @@ extension Project {
     mutating func writeClipLevel(_ pass: AutomationSegment) {
         var cursor = MediaTime.zero
         for i in clips.indices {
+            cursor += clips[i].gap
             let start = cursor
             let clip = clips[i]
             cursor += clip.compositionDuration

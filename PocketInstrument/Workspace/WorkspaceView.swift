@@ -14,7 +14,7 @@ struct WorkspaceView: View {
 
     /// What a picker was opened for. One picker of each kind is shared, since
     /// SwiftUI only honours one `photosPicker`/`fileImporter` per view.
-    private enum PickPurpose { case clips, music }
+    private enum PickPurpose { case clips, music, sound }
 
     @State private var showPhotos = false
     @State private var showFiles = false
@@ -23,13 +23,32 @@ struct WorkspaceView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var isWatching = false
     @State private var help = HelpCenter()
+    /// The screen is wider than tall: the phone is turned sideways, so the LIGHTBOX shows.
+    @State private var isLightbox = false
+    /// LIGHTBOX's viewport and film-strip sound, kept here so they survive turning the phone.
+    @State private var lightbox = LightboxState()
+    /// Where the playhead was when LIGHTBOX's Preview opened Watch; closing returns there.
+    @State private var previewReturn: MediaTime?
 
     var body: some View {
         ZStack {
             if isWatching {
                 // The editing controls go away entirely: nothing to reach with VoiceOver, nothing to redraw.
-                WatchView(model: model) { setWatching(false) }
+                WatchView(model: model, keepsOrientation: previewReturn != nil) { setWatching(false) }
                     .transition(.opacity)
+            } else if isLightbox {
+                LightboxView(
+                    model: model, state: lightbox,
+                    onPreview: {
+                        previewReturn = model.currentTime
+                        setWatching(true)
+                    },
+                    onDone: { OrientationLock.returnToPortrait() },
+                    onAddClips: { photos, index in pick(.clips, photos: photos, at: index) },
+                    onAddMusic: { fromVideo in pick(.music, photos: fromVideo) },
+                    onAddSound: { fromVideo in pick(.sound, photos: fromVideo) }
+                )
+                .transition(.opacity)
             } else {
                 VStack(spacing: 0) {
                     topBar
@@ -40,12 +59,26 @@ struct WorkspaceView: View {
             }
         }
         .background(Theme.obsidian.ignoresSafeArea())
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width > proxy.size.height
+        } action: { wide in
+            if wide { model.enterLightbox() }
+            isLightbox = wide
+        }
         // Set outside the sheets below, so Release's controls have help too.
         .environment(\.helpCenter, help)
         .toolbar(.hidden, for: .navigationBar)
         .preferredColorScheme(.dark)
-        .onAppear { model.open() }
-        .onDisappear { model.close() }
+        .onAppear {
+            model.open()
+            // Turning the phone sideways in a project opens the LIGHTBOX; the library stays upright.
+            OrientationLock.setBase(.allButUpsideDown)
+        }
+        .onDisappear {
+            OrientationLock.setBase(.portrait)
+            lightbox.cancel()
+            model.close()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 model.saveNow()
@@ -62,6 +95,7 @@ struct WorkspaceView: View {
             switch pickPurpose {
             case .clips: Task { await model.importPhotos(items) }
             case .music: if let item = items.first { Task { await model.importMusic(fromVideo: item) } }
+            case .sound: if let item = items.first { Task { await model.importSound(fromVideo: item) } }
             }
         }
         .fileImporter(
@@ -72,6 +106,7 @@ struct WorkspaceView: View {
             switch pickPurpose {
             case .clips: Task { await model.importFiles(urls) }
             case .music: if let url = urls.first { Task { await model.importMusicFile(url) } }
+            case .sound: if let url = urls.first { Task { await model.importSoundFile(url) } }
             }
         }
         .sheet(isPresented: $showExport) {
@@ -284,8 +319,14 @@ struct WorkspaceView: View {
     }
 
     /// Watch starts playback, since it is for watching; leaving it keeps whatever is playing.
+    /// From LIGHTBOX's Preview, closing pauses and puts the playhead back where editing left it.
     private func setWatching(_ on: Bool) {
         if on, !model.engine.isPlaying { model.engine.play() }
+        if !on, let time = previewReturn {
+            previewReturn = nil
+            model.engine.pause()
+            model.scrub(to: time, precise: true)
+        }
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { isWatching = on }
     }
 
@@ -317,8 +358,10 @@ struct WorkspaceView: View {
 
     // MARK: Deck
 
-    private func pick(_ purpose: PickPurpose, photos: Bool) {
+    /// Opens a picker; clips go in at `index` in the sequence, or at the end.
+    private func pick(_ purpose: PickPurpose, photos: Bool, at index: Int? = nil) {
         pickPurpose = purpose
+        if purpose == .clips { model.importInsertIndex = index }
         if photos { showPhotos = true } else { showFiles = true }
     }
 
@@ -365,6 +408,8 @@ struct WorkspaceView: View {
 /// uninterrupted. With VoiceOver the controls stay up.
 private struct WatchView: View {
     var model: WorkspaceModel
+    /// Opened from LIGHTBOX's Preview: stays however the phone is turned.
+    var keepsOrientation = false
     var onDone: () -> Void
 
     @State private var showsControls = false
@@ -419,10 +464,13 @@ private struct WatchView: View {
         )
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
-        // A 16:9 picture fills the screen with the phone turned sideways; editing stays portrait.
-        .onAppear { if model.isLandscape { OrientationLock.allow(.allButUpsideDown) } }
+        // Opened upright, a vertical picture stays upright; LIGHTBOX's Preview leaves the phone as it is.
+        .onAppear {
+            guard !keepsOrientation else { return }
+            OrientationLock.allow(model.isLandscape ? .allButUpsideDown : .portrait)
+        }
         .onDisappear {
-            OrientationLock.allow(.portrait)
+            if !keepsOrientation { OrientationLock.restoreBase() }
             hideTask?.cancel()
             flashTask?.cancel()
         }

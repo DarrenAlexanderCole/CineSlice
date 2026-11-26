@@ -8,15 +8,19 @@
 
 /* Begin PBXBuildFile section */
 		053E286D294424134FA740C4 /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */; };
+		094CDF9C5E3364C6A936E430 /* LightboxTourTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B2F48BB74104198A942FAE /* LightboxTourTests.swift */; };
 		1D71D7B57361209E3EF06134 /* TigerStep.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = BFE6E096ADE5D307BAB58C60 /* TigerStep.mlpackage */; };
 		1FE55A59329B9D6B636FB00C /* PlaybackEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */; };
 		22AE35DC3C163BB7F434BA86 /* TigerBack.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 51CFC24872A6D1E97A3CE09D /* TigerBack.mlpackage */; };
 		28F1607F7F472E2A970579A7 /* Knob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9225AD893DC2E03BDB310CF1 /* Knob.swift */; };
 		2A72F952C5B8947F6E4B9B24 /* MediaImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52E32BB34441D429E1B49272 /* MediaImporter.swift */; };
+		31853938FEB860C31765D49F /* LightboxMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1633788C8C8E4D8D413088BB /* LightboxMonitor.swift */; };
+		3EE2F6DDEE1ED6A74FADF066 /* LightboxLanes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59552D7A30FFECFBD844FAB1 /* LightboxLanes.swift */; };
 		3FA3191E45FE0DE41E971CE6 /* MasterEQPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 775929E92ABBA2BEB1BC1599 /* MasterEQPanel.swift */; };
 		427005A74781C23E00CC7BEF /* RhythmGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE0A48560AFAE7AF90734C2C /* RhythmGuide.swift */; };
 		43B2FE3EDF62D5F271CF5090 /* MasterEQTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34D20784FF42C95346D10BD0 /* MasterEQTap.swift */; };
 		46B518839A7A4B1DCDC972B6 /* WorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */; };
+		49E109E816FFB632AF0E7148 /* ToolDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B23D32F7D7CA9A8DAFC638EC /* ToolDrawer.swift */; };
 		4DE251C57513F0C5A47BCA57 /* CompositionBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF21A29882624124DD5AC043 /* CompositionBuilder.swift */; };
 		50A33966A1F3D27DAB6645BC /* HelpManualTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9B0C3A1C8C4892E6D55422F /* HelpManualTests.swift */; };
 		535E9AD80E6A0EC919AA0CCA /* TigerStepFirst.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */; };
@@ -36,13 +40,16 @@
 		92AF54485F3B0B3118122A3A /* SequenceLane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2599198CE9D4302B2AECE3FD /* SequenceLane.swift */; };
 		ABB5BAC565BB1FCD6EC0B081 /* MixDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DF8AE6F304D0E552467BBF /* MixDeck.swift */; };
 		ABC80865925DFE487980EC3C /* MusicPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2D6B1E8FD79E15B152394E /* MusicPipelineTests.swift */; };
+		B1164580EECF2F570841C6F1 /* LightboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DF916EBC3376B858F976BA3 /* LightboxView.swift */; };
 		B234F02052D46C663B23BBA8 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48E6F5D7028543BECDE616A1 /* Components.swift */; };
 		BFB165C710BD0850B9B40822 /* AudioDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 038E3C0A33C5DD257FEF8DEA /* AudioDeck.swift */; };
 		C0228B4F6A3E9F01DCAA4E98 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2133A967A46DCA109FA477EF /* Assets.xcassets */; };
+		C1CEC7D9FF0FF3EA91238929 /* LightboxRollers.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC973418764FD2780772793F /* LightboxRollers.swift */; };
 		C8B11F57AE86FBAE7F682592 /* HelpManual.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD67B4D0218E28E94105F11E /* HelpManual.swift */; };
 		C9390A56870EA3FC61699B82 /* WorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CD2F88F2097660E608C9055 /* WorkspaceModel.swift */; };
 		CE7775B19245B4B80D1BAB01 /* VoiceSeparator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 651AE1474F00FFA80A0637CC /* VoiceSeparator.swift */; };
 		CF5BB531EC77106A70E817FF /* ExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F8394AC473F1B36FB4A7B1 /* ExportService.swift */; };
+		D19AAB18F30C765B78D050A7 /* LightboxState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD4AF78C4FE0448F034D4A9C /* LightboxState.swift */; };
 		DA9D4150080022C78ECDD701 /* WaveformAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D3BD010507DB5CBA8581C6A /* WaveformAnalyzer.swift */; };
 		DAC2166A9E5E40909E01B190 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89E08EC4889646EA88576B37 /* LibraryView.swift */; };
 		DE1BA5383C706993E73E2F1E /* Fader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8015626D0D83837F0166B600 /* Fader.swift */; };
@@ -78,16 +85,19 @@
 		0EA6B02B6AFBAA3969D56E58 /* DemoMediaGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoMediaGenerator.swift; sourceTree = "<group>"; };
 		14B3D5C32E59E6456E05202C /* Tiger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tiger.swift; sourceTree = "<group>"; };
 		14C7FB958DDC81A57CE3883A /* ExportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportSheet.swift; sourceTree = "<group>"; };
+		1633788C8C8E4D8D413088BB /* LightboxMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightboxMonitor.swift; sourceTree = "<group>"; };
 		2133A967A46DCA109FA477EF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		21D8DA783D9BCFAC63BA389C /* PocketInstrumentUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketInstrumentUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		23949D424AC3EAA0E118D8AD /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
 		2599198CE9D4302B2AECE3FD /* SequenceLane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceLane.swift; sourceTree = "<group>"; };
 		34D20784FF42C95346D10BD0 /* MasterEQTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterEQTap.swift; sourceTree = "<group>"; };
 		37A3717594FF3F9958CF2E4D /* MusicSources.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicSources.swift; sourceTree = "<group>"; };
+		3DF916EBC3376B858F976BA3 /* LightboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightboxView.swift; sourceTree = "<group>"; };
 		48E6F5D7028543BECDE616A1 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		51CFC24872A6D1E97A3CE09D /* TigerBack.mlpackage */ = {isa = PBXFileReference; path = TigerBack.mlpackage; sourceTree = "<group>"; };
 		52E32BB34441D429E1B49272 /* MediaImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImporter.swift; sourceTree = "<group>"; };
 		547F61F73507A1CB55CCD83D /* PlaybackEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEngine.swift; sourceTree = "<group>"; };
+		59552D7A30FFECFBD844FAB1 /* LightboxLanes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightboxLanes.swift; sourceTree = "<group>"; };
 		5EF71D9139DC9498A540BF25 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		63F6E64CBA156AFCC78BDDA6 /* ArrangeDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArrangeDeck.swift; sourceTree = "<group>"; };
 		651AE1474F00FFA80A0637CC /* VoiceSeparator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSeparator.swift; sourceTree = "<group>"; };
@@ -102,13 +112,17 @@
 		9225AD893DC2E03BDB310CF1 /* Knob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Knob.swift; sourceTree = "<group>"; };
 		95573A8B13FC01642FE305BC /* TigerStepFirst.mlpackage */ = {isa = PBXFileReference; path = TigerStepFirst.mlpackage; sourceTree = "<group>"; };
 		98C6CD17F750F7DB91B35974 /* ExploreDeck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExploreDeck.swift; sourceTree = "<group>"; };
+		AD4AF78C4FE0448F034D4A9C /* LightboxState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightboxState.swift; sourceTree = "<group>"; };
 		AF21A29882624124DD5AC043 /* CompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositionBuilder.swift; sourceTree = "<group>"; };
+		B23D32F7D7CA9A8DAFC638EC /* ToolDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolDrawer.swift; sourceTree = "<group>"; };
 		B9B0C3A1C8C4892E6D55422F /* HelpManualTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpManualTests.swift; sourceTree = "<group>"; };
 		BB503F9E82671553893CF232 /* PocketInstrument.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PocketInstrument.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFE6E096ADE5D307BAB58C60 /* TigerStep.mlpackage */ = {isa = PBXFileReference; path = TigerStep.mlpackage; sourceTree = "<group>"; };
 		C75D056A78186D7396308549 /* HelpTopic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpTopic.swift; sourceTree = "<group>"; };
 		C8B666C98A969E96EAFB5102 /* TigerFront.mlpackage */ = {isa = PBXFileReference; path = TigerFront.mlpackage; sourceTree = "<group>"; };
+		CC973418764FD2780772793F /* LightboxRollers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightboxRollers.swift; sourceTree = "<group>"; };
 		CD67B4D0218E28E94105F11E /* HelpManual.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpManual.swift; sourceTree = "<group>"; };
+		D2B2F48BB74104198A942FAE /* LightboxTourTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightboxTourTests.swift; sourceTree = "<group>"; };
 		D9302D4DEAE15B1873C5D585 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		DD9A4BA75DBF06976B1263E3 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
 		DF56D275663E66C21D0907C4 /* CMTime+MediaTime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMTime+MediaTime.swift"; sourceTree = "<group>"; };
@@ -229,6 +243,7 @@
 				58006475C23C8624AE71205E /* Design */,
 				A2D973CAA524AA7DC3DF3527 /* Help */,
 				BED1602B710B0739942B4DC5 /* Library */,
+				F72EE6918BAF62C3F62C04C6 /* Lightbox */,
 				102A3094A888D423EA86542F /* Media */,
 				3897DB901BA92F1F1657655F /* Workspace */,
 			);
@@ -238,6 +253,7 @@
 		798BD6C903760E0B34C515D8 /* PocketInstrumentUITests */ = {
 			isa = PBXGroup;
 			children = (
+				D2B2F48BB74104198A942FAE /* LightboxTourTests.swift */,
 				EE4CB30A85115C146D89F422 /* WorkspaceTourTests.swift */,
 			);
 			path = PocketInstrumentUITests;
@@ -270,6 +286,19 @@
 				798BD6C903760E0B34C515D8 /* PocketInstrumentUITests */,
 				5BD35A836412B05D8F3C0080 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		F72EE6918BAF62C3F62C04C6 /* Lightbox */ = {
+			isa = PBXGroup;
+			children = (
+				59552D7A30FFECFBD844FAB1 /* LightboxLanes.swift */,
+				1633788C8C8E4D8D413088BB /* LightboxMonitor.swift */,
+				CC973418764FD2780772793F /* LightboxRollers.swift */,
+				AD4AF78C4FE0448F034D4A9C /* LightboxState.swift */,
+				3DF916EBC3376B858F976BA3 /* LightboxView.swift */,
+				B23D32F7D7CA9A8DAFC638EC /* ToolDrawer.swift */,
+			);
+			path = Lightbox;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -432,6 +461,11 @@
 				F1A76F881AE1B73670C18AE4 /* HelpTopic.swift in Sources */,
 				28F1607F7F472E2A970579A7 /* Knob.swift in Sources */,
 				DAC2166A9E5E40909E01B190 /* LibraryView.swift in Sources */,
+				3EE2F6DDEE1ED6A74FADF066 /* LightboxLanes.swift in Sources */,
+				31853938FEB860C31765D49F /* LightboxMonitor.swift in Sources */,
+				C1CEC7D9FF0FF3EA91238929 /* LightboxRollers.swift in Sources */,
+				D19AAB18F30C765B78D050A7 /* LightboxState.swift in Sources */,
+				B1164580EECF2F570841C6F1 /* LightboxView.swift in Sources */,
 				3FA3191E45FE0DE41E971CE6 /* MasterEQPanel.swift in Sources */,
 				43B2FE3EDF62D5F271CF5090 /* MasterEQTap.swift in Sources */,
 				2A72F952C5B8947F6E4B9B24 /* MediaImporter.swift in Sources */,
@@ -450,6 +484,7 @@
 				69CC894138522AB840191D94 /* TigerFront.mlpackage in Sources */,
 				1D71D7B57361209E3EF06134 /* TigerStep.mlpackage in Sources */,
 				535E9AD80E6A0EC919AA0CCA /* TigerStepFirst.mlpackage in Sources */,
+				49E109E816FFB632AF0E7148 /* ToolDrawer.swift in Sources */,
 				CE7775B19245B4B80D1BAB01 /* VoiceSeparator.swift in Sources */,
 				DA9D4150080022C78ECDD701 /* WaveformAnalyzer.swift in Sources */,
 				C9390A56870EA3FC61699B82 /* WorkspaceModel.swift in Sources */,
@@ -470,6 +505,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				094CDF9C5E3364C6A936E430 /* LightboxTourTests.swift in Sources */,
 				E5252CA082B1E7104E74BC7F /* WorkspaceTourTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -143,7 +143,8 @@ final class MusicPipelineTests: XCTestCase {
         let project = try await makeProject()
         let music = try XCTUnwrap(project.referenceAudio)
         let url = try XCTUnwrap(store.audioURL(for: music, projectID: project.id))
-        let source = SourceAsset(fileName: music.fileName, duration: music.duration, width: 0, height: 0, hasAudio: true)
+        let source = SourceAsset(
+            fileName: music.fileName, duration: music.duration, width: 0, height: 0, hasAudio: true)
         let voiceURL = store.stemCacheURL(for: source, stem: .voice, projectID: project.id)
         let reducedURL = store.stemCacheURL(for: source, stem: .scene, projectID: project.id)
         try await VoiceSeparator.separate(source: url, voiceURL: voiceURL, reducedURL: reducedURL) { _ in }
@@ -166,8 +167,118 @@ final class MusicPipelineTests: XCTestCase {
         let onsets = try await clickOnsets(in: AVURLAsset(url: url))
         XCTAssertGreaterThan(onsets.count, 10)
         for onset in onsets {
-            XCTAssertEqual(peak(reduced, near: onset), peak(original, near: onset), accuracy: 0.003, "click at \(onset)")
+            XCTAssertEqual(
+                peak(reduced, near: onset), peak(original, near: onset), accuracy: 0.003, "click at \(onset)")
         }
+    }
+
+    /// Sounds on the sound lanes play at their own times, from their own part of the file, cut off
+    /// at the sequence's end; they count as the clips' sound, so a silent export leaves them out.
+    func testSoundsPlayWhereTheySitAndStopAtTheEnd() async throws {
+        var project = try await makeProject()
+        let click = try XCTUnwrap(project.referenceAudio)
+        // Two seconds of clicks (four of them) at 3 s, and the same past the 13 s end at 12.5 s
+        // on a second lane, where only its first click (12.5 s) is before the end.
+        let early = SoundClip(
+            fileName: click.fileName, fileDuration: click.duration,
+            sourceRange: MediaTimeRange(start: .zero, duration: MediaTime(seconds: 2)), start: MediaTime(seconds: 3))
+        var late = early
+        late.id = UUID()
+        late.start = MediaTime(seconds: 12.5)
+        try AddSoundCommand(clip: early).apply(to: &project)
+        try AddSoundCommand(clip: late, preferredTrack: 1).apply(to: &project)
+        XCTAssertEqual(project.soundTracks.count, 1, "both fit on one lane")
+        project.exportSettings.soundPolicy = .clipsOnly
+        try store.save(project)
+
+        let result = try await ExportService.export(project: project, store: store) { _ in }
+        let asset = AVURLAsset(url: result.videoURL)
+        try await assertVideo(asset, seconds: 13)
+        // In the file, AAC smears a hard start from silence up to half a frame early.
+        let expected = [3.0, 3.5, 4.0, 4.5, 12.5]
+        let onsets = try await clickOnsets(in: asset)
+        XCTAssertEqual(onsets.count, expected.count, "\(onsets)")
+        for (onset, want) in zip(onsets, expected) { XCTAssertEqual(onset, want, accuracy: 0.025) }
+
+        project.exportSettings.soundPolicy = .silent
+        let silent = try await ExportService.export(project: project, store: store) { _ in }
+        let tracks = try await AVURLAsset(url: silent.videoURL).loadTracks(withMediaType: .audio)
+        XCTAssertTrue(tracks.isEmpty, "a silent export leaves the sounds out too")
+
+        // What the preview plays has them exactly where they sit.
+        let preview = try await CompositionBuilder.build(
+            project: project, renderSize: CGSize(width: 1080, height: 1920), frameRate: 30,
+            includeClipAudio: true, includeMusic: false,
+            mediaURL: { self.store.mediaURL(for: $0, projectID: project.id) }, musicURL: nil,
+            soundURL: { self.store.soundURL(for: $0, projectID: project.id) })
+        let exact = try await clickOnsets(in: preview.composition)
+        XCTAssertEqual(exact.count, expected.count, "\(exact)")
+        for (onset, want) in zip(exact, expected) { XCTAssertEqual(onset, want, accuracy: 0.003) }
+
+        // The preview's mix holds each lane at its sounds' levels; a muted lane is silent.
+        project.soundTracks[0].isMuted = true
+        let built = try await CompositionBuilder.build(
+            project: project, renderSize: CGSize(width: 1080, height: 1920), frameRate: 30,
+            includeClipAudio: true, includeMusic: false,
+            mediaURL: { self.store.mediaURL(for: $0, projectID: project.id) }, musicURL: nil,
+            soundURL: { self.store.soundURL(for: $0, projectID: project.id) })
+        let laneTrack = try XCTUnwrap(built.soundTrackIDs[project.soundTracks[0].id])
+        let params = try XCTUnwrap(built.audioMix?.inputParameters.first { $0.trackID == laneTrack })
+        XCTAssertEqual(level(params, at: 3.5), 0)
+    }
+
+    /// A sound's level and fades ramp the preview's mix and the exported file alike.
+    func testSoundFadesRampInPreviewAndExport() async throws {
+        var project = try await makeProject()
+        let click = try XCTUnwrap(project.referenceAudio)
+        // Clicks at 3, 3.5, 4 and 4.5 s, fading in over the first second and out over the last half.
+        let sound = SoundClip(
+            fileName: click.fileName, fileDuration: click.duration,
+            sourceRange: MediaTimeRange(start: .zero, duration: MediaTime(seconds: 2)), start: MediaTime(seconds: 3))
+        try AddSoundCommand(clip: sound).apply(to: &project)
+        try SetSoundLevelCommand(clipID: sound.id, volume: 0.8).apply(to: &project)
+        try SetSoundFadesCommand(clipID: sound.id, fadeIn: MediaTime(seconds: 1), fadeOut: MediaTime(seconds: 0.5))
+            .apply(to: &project)
+        project.exportSettings.soundPolicy = .clipsOnly
+        try store.save(project)
+
+        let built = try await CompositionBuilder.build(
+            project: project, renderSize: CGSize(width: 1080, height: 1920), frameRate: 30,
+            includeClipAudio: true, includeMusic: false,
+            mediaURL: { self.store.mediaURL(for: $0, projectID: project.id) }, musicURL: nil,
+            soundURL: { self.store.soundURL(for: $0, projectID: project.id) })
+        let laneTrack = try XCTUnwrap(built.soundTrackIDs[project.soundTracks[0].id])
+        let params = try XCTUnwrap(built.audioMix?.inputParameters.first { $0.trackID == laneTrack })
+        XCTAssertEqual(level(params, at: 3.5), 0.4, accuracy: 0.001, "halfway up the fade in")
+        XCTAssertEqual(level(params, at: 4.2), 0.8, accuracy: 0.001, "held at its level")
+        XCTAssertEqual(level(params, at: 4.75), 0.4, accuracy: 0.001, "halfway down the fade out")
+
+        let result = try await ExportService.export(project: project, store: store) { _ in }
+        let peaks = try await clickPeaks(in: AVURLAsset(url: result.videoURL))
+        let half = try XCTUnwrap(peaks.first { abs($0.time - 3.5) < 0.05 }, "\(peaks)")
+        let full = try XCTUnwrap(peaks.first { abs($0.time - 4.0) < 0.05 }, "\(peaks)")
+        XCTAssertEqual(half.peak / full.peak, 0.5, accuracy: 0.1, "the click halfway up the fade is half as loud")
+    }
+
+    /// A clip moved later leaves a gap that exports as black, and the file grows by it.
+    func testGapsExportAsBlack() async throws {
+        var project = try await makeProject()
+        try PlaceClipCommand(clipID: project.clips[0].id, start: MediaTime(seconds: 2)).apply(to: &project)
+        XCTAssertEqual(project.duration, MediaTime(seconds: 15))
+        project.exportSettings.soundPolicy = .silent
+        try store.save(project)
+        let result = try await ExportService.export(project: project, store: store) { _ in }
+        let asset = AVURLAsset(url: result.videoURL)
+        try await assertVideo(asset, seconds: 15)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let gap = try await generator.image(at: CMTime(seconds: 1, preferredTimescale: 600)).image
+        let (r, g, b) = try pixel(gap, x: 0.5, y: 0.5)
+        XCTAssertLessThan(r + g + b, 30, "the gap is black")
+        let clip = try await generator.image(at: CMTime(seconds: 3, preferredTimescale: 600)).image
+        let (cr, cg, cb) = try pixel(clip, x: 0.5, y: 0.5)
+        XCTAssertGreaterThan(cr + cg + cb, 60, "the clip plays after it")
     }
 
     func testClipAudioOnlyExportLeavesMusicOut() async throws {
@@ -239,8 +350,10 @@ final class MusicPipelineTests: XCTestCase {
             CompositionBuilder.audioMix(
                 project: project, clipAudioTrackID: 1, musicTrackID: nil, voiceTrackID: 3, separated: [split],
                 writing: (.clipAudio, 0.6)) as? AVMutableAudioMix)
-        XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 5), 0.48, accuracy: 1e-5)
-        XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 3 }), at: 5), 0.12, accuracy: 1e-5)
+        XCTAssertEqual(
+            level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 5), 0.48, accuracy: 1e-5)
+        XCTAssertEqual(
+            level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 3 }), at: 5), 0.12, accuracy: 1e-5)
         XCTAssertEqual(level(try XCTUnwrap(writing.inputParameters.first { $0.trackID == 1 }), at: 10), 0)
     }
 
@@ -257,11 +370,13 @@ final class MusicPipelineTests: XCTestCase {
                 equalizer: equalizer.map(MasterEQTaps.init))
             let tracks = try await built.composition.loadTracks(withMediaType: .audio)
             let reader = try AVAssetReader(asset: built.composition)
-            let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [
-                AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
-                AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false,
-                AVNumberOfChannelsKey: 1, AVSampleRateKey: 44_100,
-            ])
+            let output = AVAssetReaderAudioMixOutput(
+                audioTracks: tracks,
+                audioSettings: [
+                    AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true,
+                    AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false,
+                    AVNumberOfChannelsKey: 1, AVSampleRateKey: 44_100,
+                ])
             output.audioMix = built.audioMix
             reader.add(output)
             XCTAssertTrue(reader.startReading())
@@ -269,7 +384,8 @@ final class MusicPipelineTests: XCTestCase {
             while let buffer = output.copyNextSampleBuffer(), let block = CMSampleBufferGetDataBuffer(buffer) {
                 var samples = [Float](repeating: 0, count: CMBlockBufferGetDataLength(block) / 4)
                 samples.withUnsafeMutableBytes {
-                    _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!)
+                    _ = CMBlockBufferCopyDataBytes(
+                        block, atOffset: 0, dataLength: $0.count, destination: $0.baseAddress!)
                 }
                 all += samples
             }
@@ -911,12 +1027,12 @@ final class MusicPipelineTests: XCTestCase {
     }
 
     /// Start times of clicks: the first loud sample after at least 0.2 s of quiet.
-    private func clickOnsets(in asset: AVURLAsset) async throws -> [Double] {
+    private func clickOnsets(in asset: AVAsset) async throws -> [Double] {
         try await clickPeaks(in: asset).map(\.time)
     }
 
     /// Each click's start time and its loudest sample within 0.1 s.
-    private func clickPeaks(in asset: AVURLAsset) async throws -> [(time: Double, peak: Float)] {
+    private func clickPeaks(in asset: AVAsset) async throws -> [(time: Double, peak: Float)] {
         let rate = 44_100.0
         let samples = try await monoSamples(in: asset, rate: rate)
         var clicks: [(time: Double, peak: Float)] = []
@@ -931,7 +1047,7 @@ final class MusicPipelineTests: XCTestCase {
         return clicks
     }
 
-    private func monoSamples(in asset: AVURLAsset, rate: Double) async throws -> [Float] {
+    private func monoSamples(in asset: AVAsset, rate: Double) async throws -> [Float] {
         let audioTracks = try await asset.loadTracks(withMediaType: .audio)
         let track = try XCTUnwrap(audioTracks.first)
         let reader = try AVAssetReader(asset: asset)

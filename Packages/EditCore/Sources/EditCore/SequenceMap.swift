@@ -30,6 +30,7 @@ public struct SequenceMap: Sendable {
         var cursor = MediaTime.zero
         var built: [Entry] = []
         for (i, clip) in project.clips.enumerated() {
+            cursor += clip.gap
             let d = clip.compositionDuration
             built.append(
                 Entry(
@@ -42,11 +43,17 @@ public struct SequenceMap: Sendable {
         duration = cursor
     }
 
-    /// The clip under a composition time. The very end of the sequence maps to the last clip.
+    /// The clip under a composition time. In a gap it's the clip after the gap; the very end of
+    /// the sequence maps to the last clip.
     public func entry(at compositionTime: MediaTime) -> Entry? {
         if let hit = entries.first(where: { $0.compositionRange.contains(compositionTime) }) { return hit }
-        if let last = entries.last, compositionTime >= last.compositionRange.end { return last }
-        return entries.first
+        if let next = entries.first(where: { $0.compositionRange.start > compositionTime }) { return next }
+        return entries.last
+    }
+
+    /// Whether a composition time falls in a gap between clips (or before the first).
+    public func isGap(at compositionTime: MediaTime) -> Bool {
+        compositionTime < duration && !entries.contains { $0.compositionRange.contains(compositionTime) }
     }
 
     public func entry(for clipID: UUID) -> Entry? { entries.first { $0.clipID == clipID } }

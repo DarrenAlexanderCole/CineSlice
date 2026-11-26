@@ -74,8 +74,10 @@ final class WorkspaceModel {
     /// Audio track IDs in the loaded sequence item, and the clips playing split sound, for live
     /// level changes.
     @ObservationIgnored private var loadedTrackIDs:
-        (clip: CMPersistentTrackID?, music: CMPersistentTrackID?, voice: CMPersistentTrackID?, separated: Set<UUID>) =
-            (nil, nil, nil, [])
+        (
+            clip: CMPersistentTrackID?, music: CMPersistentTrackID?, sounds: [UUID: CMPersistentTrackID],
+            voice: CMPersistentTrackID?, separated: Set<UUID>
+        ) = (nil, nil, [:], nil, [])
     private(set) var undoName: String?
     private(set) var redoName: String?
 
@@ -163,6 +165,7 @@ final class WorkspaceModel {
         if let id = selectedClipID, project.clip(id: id) == nil {
             selectedClipID = project.clips.first?.id
         }
+        if let id = selectedSoundID, project.sound(id: id) == nil { selectedSoundID = nil }
         if mode == .explore, selectedClip == nil { mode = .arrange }
         if previous.referenceAudio?.fileName != project.referenceAudio?.fileName { loadWaveform() }
         scheduleSave()
@@ -191,6 +194,14 @@ final class WorkspaceModel {
             if shape.clips[i].balance != nil { shape.clips[i].balance = .init(voice: 1, scene: 1) }
         }
         shape.referenceAudio?.volume = 1
+        for t in shape.soundTracks.indices {
+            shape.soundTracks[t].isMuted = false
+            for c in shape.soundTracks[t].clips.indices {
+                shape.soundTracks[t].clips[c].volume = 1
+                shape.soundTracks[t].clips[c].fadeIn = .zero
+                shape.soundTracks[t].clips[c].fadeOut = .zero
+            }
+        }
         shape.automation = Automation()
         shape.loop = nil
         // Only the frame and its rate reach the preview. It always plays the full mix (the sound
@@ -265,6 +276,7 @@ final class WorkspaceModel {
                             ? nil : store.mediaURL(for: $0, projectID: snapshot.id)
                     },
                     musicURL: snapshot.referenceAudio.flatMap { store.audioURL(for: $0, projectID: snapshot.id) },
+                    soundURL: { store.soundURL(for: $0, projectID: snapshot.id) },
                     clipStems: { store.stemURLs(for: $0, source: $1, projectID: snapshot.id) },
                     equalizer: taps)
                 guard !Task.isCancelled, self.mode != .explore else { return }
@@ -273,7 +285,8 @@ final class WorkspaceModel {
                 item.audioMix = built.audioMix
                 self.equalizerTaps = taps
                 self.loadedTrackIDs = (
-                    built.clipAudioTrackID, built.musicTrackID, built.voiceTrackID, built.separatedClipIDs
+                    built.clipAudioTrackID, built.musicTrackID, built.soundTrackIDs, built.voiceTrackID,
+                    built.separatedClipIDs
                 )
                 let target = CMTimeMinimum(time.cmTime, built.duration)
                 self.engine.load(item, duration: built.duration, at: target, resume: resume)
@@ -300,13 +313,21 @@ final class WorkspaceModel {
 
     /// Sets the player's levels; `clip` (for the selected clip) and `music` override the project's
     /// for live fader previews, as `balance` does the selected clip's voice and scene levels. A
-    /// fader being recorded is always heard as it is.
-    func applyLevels(clip: Float? = nil, music: Float? = nil, balance: SoundBalance? = nil) {
+    /// fader being recorded is always heard as it is. `sound` stands in for the sound of its id,
+    /// for LIGHTBOX's level and fade faders.
+    func applyLevels(
+        clip: Float? = nil, music: Float? = nil, balance: SoundBalance? = nil, sound: SoundClip? = nil
+    ) {
         equalizer.set(project.masterEQ)
         guard mode != .explore, let item = engine.player.currentItem else { return }
+        var mixed = mixProject
+        if let sound, let at = mixed.soundLocation(id: sound.id) {
+            mixed.soundTracks[at.track].clips[at.index] = sound
+        }
         item.audioMix = CompositionBuilder.audioMix(
-            project: mixProject, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
-            voiceTrackID: loadedTrackIDs.voice, separated: loadedTrackIDs.separated,
+            project: mixed, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
+            soundTrackIDs: loadedTrackIDs.sounds, voiceTrackID: loadedTrackIDs.voice,
+            separated: loadedTrackIDs.separated,
             clipLevel: clip.flatMap { level in selectedClipID.map { (id: $0, volume: level) } }, musicLevel: music,
             balance: balance.flatMap { b in selectedClipID.map { (id: $0, balance: b) } },
             writing: recording.map { ($0.target, recordLevel) },
@@ -342,6 +363,135 @@ final class WorkspaceModel {
         updateLoopRange()
     }
 
+    /// LIGHTBOX: selects a clip (or clears the selection) without moving the playhead, so the
+    /// scissors can cut the selected clip where the playhead already is.
+    func selectInPlace(_ clipID: UUID?) {
+        guard clipID != selectedClipID || selectedSoundID != nil else { return }
+        selectedSoundID = nil
+        selectedClipID = clipID
+        Haptics.detent()
+    }
+
+    // MARK: Sounds (LIGHTBOX)
+
+    /// The sound selected on LIGHTBOX's sound lanes. Selecting one clears the clip selection.
+    private(set) var selectedSoundID: UUID?
+
+    func selectSound(_ id: UUID) {
+        guard id != selectedSoundID else { return }
+        selectedClipID = nil
+        selectedSoundID = id
+        Haptics.detent()
+    }
+
+    func importSoundFile(_ url: URL) async {
+        importStatus = "Importing sound…"
+        do {
+            addSound(try await MediaImporter.importAudioFile(url, store: store, projectID: project.id))
+        } catch {
+            finishMusicImport(error)
+        }
+    }
+
+    func importSound(fromVideo item: PhotosPickerItem) async {
+        importStatus = "Extracting sound…"
+        do {
+            addSound(try await MediaImporter.importAudio(fromVideo: item, store: store, projectID: project.id))
+        } catch {
+            finishMusicImport(error)
+        }
+    }
+
+    func addDemoSound() async {
+        importStatus = "Generating demo sound…"
+        do {
+            addSound(try await DemoMediaGenerator.makeDemoSound(store: store, projectID: project.id))
+        } catch {
+            finishMusicImport(error)
+        }
+    }
+
+    /// A new sound starts at the playhead, on the first lane with room there.
+    private func addSound(_ file: AudioTrack) {
+        importStatus = nil
+        let clip = SoundClip(
+            fileName: file.fileName, originalFilename: file.originalFilename, fileDuration: file.duration,
+            start: currentTime)
+        perform(AddSoundCommand(clip: clip))
+        if project.sound(id: clip.id) != nil {
+            selectSound(clip.id)
+            Haptics.success()
+        }
+    }
+
+    /// Moves a sound to `start` on lane `track` (one past the last makes a new lane). False,
+    /// with a warning tap, when another sound is in the way there.
+    @discardableResult
+    func moveSound(_ id: UUID, toTrack track: Int, start: MediaTime) -> Bool {
+        let range = project.sound(id: id).map { MediaTimeRange(start: start, duration: $0.sourceRange.duration) }
+        guard let range, project.soundFits(range, onTrack: track, excluding: id) else {
+            Haptics.warning()
+            return false
+        }
+        perform(MoveSoundCommand(clipID: id, track: track, start: start))
+        return true
+    }
+
+    /// The selected sound, when the playhead is inside it far enough from its ends to cut there.
+    var soundSplitTime: MediaTime? {
+        guard let id = selectedSoundID, let sound = project.sound(id: id),
+            SplitSoundCommand.canSplit(sound, at: currentTime)
+        else { return nil }
+        return currentTime
+    }
+
+    /// Cuts the selected sound at the playhead and selects its second half.
+    func splitSelectedSound() {
+        guard let id = selectedSoundID, let time = soundSplitTime else {
+            Haptics.warning()
+            return
+        }
+        let command = SplitSoundCommand(clipID: id, time: time)
+        perform(command)
+        selectedSoundID = command.newClipID
+        Haptics.press()
+    }
+
+    var selectedSound: SoundClip? { selectedSoundID.flatMap { project.sound(id: $0) } }
+
+    /// The selected sound's level, as one undo step.
+    func setSoundLevel(_ volume: Float) {
+        guard let sound = selectedSound, sound.volume != volume else { return applyLevels() }
+        perform(SetSoundLevelCommand(clipID: sound.id, volume: volume))
+    }
+
+    /// The selected sound's fades, as one undo step.
+    func setSoundFades(in fadeIn: MediaTime, out fadeOut: MediaTime) {
+        guard let sound = selectedSound, sound.fadeIn != fadeIn || sound.fadeOut != fadeOut else {
+            return applyLevels()
+        }
+        perform(SetSoundFadesCommand(clipID: sound.id, fadeIn: fadeIn, fadeOut: fadeOut))
+    }
+
+    /// Mutes or unmutes a sound lane.
+    func toggleMute(soundTrack id: UUID) {
+        guard let lane = project.soundTracks.first(where: { $0.id == id }) else { return }
+        perform(SetSoundTrackMuteCommand(trackID: id, isMuted: !lane.isMuted))
+        Haptics.detent()
+    }
+
+    /// Takes the selected sound off its lane, or the selected clip out of the sequence.
+    func removeSelection() {
+        if let id = selectedSoundID {
+            perform(RemoveSoundCommand(clipID: id))
+        } else if let id = selectedClipID {
+            remove(id)
+        } else {
+            return
+        }
+        Haptics.press()
+    }
+
     func setMode(_ newMode: Mode) {
         guard newMode != mode else { return }
         Haptics.detent()
@@ -361,6 +511,49 @@ final class WorkspaceModel {
                 updateLoopRange()
             }
         }
+    }
+
+    /// Turning the phone sideways: LIGHTBOX works in composition time on the whole sequence. From
+    /// Trim it goes back to the sequence at the same frame; crop editing and a write pass end.
+    func enterLightbox() {
+        if isCropping { setCropping(false) }
+        isWriting = false
+        guard mode == .explore else { return }
+        let time = selectedClipID.flatMap { sequenceMap.compositionTime(clipID: $0, sourceTime: currentTime) } ?? .zero
+        mode = .arrange
+        draftRange = nil
+        rebuildSequence(keepingTime: time, resume: false)
+    }
+
+    /// Clip starts and the sequence end, in composition time: where Previous and Next land.
+    /// Clip starts, clip ends where a gap follows, and the sequence end, in composition time:
+    /// where Previous and Next land.
+    var cutTimes: [MediaTime] {
+        let map = sequenceMap
+        let edges = map.entries.flatMap { [$0.compositionRange.start, $0.compositionRange.end] } + [map.duration]
+        return Array(Set(edges)).sorted()
+    }
+
+    /// The sequence index of the cut nearest the playhead (0 is the start, `clips.count` the end).
+    var cutIndexNearPlayhead: Int {
+        let now = currentTime.seconds
+        let map = sequenceMap
+        let cuts = (map.entries.map(\.compositionRange.start) + [map.duration]).map(\.seconds)
+        return cuts.indices.min { abs(cuts[$0] - now) < abs(cuts[$1] - now) } ?? project.clips.count
+    }
+
+    /// Jumps the playhead to the previous or next cut. Back from just after a cut goes to the one before.
+    func jumpToCut(forward: Bool) {
+        let now = currentTime
+        let nearly = MediaTime(value: 1, timescale: 10)
+        // Half a frame: a cut the playhead is already on (to rounding) doesn't count as the next one.
+        let halfFrame = sequenceFrame.scaled(by: 0.5)
+        let target =
+            forward
+            ? cutTimes.first { $0 > now + halfFrame } : cutTimes.last { $0 < now - nearly } ?? .zero
+        guard let target else { return }
+        engine.seek(to: target.cmTime, precise: true)
+        Haptics.detent()
     }
 
     func enterExplore(_ clipID: UUID? = nil) {
@@ -450,14 +643,21 @@ final class WorkspaceModel {
 
     // MARK: Arrange edits
 
+    /// Where the next imported clips go in the sequence; nil appends them. LIGHTBOX sets it to the
+    /// cut nearest the playhead as it opens a picker, so footage lands where the editing is.
+    var importInsertIndex: Int?
+
     func addSources(_ sources: [SourceAsset]) {
         guard !sources.isEmpty else { return }
-        let command = AddClipsCommand(sources: sources)
+        let command = AddClipsCommand(sources: sources, insertIndex: importInsertIndex)
+        importInsertIndex = nil
         perform(command)
         selectedClipID = command.clipIDs.first
     }
 
     func move(_ clipID: UUID, to index: Int) { perform(MoveClipCommand(clipID: clipID, toIndex: index)) }
+    /// LIGHTBOX's free move: the clip to `start`, the others staying put (see `PlaceClipCommand`).
+    func place(_ clipID: UUID, at start: MediaTime) { perform(PlaceClipCommand(clipID: clipID, start: start)) }
     func remove(_ clipID: UUID) { perform(RemoveClipCommand(clipID: clipID)) }
     func duplicate(_ clipID: UUID) {
         let command = DuplicateClipCommand(clipID: clipID)
@@ -1341,7 +1541,8 @@ final class WorkspaceModel {
         finishImport(sources, errors)
     }
 
-    func addDemoClips() async {
+    func addDemoClips(at index: Int? = nil) async {
+        importInsertIndex = index
         importStatus = "Generating demo clips…"
         do {
             let sources = try await DemoMediaGenerator.makeDemoSources(store: store, projectID: project.id)

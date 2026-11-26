@@ -154,12 +154,12 @@ enum DemoMediaGenerator {
     /// each clip becomes a slow push-in on its photo instead of the test card, for press screenshots.
     private static func photo(for spec: Spec) -> UIImage? {
         #if DEBUG
-        guard let folder = ProcessInfo.processInfo.environment["DEMO_PHOTOS"], let letter = spec.label.first else {
-            return nil
-        }
-        return UIImage(contentsOfFile: (folder as NSString).appendingPathComponent("\(letter).jpg"))
+            guard let folder = ProcessInfo.processInfo.environment["DEMO_PHOTOS"], let letter = spec.label.first else {
+                return nil
+            }
+            return UIImage(contentsOfFile: (folder as NSString).appendingPathComponent("\(letter).jpg"))
         #else
-        return nil
+            return nil
         #endif
     }
 
@@ -181,7 +181,11 @@ enum DemoMediaGenerator {
         let size = CGSize(width: photo.size.width * fill, height: photo.size.height * fill)
         let drift = (size.width - w) * 0.5 * progress
         ctx.interpolationQuality = .high
-        ctx.draw(cgImage, in: CGRect(x: (w - size.width) / 2 - drift * 0.3, y: (h - size.height) / 2, width: size.width, height: size.height))
+        ctx.draw(
+            cgImage,
+            in: CGRect(
+                x: (w - size.width) / 2 - drift * 0.3, y: (h - size.height) / 2, width: size.width, height: size.height)
+        )
     }
 
     // MARK: Click track
@@ -204,5 +208,30 @@ enum DemoMediaGenerator {
     static func writeClickTrack(to url: URL) throws {
         let duration = MediaTime(seconds: clickSeconds)
         try GuideRenderer.write(ClickGuide(bpm: clickBPM).clicks(upTo: duration), duration: duration, to: url)
+    }
+
+    /// A 2 s rising tone that swells and fades, for trying the sound lanes without a sound file.
+    static func makeDemoSound(store: ProjectStore, projectID: UUID) async throws -> AudioTrack {
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("wav")
+        let rate = 44_100.0
+        let frames = AVAudioFrameCount(rate * 2)
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1),
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+            let samples = buffer.floatChannelData?[0]
+        else { throw CocoaError(.fileWriteUnknown) }
+        buffer.frameLength = frames
+        var phase = 0.0
+        for i in 0..<Int(frames) {
+            let t = Double(i) / Double(frames)
+            phase += 2 * .pi * (220 + 660 * t) / rate
+            samples[i] = Float(sin(phase) * sin(.pi * t) * 0.6)
+        }
+        do {
+            let file = try AVAudioFile(forWriting: temp, settings: format.settings)
+            try file.write(from: buffer)
+        }
+        return try await MediaImporter.adoptAudio(
+            tempURL: temp, originalName: "Demo rise", store: store, projectID: projectID)
     }
 }

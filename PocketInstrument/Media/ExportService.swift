@@ -58,6 +58,7 @@ enum ExportService {
                     ? nil : store.mediaURL(for: source, projectID: project.id)
             },
             musicURL: project.referenceAudio.flatMap { store.audioURL(for: $0, projectID: project.id) },
+            soundURL: { store.soundURL(for: $0, projectID: project.id) },
             clipStems: { store.stemURLs(for: $0, source: $1, projectID: project.id) },
             equalizer: project.masterEQ.isActive ? MasterEQTaps(EQSettings(project.masterEQ)) : nil)
 

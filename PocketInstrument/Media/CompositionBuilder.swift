@@ -12,6 +12,8 @@ struct BuiltComposition {
     /// Track IDs for re-mixing levels on the live player item without a rebuild.
     let clipAudioTrackID: CMPersistentTrackID?
     let musicTrackID: CMPersistentTrackID?
+    /// Each sound lane's track, by lane ID; lanes with nothing to play have none.
+    let soundTrackIDs: [UUID: CMPersistentTrackID]
     /// The voices of split clips; their scene plays on the clip audio track.
     let voiceTrackID: CMPersistentTrackID?
     /// Clips playing split sound. A clip whose split isn't made yet is silent.
@@ -35,6 +37,9 @@ enum CompositionBuilder {
     ///   - mediaURL: resolves a source to its file; return nil when the file is missing.
     ///   - includeClipAudio / includeMusic: both false produces a silent composition.
     ///   - musicURL: the reference music file, or nil when there's none or it's missing.
+    ///   - soundURL: resolves a sound on the sound lanes to its file; nil when it's missing.
+    ///     Sounds count as the clips' sound: they play when `includeClipAudio` does, each lane on
+    ///     a track of its own, cut off at the sequence's end like the music.
     ///   - clipStems: a clip's split sound (see `VoiceSeparator`), each half starting where the
     ///     source's sound starts: the scene plays instead of the source's sound, the voices on a
     ///     track of their own, each at the clip's level for it. Nil plays the source's own sound.
@@ -49,6 +54,7 @@ enum CompositionBuilder {
         includeMusic: Bool,
         mediaURL: (SourceAsset) -> URL?,
         musicURL: URL?,
+        soundURL: (SoundClip) -> URL? = { _ in nil },
         clipStems: (TimelineClip, SourceAsset) -> (voice: URL, scene: URL)? = { _, _ in nil },
         equalizer: MasterEQTaps? = nil
     ) async throws -> BuiltComposition {
@@ -76,6 +82,11 @@ enum CompositionBuilder {
         var separated: Set<UUID> = []
 
         for clip in project.clips {
+            // A gap before the clip plays black and silent.
+            if clip.gap > .zero {
+                videoTrack.insertEmptyTimeRange(CMTimeRange(start: cursor, duration: clip.gap.cmTime))
+                cursor = cursor + clip.gap.cmTime
+            }
             let compDuration = clip.compositionDuration.cmTime
             let sourceRange = clip.sourceRange.cmTimeRange
 
@@ -118,20 +129,26 @@ enum CompositionBuilder {
                 var audioRange = sourceRange.intersection(audioTrackRange)
                 if audioRange.isValid && !audioRange.isEmpty {
                     let stemAssets = clipStems(clip, source).map {
-                        (voice: AVURLAsset(url: $0.voice, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true]),
-                         scene: AVURLAsset(url: $0.scene, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true]))
+                        (
+                            voice: AVURLAsset(
+                                url: $0.voice, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true]),
+                            scene: AVURLAsset(
+                                url: $0.scene, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+                        )
                     }
                     // `stemAssets` must outlive the inserts: a track whose asset is gone fails with -11800.
                     if let scene = try? await stemAssets?.scene.loadTracks(withMediaType: .audio).first,
                         let voice = try? await stemAssets?.voice.loadTracks(withMediaType: .audio).first,
                         let voices = voiceTrack
-                            ?? composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+                            ?? composition.addMutableTrack(
+                                withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
                     {
                         voiceTrack = voices
                         // The split files start at the source sound's first sample.
                         let offset = audioTrackRange.start
                         let wanted = CMTimeRange(start: audioRange.start - offset, duration: audioRange.duration)
-                        let usable = wanted
+                        let usable =
+                            wanted
                             .intersection(try await scene.load(.timeRange))
                             .intersection(try await voice.load(.timeRange))
                         audioRange = CMTimeRange(start: usable.start + offset, duration: usable.duration)
@@ -176,6 +193,11 @@ enum CompositionBuilder {
                 music, url: musicURL, sequenceDuration: MediaTime(cursor), into: composition)
         }
 
+        let soundTrackIDs =
+            includeClipAudio
+            ? try await insertSounds(project.soundTracks, url: soundURL, sequenceDuration: cursor, into: composition)
+            : [:]
+
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: cursor)
         instruction.layerInstructions = [layer]
@@ -189,9 +211,10 @@ enum CompositionBuilder {
             composition: composition, videoComposition: videoComposition,
             audioMix: audioMix(
                 project: project, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID,
-                voiceTrackID: voiceTrackID, separated: separated, equalizer: equalizer),
+                soundTrackIDs: soundTrackIDs, voiceTrackID: voiceTrackID, separated: separated,
+                equalizer: equalizer),
             duration: cursor, clipAudioTrackID: clipAudioTrackID, musicTrackID: musicTrackID,
-            voiceTrackID: voiceTrackID, separatedClipIDs: separated)
+            soundTrackIDs: soundTrackIDs, voiceTrackID: voiceTrackID, separatedClipIDs: separated)
     }
 
     /// Places the music per `MusicPlacement`, trimmed to the sequence. Returns its track ID, or nil if nothing overlaps.
@@ -216,6 +239,37 @@ enum CompositionBuilder {
         return track.trackID
     }
 
+    /// Each sound lane on an audio track of its own, every sound at its time, the part of its file
+    /// it uses, cut off at the sequence's end. Missing files leave silence. Returns the tracks by
+    /// lane ID.
+    private static func insertSounds(
+        _ lanes: [SoundTrack], url: (SoundClip) -> URL?, sequenceDuration: CMTime,
+        into composition: AVMutableComposition
+    ) async throws -> [UUID: CMPersistentTrackID] {
+        var ids: [UUID: CMPersistentTrackID] = [:]
+        for lane in lanes {
+            guard
+                let track = composition.addMutableTrack(
+                    withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else { continue }
+            var inserted = false
+            for clip in lane.clips {
+                let start = clip.start.cmTime
+                guard start < sequenceDuration, let fileURL = url(clip) else { continue }
+                let asset = AVURLAsset(url: fileURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+                guard let source = try await asset.loadTracks(withMediaType: .audio).first else { continue }
+                let length = CMTimeMinimum(clip.sourceRange.duration.cmTime, sequenceDuration - start)
+                let wanted = CMTimeRange(start: clip.sourceRange.start.cmTime, duration: length)
+                let usable = wanted.intersection(try await source.load(.timeRange))
+                guard usable.isValid, !usable.isEmpty else { continue }
+                try track.insertTimeRange(usable, of: source, at: start + (usable.start - wanted.start))
+                inserted = true
+            }
+            if inserted { ids[lane.id] = track.trackID } else { composition.removeTrack(track) }
+        }
+        return ids
+    }
+
     /// Levels for each audio track: the project's level envelopes (static levels, each clip's
     /// own level from its first frame, and recorded automation) as volume ramps. Shared by
     /// preview and export. Cheap, so the player's mix can be swapped while a fader moves:
@@ -231,7 +285,8 @@ enum CompositionBuilder {
     /// one each time an item's mix is replaced, so its taps carry over.
     static func audioMix(
         project: Project, clipAudioTrackID: CMPersistentTrackID?, musicTrackID: CMPersistentTrackID?,
-        voiceTrackID: CMPersistentTrackID? = nil, separated: Set<UUID> = [],
+        soundTrackIDs: [UUID: CMPersistentTrackID] = [:], voiceTrackID: CMPersistentTrackID? = nil,
+        separated: Set<UUID> = [],
         clipLevel: (id: UUID, volume: Float)? = nil, musicLevel: Float? = nil,
         balance: (id: UUID, balance: SoundBalance)? = nil,
         writing: (target: AutomationTarget, level: Float)? = nil,
@@ -282,9 +337,29 @@ enum CompositionBuilder {
             }
             return p
         }
-        guard !params.isEmpty else { return nil }
+        // Sound lanes: each sound at its own level, ramped across its fades; a muted lane is silent.
+        let soundParams: [AVAudioMixInputParameters] = mixed.soundTracks.compactMap { lane in
+            guard let trackID = soundTrackIDs[lane.id] else { return nil }
+            let p = AVMutableAudioMixInputParameters()
+            p.trackID = trackID
+            p.audioTapProcessor = equalizer?.tap(for: trackID)
+            let envelope = lane.levelEnvelope
+            if envelope.count == 1 { p.setVolume(envelope[0].value, at: envelope[0].time.cmTime) }
+            for (a, b) in zip(envelope, envelope.dropFirst()) where b.time > a.time {
+                if a.value == b.value {
+                    p.setVolume(a.value, at: a.time.cmTime)
+                } else {
+                    p.setVolumeRamp(
+                        fromStartVolume: a.value, toEndVolume: b.value,
+                        timeRange: CMTimeRange(start: a.time.cmTime, end: b.time.cmTime))
+                }
+            }
+            return p
+        }
+        let all = params + soundParams
+        guard !all.isEmpty else { return nil }
         let mix = AVMutableAudioMix()
-        mix.inputParameters = params
+        mix.inputParameters = all
         return mix
     }
 
@@ -314,9 +389,13 @@ enum CompositionBuilder {
                 let scene = try await sceneAsset.loadTracks(withMediaType: .audio).first
             else { return AVPlayerItem(asset: asset) }
             let composition = AVMutableComposition()
-            guard let videoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
-                let voiceTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),
-                let sceneTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            guard
+                let videoTrack = composition.addMutableTrack(
+                    withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+                let voiceTrack = composition.addMutableTrack(
+                    withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid),
+                let sceneTrack = composition.addMutableTrack(
+                    withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
             else { return AVPlayerItem(asset: asset) }
             let videoRange = try await video.load(.timeRange)
             try videoTrack.insertTimeRange(videoRange, of: video, at: videoRange.start)

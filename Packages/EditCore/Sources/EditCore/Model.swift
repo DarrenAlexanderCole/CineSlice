@@ -147,8 +147,8 @@ public enum SoundStem: String, Codable, Sendable, CaseIterable {
     case scene = "reduceVoice"
 }
 
-/// One moment of a source placed in the sequence. Clips are placed
-/// back-to-back in array order (no gaps in Phase 1).
+/// One moment of a source placed in the sequence. Clips play in array order, each after its
+/// `gap` (black and silence) following the one before; with no gaps they're back to back.
 public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     public var id: UUID
     public var sourceID: UUID
@@ -166,6 +166,9 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     public var levelCurve: AutomationLane
     /// Plays the sound split into voices and scene at these levels; nil plays it as recorded.
     public var balance: SoundBalance?
+    /// Black and silence before it, after the clip before (or the sequence's start). Zero keeps
+    /// it against that clip, as every clip was before LIGHTBOX could leave gaps.
+    public var gap: MediaTime = .zero
 
     public init(
         id: UUID = UUID(), sourceID: UUID, sourceRange: MediaTimeRange,
@@ -184,7 +187,7 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceID, sourceRange, speed, framing, crop, volume, levelCurve, balance
+        case id, sourceID, sourceRange, speed, framing, crop, volume, levelCurve, balance, gap
         /// Before the levels: "voiceOnly" or "reduceVoice". Read, never written.
         case voice
     }
@@ -200,6 +203,7 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         try c.encode(volume, forKey: .volume)
         try c.encode(levelCurve, forKey: .levelCurve)
         try c.encodeIfPresent(balance, forKey: .balance)
+        if gap > .zero { try c.encode(gap, forKey: .gap) }
     }
 
     public init(from decoder: Decoder) throws {
@@ -212,6 +216,7 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         crop = try c.decodeIfPresent(Crop.self, forKey: .crop)
         volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
         levelCurve = try c.decodeIfPresent(AutomationLane.self, forKey: .levelCurve) ?? AutomationLane()
+        gap = try c.decodeIfPresent(MediaTime.self, forKey: .gap) ?? .zero
         if let balance = try c.decodeIfPresent(SoundBalance.self, forKey: .balance) {
             self.balance = balance
         } else {
@@ -447,7 +452,10 @@ public enum ProjectError: Error, Equatable {
 }
 
 public struct Project: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 1
+    /// 2 added sound lanes and gaps between clips. A project with neither is still written as 1,
+    /// so builds from before them keep opening it; one with either is written as 2, which those
+    /// builds refuse rather than open and lose them on saving.
+    public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
     public var id: UUID
@@ -457,6 +465,8 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     public var sources: [SourceAsset]
     public var clips: [TimelineClip]
     public var referenceAudio: AudioTrack?
+    /// The audio lanes under the music, each holding sounds placed in time.
+    public var soundTracks: [SoundTrack]
     /// The recorded music curve (Phase 3), in composition time. Clip curves live on the clips.
     public var automation: Automation
     public var loop: LoopRange?
@@ -473,6 +483,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         self.sources = []
         self.clips = []
         self.referenceAudio = nil
+        self.soundTracks = []
         self.automation = Automation()
         self.loop = nil
         self.exportSettings = .vertical1080
@@ -482,7 +493,30 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     // Tolerant decoding: new optional fields can be added without breaking old files.
     enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, createdAt, modifiedAt, sources, clips
-        case referenceAudio, automation, loop, exportSettings, masterEQ
+        case referenceAudio, soundTracks, automation, loop, exportSettings, masterEQ
+    }
+
+    /// The oldest schema that holds everything in the project: 2 for sound lanes or gaps
+    /// between clips, which version 1 builds would drop.
+    public var minimumSchemaVersion: Int {
+        soundTracks.isEmpty && clips.allSatisfy { $0.gap == .zero } ? 1 : 2
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(minimumSchemaVersion, forKey: .schemaVersion)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(modifiedAt, forKey: .modifiedAt)
+        try c.encode(sources, forKey: .sources)
+        try c.encode(clips, forKey: .clips)
+        try c.encodeIfPresent(referenceAudio, forKey: .referenceAudio)
+        if !soundTracks.isEmpty { try c.encode(soundTracks, forKey: .soundTracks) }
+        try c.encode(automation, forKey: .automation)
+        try c.encodeIfPresent(loop, forKey: .loop)
+        try c.encode(exportSettings, forKey: .exportSettings)
+        try c.encode(masterEQ, forKey: .masterEQ)
     }
 
     /// Keys older files wrote that are no longer stored.
@@ -507,6 +541,8 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
             for i in clips.indices { clips[i].volume = min(max(clips[i].volume * level, 0), 1) }
         }
         referenceAudio = try c.decodeIfPresent(AudioTrack.self, forKey: .referenceAudio)
+        // Version 1 had no sound lanes.
+        soundTracks = try c.decodeIfPresent([SoundTrack].self, forKey: .soundTracks) ?? []
         // Older files wrote an always-empty `volumeAutomation` array; it is ignored.
         automation = try c.decodeIfPresent(Automation.self, forKey: .automation) ?? Automation()
         loop = try c.decodeIfPresent(LoopRange.self, forKey: .loop)
@@ -528,6 +564,6 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     public func index(ofClip id: UUID) -> Int? { clips.firstIndex { $0.id == id } }
 
     public var duration: MediaTime {
-        clips.reduce(MediaTime.zero) { $0 + $1.compositionDuration }
+        clips.reduce(MediaTime.zero) { $0 + $1.gap + $1.compositionDuration }
     }
 }

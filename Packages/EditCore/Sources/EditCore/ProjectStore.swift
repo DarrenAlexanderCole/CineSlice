@@ -55,6 +55,22 @@ public final class ProjectStore: @unchecked Sendable {
         cacheDirectory(for: projectID).appendingPathComponent("\(track.fileName).waveform")
     }
 
+    /// A sound's file, or nil when it's missing.
+    public func soundURL(for sound: SoundClip, projectID: UUID) -> URL? {
+        let url = mediaDirectory(for: projectID).appendingPathComponent(sound.fileName)
+        return fm.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Peaks of a sound's file, shared by every sound cut from it.
+    public func waveformCacheURL(for sound: SoundClip, projectID: UUID) -> URL {
+        cacheDirectory(for: projectID).appendingPathComponent("\(sound.fileName).waveform")
+    }
+
+    /// Peaks of a clip source's own sound (the light box's film strips). Derived data, like the music's.
+    public func waveformCacheURL(for source: SourceAsset, projectID: UUID) -> URL {
+        cacheDirectory(for: projectID).appendingPathComponent("\(source.fileName).waveform")
+    }
+
     /// Where one half of a source's split sound is kept. It's derived data: clearing the cache
     /// removes it and it is made again when needed. The name says which separator made it, so
     /// sound made by an earlier one is made again rather than reused.

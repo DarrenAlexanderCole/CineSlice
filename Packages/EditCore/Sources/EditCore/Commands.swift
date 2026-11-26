@@ -6,6 +6,8 @@ public enum EditError: Error, Equatable {
     case invalidRange
     /// The music is locked in place.
     case locked
+    /// No sound lane has room there.
+    case noRoom
 }
 
 /// Every project mutation goes through a command so it can be undone.
@@ -61,6 +63,63 @@ public struct MoveClipCommand: EditingCommand {
     }
 }
 
+/// Puts a clip at a time on the sequence, LIGHTBOX's free move: every other clip stays where it
+/// is, so it leaves a gap where it was and can sit after one where it lands. Dropped over
+/// another clip, it goes before or after it (by which side of its middle it's on) and the clips
+/// after are pushed later to make room. See `SequencePlacement`.
+public struct PlaceClipCommand: EditingCommand {
+    public let clipID: UUID
+    public let start: MediaTime
+
+    public init(clipID: UUID, start: MediaTime) {
+        self.clipID = clipID
+        self.start = start
+    }
+
+    public var actionName: String { "Move Clip" }
+
+    public func apply(to project: inout Project) throws {
+        guard project.index(ofClip: clipID) != nil else { throw EditError.clipNotFound }
+        let placed = SequencePlacement(project: project).placing(clipID, at: start)
+        var cursor = MediaTime.zero
+        project.clips = placed.map { item in
+            var clip = item.clip
+            clip.gap = max(item.start - cursor, .zero)
+            cursor = item.start + clip.compositionDuration
+            return clip
+        }
+    }
+}
+
+/// The sequence as clips at absolute times, for moving one freely.
+public struct SequencePlacement: Sendable {
+    public let items: [(clip: TimelineClip, start: MediaTime)]
+
+    public init(project: Project) {
+        let map = SequenceMap(project: project)
+        items = zip(project.clips, map.entries).map { ($0, $1.compositionRange.start) }
+    }
+
+    /// Every clip in order with its start, `clipID` moved to `start` (never before 0) and the
+    /// rest where they are, pushed later only where they would overlap.
+    public func placing(_ clipID: UUID, at start: MediaTime) -> [(clip: TimelineClip, start: MediaTime)] {
+        guard let moving = items.first(where: { $0.clip.id == clipID })?.clip else { return items }
+        var others = items.filter { $0.clip.id != clipID }
+        let length = moving.compositionDuration
+        let wanted = max(start, .zero)
+        let middle = wanted.seconds + length.seconds / 2
+        let index = others.filter { $0.start.seconds + $0.clip.compositionDuration.seconds / 2 < middle }.count
+        var at = wanted
+        if index > 0 { at = max(at, others[index - 1].start + others[index - 1].clip.compositionDuration) }
+        others.insert((moving, at), at: index)
+        for i in others.indices.dropFirst() {
+            let end = others[i - 1].start + others[i - 1].clip.compositionDuration
+            if others[i].start < end { others[i].start = end }
+        }
+        return others
+    }
+}
+
 public struct RemoveClipCommand: EditingCommand {
     public let clipID: UUID
     public init(clipID: UUID) { self.clipID = clipID }
@@ -84,6 +143,7 @@ public struct DuplicateClipCommand: EditingCommand {
         guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
         var copy = project.clips[i]
         copy.id = newClipID
+        copy.gap = .zero
         project.clips.insert(copy, at: i + 1)
     }
 }
@@ -117,6 +177,7 @@ public struct SplitClipCommand: EditingCommand {
         first.sourceRange = MediaTimeRange(start: clip.sourceRange.start, end: sourceTime)
         var second = clip
         second.id = newClipID
+        second.gap = .zero
         second.sourceRange = MediaTimeRange(start: sourceTime, end: clip.sourceRange.end)
         project.clips[i] = first
         project.clips.insert(second, at: i + 1)
