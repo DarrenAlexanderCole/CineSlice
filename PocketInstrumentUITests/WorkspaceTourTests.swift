@@ -36,6 +36,20 @@ final class WorkspaceTourTests: XCTestCase {
         button("My Music").tap()
     }
 
+    /// What was brought in waits in the bin, which opens to show it: picks everything unused,
+    /// in name order (the demo clips go A, B, C), and adds it to the timeline.
+    private func addNewFromBin(file: StaticString = #filePath, line: UInt = #line) {
+        let add = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Pick to add")).firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 60), "the bin never opened", file: file, line: line)
+        let unused = NSPredicate(format: "value ENDSWITH %@ AND selected == false", "unused")
+        let fresh = app.descendants(matching: .any).matching(unused)
+        XCTAssertTrue(fresh.firstMatch.waitForExistence(timeout: 30), "nothing new in the bin", file: file, line: line)
+        for name in fresh.allElementsBoundByIndex.map(\.label).sorted() {
+            fresh.matching(NSPredicate(format: "label == %@", name)).firstMatch.tap()
+        }
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Add ")).firstMatch.tap()
+    }
+
     private func button(_ label: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label ==[c] %@", label)).firstMatch
     }
@@ -59,6 +73,7 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertTrue(button("New").waitForExistence(timeout: 5))
         button("New").tap()
         button("Demo clips").tap()
+        addNewFromBin()
         XCTAssertTrue(button("Mix").waitForExistence(timeout: 60), "demo clips never arrived")
         sleep(2)
         shot("1 Arrange, no music")
@@ -274,6 +289,7 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertTrue(button("New").waitForExistence(timeout: 10))
         button("New").tap()
         button("Demo clips").tap()
+        addNewFromBin()
         XCTAssertTrue(button("Audio").waitForExistence(timeout: 60), "demo clips never arrived")
         button("Audio").tap()
         XCTAssertTrue(app.staticTexts["This clip has no sound."].waitForExistence(timeout: 5))
@@ -291,6 +307,7 @@ final class WorkspaceTourTests: XCTestCase {
         XCTAssertTrue(button("New").waitForExistence(timeout: 10))
         button("New").tap()
         button("Demo clips").tap()
+        addNewFromBin()
         XCTAssertTrue(button("Audio").waitForExistence(timeout: 60), "demo clips never arrived")
         button("Audio").tap()
         button("Master EQ").tap()
@@ -313,12 +330,14 @@ final class WorkspaceTourTests: XCTestCase {
     func testClipStripScrollsAndReordersLongSequence() {
         button("New").tap()
         button("Demo clips").tap()
+        addNewFromBin()
         let addClips = button("Add clips")
         XCTAssertTrue(tile(3).waitForExistence(timeout: 60), "demo clips never arrived")
         for batch in 2...4 {
             swipeStrip(left: true, until: addClips)
             addClips.tap()
             button("Demo clips").tap()
+            addNewFromBin()
             XCTAssertTrue(tile(batch * 3).waitForExistence(timeout: 60), "batch \(batch) never arrived")
         }
         XCTAssertFalse(tile(13).exists)
@@ -389,6 +408,7 @@ final class WorkspaceTourTests: XCTestCase {
     func testRecordingAMusicCurve() {
         button("New").tap()
         button("Demo clips").tap()
+        addNewFromBin()
         XCTAssertTrue(button("Mix").waitForExistence(timeout: 60), "demo clips never arrived")
         button("Mix").tap()
         openMyMusic()

@@ -17,6 +17,20 @@ final class LightboxTourTests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
     }
 
+    /// What was brought in waits in the bin, which opens to show it: picks everything unused,
+    /// in name order (the demo clips go A, B, C), and adds it to the timeline.
+    private func addNewFromBin(file: StaticString = #filePath, line: UInt = #line) {
+        let add = app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Pick to add")).firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 60), "the bin never opened", file: file, line: line)
+        let unused = NSPredicate(format: "value ENDSWITH %@ AND selected == false", "unused")
+        let fresh = app.descendants(matching: .any).matching(unused)
+        XCTAssertTrue(fresh.firstMatch.waitForExistence(timeout: 30), "nothing new in the bin", file: file, line: line)
+        for name in fresh.allElementsBoundByIndex.map(\.label).sorted() {
+            fresh.matching(NSPredicate(format: "label == %@", name)).firstMatch.tap()
+        }
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH[c] %@", "Add ")).firstMatch.tap()
+    }
+
     private func button(_ label: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label ==[c] %@", label)).firstMatch
     }
@@ -36,6 +50,7 @@ final class LightboxTourTests: XCTestCase {
         XCTAssertTrue(button("New").waitForExistence(timeout: 10))
         button("New").tap()
         button("Demo clips").tap()
+        addNewFromBin()
         XCTAssertTrue(button("Mix").waitForExistence(timeout: 60), "demo clips never arrived")
         button("Mix").tap()
         let choose = button("Choose music")
@@ -131,6 +146,7 @@ final class LightboxTourTests: XCTestCase {
         // clips go on the lane above, V2, and nothing in the sequence moves.
         button("Add clips").tap()
         button("Demo clips").tap()
+        addNewFromBin()
         XCTAssertTrue(button("Undo Add Clips").waitForExistence(timeout: 60), "demo clips should land on the table")
         let stacked = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Stacked clip"))
         XCTAssertTrue(stacked.firstMatch.waitForExistence(timeout: 5), "over the sequence they stack on V2")
@@ -167,9 +183,11 @@ final class LightboxTourTests: XCTestCase {
         // first, gets a lane of its own.
         button("Add sound").tap()
         button("Demo sound").tap()
+        addNewFromBin()
         XCTAssertTrue(button("Undo Add Sound").waitForExistence(timeout: 20), "a sound should land on a lane")
         button("Add sound").tap()
         button("Demo sound").tap()
+        addNewFromBin()
         let sounds = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Sound:"))
         let two = NSPredicate(format: "count == 2")
         expectation(for: two, evaluatedWith: sounds)
