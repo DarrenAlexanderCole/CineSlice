@@ -142,6 +142,7 @@ struct LightboxBringInKeys: View {
     var model: WorkspaceModel
     /// A row of keys, or a column where the console is narrow.
     var axis: Axis = .horizontal
+    var keyHeight: CGFloat = 34
     /// Opens Photos (true) or Files (false) for clips.
     var onAddClips: (_ photos: Bool) -> Void
     /// Opens Files (false) or a video's sound (true) for the music, once the music sheet has gone.
@@ -155,7 +156,7 @@ struct LightboxBringInKeys: View {
     @State private var pendingPick: MusicSourceSheet.Pick?
 
     var body: some View {
-        let layout = axis == .horizontal ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 8))
+        let layout = axis == .horizontal ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 6))
         layout {
             Button {
                 model.engine.pause()
@@ -163,7 +164,7 @@ struct LightboxBringInKeys: View {
             } label: {
                 Image(systemName: "tray.full").font(.system(size: 14, weight: .bold))
             }
-            .buttonStyle(.instrument(.key, height: 34))
+            .buttonStyle(.instrument(.key, height: keyHeight))
             .accessibilityLabel("Bin")
             .accessibilityHint("Everything brought in and shot. Picked media goes in at the playhead.")
             Menu {
@@ -191,7 +192,7 @@ struct LightboxBringInKeys: View {
                 symbol("film")
             }
             .menuStyle(.button)
-            .buttonStyle(.instrument(.key, height: 34))
+            .buttonStyle(.instrument(.key, height: keyHeight))
             .accessibilityLabel("Add clips")
             .accessibilityHint("Shoots or brings in clips. They go in the bin, to add from there.")
             Button {
@@ -200,7 +201,7 @@ struct LightboxBringInKeys: View {
             } label: {
                 symbol("music.note")
             }
-            .buttonStyle(.instrument(.key, height: 34))
+            .buttonStyle(.instrument(.key, height: keyHeight))
             .accessibilityLabel("Music")
             .accessibilityHint("Chooses the music under the sequence.")
             Menu {
@@ -228,7 +229,7 @@ struct LightboxBringInKeys: View {
                 symbol("waveform")
             }
             .menuStyle(.button)
-            .buttonStyle(.instrument(.key, height: 34))
+            .buttonStyle(.instrument(.key, height: keyHeight))
             .accessibilityLabel("Add sound")
             .accessibilityHint("Records or brings in a sound. It goes in the bin, to add from there.")
         }

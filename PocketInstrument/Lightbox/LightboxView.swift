@@ -170,18 +170,18 @@ struct LightboxView: View {
         return min(picture, shared / (1 + Self.tableOverMonitor)).rounded()
     }
 
-    /// Done at the top, then undo and redo, then Tools and the bring-in keys, all symbols.
+    /// Done at the top, then monitor, undo, redo, Tools and the bring-in keys: one column of
+    /// symbols, the keys slimming where the screen is too short for all of them at full height.
     private var keyColumn: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: Self.keySpacing) {
             doneKey
             monitorKey
-            Spacer(minLength: 4)
             Button {
                 model.undo()
             } label: {
                 Image(systemName: "arrow.uturn.backward").font(.system(size: 14, weight: .bold))
             }
-            .buttonStyle(.instrument(.key, height: 34))
+            .buttonStyle(.instrument(.key, height: keyHeight))
             .disabled(model.undoName == nil)
             .accessibilityLabel(model.undoName.map { "Undo \($0)" } ?? "Undo")
             Button {
@@ -189,14 +189,14 @@ struct LightboxView: View {
             } label: {
                 Image(systemName: "arrow.uturn.forward").font(.system(size: 14, weight: .bold))
             }
-            .buttonStyle(.instrument(.key, height: 34))
+            .buttonStyle(.instrument(.key, height: keyHeight))
             .disabled(model.redoName == nil)
             .accessibilityLabel(model.redoName.map { "Redo \($0)" } ?? "Redo")
-            Spacer(minLength: 4)
             toolsKey
             bringInKeys(.vertical)
-            Spacer(minLength: 0)
         }
+        // Centred beside the monitor, the same margin above and below.
+        .frame(maxHeight: .infinity)
         .fixedSize(horizontal: true, vertical: false)
         .onGeometryChange(for: CGFloat.self) {
             $0.size.width
@@ -205,9 +205,19 @@ struct LightboxView: View {
         }
     }
 
+    private static let keyCount: CGFloat = 9
+    private static let keySpacing: CGFloat = 6
+
+    /// Full height when all the keys fit the column, slimmer when they don't.
+    private var keyHeight: CGFloat {
+        guard instrumentSize.height > 0 else { return 34 }
+        let fit = (instrumentSize.height - Self.keySpacing * (Self.keyCount - 1)) / Self.keyCount
+        return min(34, max(24, fit.rounded(.down)))
+    }
+
     private var doneKey: some View {
         Button("Done", action: onDone)
-            .buttonStyle(.instrument(.prominent, height: 34))
+            .buttonStyle(.instrument(.prominent, height: keyHeight))
             .accessibilityHint("Turns back to the upright editor.")
     }
 
@@ -219,7 +229,7 @@ struct LightboxView: View {
         } label: {
             Image(systemName: "play.rectangle").font(.system(size: 14, weight: .bold))
         }
-        .buttonStyle(.instrument(.key, active: state.showsMonitor, height: 34))
+        .buttonStyle(.instrument(.key, active: state.showsMonitor, height: keyHeight))
         .accessibilityLabel("Monitor")
         .accessibilityValue(state.showsMonitor ? "Shown" : "Hidden")
         .accessibilityHint("Shows the picture beside the table, or gives the table the whole width.")
@@ -231,7 +241,7 @@ struct LightboxView: View {
         } label: {
             Image(systemName: "wrench.adjustable.fill").font(.system(size: 14, weight: .bold))
         }
-        .buttonStyle(.instrument(.key, active: state.isToolsOpen, height: 34))
+        .buttonStyle(.instrument(.key, active: state.isToolsOpen, height: keyHeight))
         .accessibilityLabel("Tools")
         .accessibilityValue(state.isToolsOpen ? "Open" : "Closed")
         .onGeometryChange(for: CGRect.self) {
@@ -243,7 +253,7 @@ struct LightboxView: View {
 
     private func bringInKeys(_ axis: Axis) -> some View {
         LightboxBringInKeys(
-            model: model, axis: axis, onAddClips: onAddClips,
+            model: model, axis: axis, keyHeight: keyHeight, onAddClips: onAddClips,
             onAddMusic: onAddMusic, onAddSound: onAddSound, onRecord: onRecord)
     }
 
