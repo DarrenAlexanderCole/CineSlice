@@ -173,7 +173,7 @@ struct Filmstrip: View {
         return HStack(spacing: 1) {
             ForEach(0..<count, id: \.self) { i in
                 let t = MediaTime(seconds: w.start + (w.end - w.start) * (Double(i) + 0.5) / Double(count))
-                VideoFrameView(url: url, time: t.cmTime, maxPixel: 120)
+                VideoFrameView(url: url, time: t.cmTime, maxPixel: 120, look: source.look)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }

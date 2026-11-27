@@ -179,7 +179,7 @@ struct FilmStripClip: View {
                 let sourceSeconds = min(clip.sourceRange.start.seconds + local * clip.speed, sourceEnd)
                 VideoFrameView(
                     url: url, time: CMTime(seconds: max(0, sourceSeconds), preferredTimescale: 600),
-                    maxPixel: max(96, imageHeight * 2.2)
+                    maxPixel: max(96, imageHeight * 2.2), look: source?.look
                 )
                 .frame(width: max(1, tilePoints - 1.5), height: imageHeight)
                 .offset(x: viewport.x(for: start + local) - offsetX - 2)

@@ -68,7 +68,8 @@ Accessibility, performance, export presets, project recovery, test coverage, Ins
 - Do not promise true real-time export-quality compositing without testing. Document preview/export differences.
 - Do not imply app can programmatically attach licensed Instagram songs.
 - Use actual functionality for every interactive control; no dead decorative buttons.
-- Keep scope small; postpone complex effects, color grading, AI auto-edit, extensive transitions and multitrack mastering.
+- Keep scope small; postpone complex effects, AI auto-edit, extensive transitions and multitrack mastering.
+- Colour looks are in scope (the user's decision, Nov 2026): LUT "looks" (built-ins and imported `.cube` files) are shot through on the Record page and stay on the take by default, stored as a removable look on the `SourceAsset` (the file stays clean). Everything the user sees and exports carries the look; turning it off or changing it is secondary, in the bin. Fuller colour grading tools are still to come.
 
 ## First instruction to Claude
 Inspect the current directory. If empty, scaffold a new SwiftUI iPhone project. First produce a concise implementation plan, file tree, and list of Xcode/device requirements. Then implement **Phase 0 + the smallest working vertical slice of Phase 1**: app shell, a coherent Arrange/Explore workspace, Photos import, selectable clip sequence, playback, and basic non-destructive trimming. Build and test what can be tested in the available environment. State explicitly if Xcode/simulator is unavailable; never claim a build succeeded without running it. Stop and summarize what works, what is mocked, and the next step. Do not implement every phase at once.

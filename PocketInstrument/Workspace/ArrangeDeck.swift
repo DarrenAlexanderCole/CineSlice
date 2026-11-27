@@ -281,8 +281,10 @@ struct ClipStrip: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
-                VideoFrameView(url: url, time: midpoint.cmTime, maxPixel: 180)
-                    .frame(width: tileWidth, height: tileHeight)
+                VideoFrameView(
+                    url: url, time: midpoint.cmTime, maxPixel: 180, look: model.project.source(for: clip)?.look
+                )
+                .frame(width: tileWidth, height: tileHeight)
                 // Number and LED on the frame itself, so the strip needs no label row.
                 HStack(spacing: 3) {
                     LED(isOn: isPlaying)

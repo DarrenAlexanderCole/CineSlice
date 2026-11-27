@@ -714,7 +714,7 @@ final class WorkspaceModel {
     /// split is made, so what Explore plays matches the sequence.
     private func loadExploreItem(_ clip: TimelineClip, source: SourceAsset, url: URL, at time: CMTime, resume: Bool?) {
         let stems = store.stemURLs(for: clip, source: source, projectID: project.id)
-        guard stems != nil || clip.balance != nil else {
+        guard stems != nil || clip.balance != nil || source.look != nil else {
             engine.load(
                 AVPlayerItem(asset: AVURLAsset(url: url)), duration: source.duration.cmTime, at: time, resume: resume)
             updateLoopRange()
@@ -722,8 +722,17 @@ final class WorkspaceModel {
         }
         let clipID = clip.id
         let balance = clip.balance
+        let look = source.look
         rebuildTask = Task { [weak self] in
             let item = await CompositionBuilder.sourceItem(url: url, stems: stems, balance: balance)
+            if let look {
+                // The source through its look, like the sequence plays it.
+                item.videoComposition = try? await AVVideoComposition.videoComposition(
+                    with: item.asset,
+                    applyingCIFiltersWithHandler: { request in
+                        request.finish(with: LookLibrary.apply(look, to: request.sourceImage), context: nil)
+                    })
+            }
             guard let self, !Task.isCancelled, self.mode == .explore, self.selectedClipID == clipID else { return }
             self.engine.load(item, duration: source.duration.cmTime, at: time, resume: resume)
             self.updateLoopRange()
@@ -1754,16 +1763,18 @@ final class WorkspaceModel {
     private func saveTake(_ take: RecordedTake, named name: String) async {
         do {
             switch take {
-            case .video(let url):
+            case .video(let url, let look):
                 var source = try await MediaImporter.adopt(
                     tempURL: url, originalName: name, store: store, projectID: project.id)
                 source.isTake = true
+                source.look = look
                 importStatus = nil
                 perform(AddToBinCommand(sources: [source]))
-            case .photo(let data):
+            case .photo(let data, let look):
                 var source = try await MediaImporter.adoptStill(
                     imageData: data, originalName: name, label: name, store: store, projectID: project.id)
                 source.isTake = true
+                source.look = look
                 importStatus = nil
                 perform(AddToBinCommand(sources: [source]))
             case .sound(let url):
@@ -1863,6 +1874,11 @@ final class WorkspaceModel {
     /// Takes media out of the bin and off the timeline wherever it's used (undo brings it back).
     func removeFromBin(_ ids: Set<UUID>) {
         perform(RemoveFromBinCommand(ids: ids))
+    }
+
+    /// Gives a picture in the bin a look, or takes it off (nil); every clip of it follows.
+    func setLook(_ look: Look?, forSource id: UUID) {
+        perform(SetSourceLookCommand(sourceID: id, look: look))
     }
 
     func renameMedia(_ id: UUID, to name: String) {

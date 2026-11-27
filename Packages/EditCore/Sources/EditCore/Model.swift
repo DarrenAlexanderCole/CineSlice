@@ -20,12 +20,15 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
     public var importedAt: Date
     /// Shot on the Record page: the bin keeps it in its TAKES folder.
     public var isTake: Bool
+    /// The look it was shot with, or given since: every clip of it plays, and exports, through
+    /// it. The file itself stays clean, so the look can be changed or taken off.
+    public var look: Look?
 
     public init(
         id: UUID = UUID(), fileName: String, originalFilename: String? = nil,
         duration: MediaTime, width: Int, height: Int,
         nominalFrameRate: Double = 30, hasAudio: Bool = false, isStill: Bool = false, importedAt: Date = Date(),
-        isTake: Bool = false
+        isTake: Bool = false, look: Look? = nil
     ) {
         self.id = id
         self.fileName = fileName
@@ -38,11 +41,12 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
         self.isStill = isStill
         self.importedAt = importedAt
         self.isTake = isTake
+        self.look = look
     }
 
     enum CodingKeys: String, CodingKey {
         case id, fileName, originalFilename, duration, width, height, nominalFrameRate, hasAudio, isStill
-        case importedAt, isTake
+        case importedAt, isTake, look
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -58,6 +62,7 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
         try c.encode(isStill, forKey: .isStill)
         try c.encode(importedAt, forKey: .importedAt)
         if isTake { try c.encode(isTake, forKey: .isTake) }
+        try c.encodeIfPresent(look, forKey: .look)
     }
 
     public init(from decoder: Decoder) throws {
@@ -73,6 +78,7 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
         isStill = try c.decodeIfPresent(Bool.self, forKey: .isStill) ?? false
         importedAt = try c.decode(Date.self, forKey: .importedAt)
         isTake = try c.decodeIfPresent(Bool.self, forKey: .isTake) ?? false
+        look = try c.decodeIfPresent(Look.self, forKey: .look)
     }
 
     /// How long a photo plays when first added; its source runs longer, so it can be stretched.

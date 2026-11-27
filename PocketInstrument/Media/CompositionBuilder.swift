@@ -80,6 +80,7 @@ enum CompositionBuilder {
         var insertedAudio = false
         var voiceTrack: AVMutableCompositionTrack?
         var separated: Set<UUID> = []
+        var looks: [CMPersistentTrackID: [LookSpan]] = [:]
 
         for clip in project.clips {
             // A gap before the clip plays black and silent.
@@ -179,6 +180,10 @@ enum CompositionBuilder {
                     renderSize: frame, framing: clip.framing, crop: clip.crop
                 ).concatenating(toOutput),
                 at: cursor)
+            if let look = source.look {
+                looks[videoTrack.trackID, default: []].append(
+                    LookSpan(timeRange: CMTimeRange(start: cursor, duration: compDuration), look: look))
+            }
             cursor = cursor + compDuration
         }
 
@@ -203,20 +208,27 @@ enum CompositionBuilder {
         for videoLayer in project.videoLayers {
             if let stacked = try await insertLayer(
                 videoLayer, project: project, frame: frame, toOutput: toOutput, sequenceDuration: cursor,
-                mediaURL: mediaURL, into: composition)
+                mediaURL: mediaURL, looks: &looks, into: composition)
             {
                 layers.insert(stacked, at: 0)
             }
         }
 
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: cursor)
-        instruction.layerInstructions = layers
-
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
         videoComposition.frameDuration = CMTime(value: 1, timescale: frameRate)
-        videoComposition.instructions = [instruction]
+        let wholeRange = CMTimeRange(start: .zero, duration: cursor)
+        if looks.isEmpty {
+            let instruction = AVMutableVideoCompositionInstruction()
+            instruction.timeRange = wholeRange
+            instruction.layerInstructions = layers
+            videoComposition.instructions = [instruction]
+        } else {
+            // Looks need the picture drawn by our own compositor; without them the system's
+            // draws it, as it always has.
+            videoComposition.customVideoCompositorClass = LookCompositor.self
+            videoComposition.instructions = [LookInstruction(timeRange: wholeRange, layers: layers, looks: looks)]
+        }
 
         return BuiltComposition(
             composition: composition, videoComposition: videoComposition,
@@ -232,7 +244,8 @@ enum CompositionBuilder {
     /// the sequence's, cut off at the sequence's end. Nil when nothing on it plays.
     private static func insertLayer(
         _ layer: VideoLayer, project: Project, frame: CGSize, toOutput: CGAffineTransform,
-        sequenceDuration: CMTime, mediaURL: (SourceAsset) -> URL?, into composition: AVMutableComposition
+        sequenceDuration: CMTime, mediaURL: (SourceAsset) -> URL?,
+        looks: inout [CMPersistentTrackID: [LookSpan]], into composition: AVMutableComposition
     ) async throws -> AVMutableVideoCompositionLayerInstruction? {
         guard
             let track = composition.addMutableTrack(
@@ -267,6 +280,10 @@ enum CompositionBuilder {
                 ).concatenating(toOutput),
                 at: start)
             end = start + usable.duration
+            if let look = source.look {
+                looks[track.trackID, default: []].append(
+                    LookSpan(timeRange: CMTimeRange(start: start, end: end), look: look))
+            }
         }
         guard end > .zero else {
             composition.removeTrack(track)

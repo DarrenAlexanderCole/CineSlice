@@ -362,9 +362,12 @@ private struct MixClipPicker: View {
             model.select(clip.id)
         } label: {
             HStack(spacing: 6) {
-                VideoFrameView(url: model.mediaURL(for: clip), time: midpoint.cmTime, maxPixel: 120)
-                    .frame(width: 30, height: 40)
-                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                VideoFrameView(
+                    url: model.mediaURL(for: clip), time: midpoint.cmTime, maxPixel: 120,
+                    look: model.project.source(for: clip)?.look
+                )
+                .frame(width: 30, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(String(format: "%02d", index + 1))
                         .font(Theme.caption)

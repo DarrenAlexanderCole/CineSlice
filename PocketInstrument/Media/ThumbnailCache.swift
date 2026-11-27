@@ -1,4 +1,5 @@
 import AVFoundation
+import EditCore
 import SwiftUI
 import UIKit
 
@@ -33,13 +34,16 @@ actor ThumbnailCache {
     }
 }
 
-/// A frame from a video file, loaded asynchronously.
+/// A frame from a video file, loaded asynchronously, through its look when it has one.
 struct VideoFrameView: View {
     let url: URL?
     let time: CMTime
     var maxPixel: CGFloat = 200
+    var look: Look?
 
     @State private var image: UIImage?
+
+    private var lookKey: String { look.map { "#\($0.id)@\($0.intensity)" } ?? "" }
 
     var body: some View {
         ZStack {
@@ -55,12 +59,17 @@ struct VideoFrameView: View {
             }
         }
         .clipped()
-        .task(id: "\(url?.lastPathComponent ?? "-")\(time.value)/\(time.timescale)") {
+        .task(id: "\(url?.lastPathComponent ?? "-")\(time.value)/\(time.timescale)\(lookKey)") {
             guard let url else {
                 image = nil
                 return
             }
-            image = await ThumbnailCache.shared.image(url: url, at: time, maxPixel: maxPixel)
+            let frame = await ThumbnailCache.shared.image(url: url, at: time, maxPixel: maxPixel)
+            if let frame, let look {
+                image = await Task.detached { LookLibrary.apply(look, to: frame) }.value
+            } else {
+                image = frame
+            }
         }
     }
 }

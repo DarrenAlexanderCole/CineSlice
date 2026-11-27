@@ -1,18 +1,33 @@
 @preconcurrency import AVFoundation
+import CoreImage
+import EditCore
 import Observation
 import UIKit
 
 /// What a take on the Record page produced, still in a temporary file (or memory, for a photo)
-/// until the project adopts it.
+/// until the project adopts it, with the look it was shot through.
 enum RecordedTake {
-    case video(URL)
-    case photo(Data)
+    case video(URL, Look?)
+    case photo(Data, Look?)
     case sound(URL)
 }
 
+/// The camera's settings as it shoots, for the readout beside the histogram.
+struct CameraData: Equatable {
+    /// The lens's f-number.
+    var aperture: Float = 0
+    /// How long each frame is exposed, in seconds.
+    var shutter: Double = 0
+    var iso: Float = 0
+    /// The white balance's colour temperature, in kelvin.
+    var kelvin: Float = 0
+}
+
 /// The Record page's camera and microphone. Video and photo go through one capture session
-/// (the back or front camera plus the microphone); sound-only takes stop it and record the
-/// microphone alone, so the mic is never held twice. Takes are recorded the way the phone is
+/// (the back or front camera plus the microphone); sound mode stops it and hands the microphone
+/// to the sound recorder (EQ, analyser, headphone monitoring), so the mic is never held twice.
+/// The camera runs automatically until a setting is taken by hand: shutter and ISO together,
+/// exposure compensation while exposure is automatic, white balance, and the frame rate. Takes are recorded the way the phone is
 /// held (the rotation coordinator reads it from gravity, not from the screen), so a phone held
 /// sideways records a wide picture. Every take is handed to `onTake` as soon as it's finished.
 @MainActor
@@ -42,8 +57,6 @@ final class CameraRig {
     private(set) var isRecording = false
     /// When the running take began, for the counter.
     private(set) var recordingStarted: Date?
-    /// The microphone's level while recording sound, 0…1.
-    private(set) var level: Float = 0
     /// A flash on the picture as a photo is taken.
     private(set) var flash = false
     /// The picture's red, green and blue levels, about ten times a second.
@@ -56,9 +69,42 @@ final class CameraRig {
     /// Where the focus ring is turned: `autoFocusDial` is automatic, 0…1 the lens from its
     /// nearest to its farthest.
     private(set) var focusDial = CameraRig.autoFocusDial
+    /// The look on the live picture and on every take shot with it; nil is the clean picture.
+    private(set) var look: Look?
+    /// The camera's settings, a few times a second.
+    private(set) var cameraData = CameraData()
+    /// The live picture can be shown through a look (the phone can afford the frame copy).
+    private(set) var canShowLooks = true
     /// The camera's lens can be set by hand, so the focus ring turns it (front cameras
     /// usually can't).
     private(set) var canFocus = false
+
+    /// Exposure is the camera's own; off, `shutterSpeed` and `iso` hold.
+    private(set) var isAutoExposure = true
+    /// The manual shutter, in seconds, and ISO.
+    private(set) var shutterSpeed: Double = 1.0 / 60
+    private(set) var iso: Float = 100
+    /// Brighter or darker than the camera's own exposure, in stops, while it's automatic.
+    private(set) var exposureBias: Float = 0
+    private(set) var shutterRange: ClosedRange<Double> = 1.0 / 8000...1.0 / 30
+    private(set) var isoRange: ClosedRange<Float> = 50...1600
+    private(set) var biasRange: ClosedRange<Float> = -2...2
+    /// The camera takes exposure by hand.
+    private(set) var canExpose = false
+    /// White balance is the camera's own; off, `kelvin` and `tint` hold.
+    private(set) var isAutoWhiteBalance = true
+    private(set) var kelvin: Float = 5600
+    /// Green (−) to magenta (+).
+    private(set) var tint: Float = 0
+    private(set) var canBalance = false
+    /// The frames per second video is shot at, and the rates this camera offers.
+    private(set) var frameRate = 30
+    private(set) var frameRates = [30]
+    static let kelvinRange: ClosedRange<Float> = 2500...9000
+    static let tintRange: ClosedRange<Float> = -50...50
+
+    /// Sound mode's microphone.
+    let sound = SoundRecorder()
 
     static let autoFocusDial = -0.3
     var isAutoFocus: Bool { focusDial < Self.autoFocusDial / 2 }
@@ -82,15 +128,24 @@ final class CameraRig {
     private var rotationObservation: NSKeyValueObservation?
     private weak var previewLayer: AVCaptureVideoPreviewLayer?
 
-    private var recorder: AVAudioRecorder?
-    private var meterTask: Task<Void, Never>?
+    private var dataTask: Task<Void, Never>?
+    /// The look a running video take started with: the whole take keeps it.
+    private var takeLook: Look?
     private let delegate = CaptureDelegate()
-    private let histogramTap = HistogramTap()
+    private let frameTap = FrameTap()
 
     init(mode: Mode) {
         self.mode = mode
         delegate.rig = self
-        histogramTap.rig = self
+        frameTap.rig = self
+        if let saved = UserDefaults.standard.object(forKey: Self.frameRateKey) as? Int { frameRate = saved }
+        sound.onError = { [weak self] in self?.onError($0) }
+        sound.onInterruptedTake = { [weak self] url in
+            guard let self, self.mode == .sound, self.isRecording else { return }
+            self.isRecording = false
+            self.recordingStarted = nil
+            self.onTake(.sound(url))
+        }
     }
 
     // MARK: Start / stop
@@ -98,13 +153,24 @@ final class CameraRig {
     /// Asks for what the mode needs and starts it.
     func start() async {
         micAccess = await Self.access(for: .audio)
-        if mode != .sound { await startCamera() }
+        if mode == .sound {
+            if micAccess == .granted { sound.start() }
+        } else {
+            await startCamera()
+        }
+        dataTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.readCameraData()
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
     }
 
     /// Stops everything and gives the app's sound back to playback.
     func stop() {
         if isRecording { stopRecording() }
-        meterTask?.cancel()
+        dataTask?.cancel()
+        sound.stop()
         let session = session
         queue.async { if session.isRunning { session.stopRunning() } }
         Self.restorePlayback()
@@ -116,9 +182,19 @@ final class CameraRig {
         mode = new
         Haptics.detent()
         if new == .sound {
+            // The camera lets go of the microphone before the recorder takes it.
             let session = session
-            queue.async { if session.isRunning { session.stopRunning() } }
+            Task {
+                await withCheckedContinuation { done in
+                    queue.async {
+                        if session.isRunning { session.stopRunning() }
+                        done.resume()
+                    }
+                }
+                if mode == .sound, micAccess == .granted { sound.start() }
+            }
         } else if old == .sound {
+            sound.stop()
             Task { await startCamera() }
         }
     }
@@ -167,12 +243,13 @@ final class CameraRig {
         // A copy of the picture for the histogram; the recording itself is untouched.
         frameOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         frameOutput.alwaysDiscardsLateVideoFrames = true
-        frameOutput.setSampleBufferDelegate(histogramTap, queue: frameQueue)
+        frameOutput.setSampleBufferDelegate(frameTap, queue: frameQueue)
         if session.canAddOutput(frameOutput) {
             session.addOutput(frameOutput)
             // Some older phones can't afford it alongside the recording: go without.
             if session.hardwareCost > 1 { session.removeOutput(frameOutput) }
         }
+        canShowLooks = session.outputs.contains(frameOutput)
         readLens()
         followRotation()
     }
@@ -189,12 +266,23 @@ final class CameraRig {
     /// Keeps the live picture level as the phone turns; takes read the angle as they start.
     private func followRotation() {
         guard let device = videoInput?.device else { return }
+        // The frame copy (drawn for looks) is mirrored for the front camera, like the preview.
+        if let frames = frameOutput.connection(with: .video), frames.isVideoMirroringSupported {
+            frames.automaticallyAdjustsVideoMirroring = false
+            frames.isVideoMirrored = device.position == .front
+        }
         let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
         rotation = coordinator
         let key = \AVCaptureDevice.RotationCoordinator.videoRotationAngleForHorizonLevelPreview
         rotationObservation = coordinator.observe(key, options: [.initial, .new]) { [weak self] coordinator, _ in
             let angle = coordinator.videoRotationAngleForHorizonLevelPreview
             Task { @MainActor in
+                // The look's picture is drawn from the frame copy, so it turns with the preview.
+                if let frames = self?.frameOutput.connection(with: .video),
+                    frames.isVideoRotationAngleSupported(angle)
+                {
+                    frames.videoRotationAngle = angle
+                }
                 guard let connection = self?.previewLayer?.connection, connection.isVideoRotationAngleSupported(angle)
                 else { return }
                 connection.videoRotationAngle = angle
@@ -232,6 +320,161 @@ final class CameraRig {
         Haptics.detent()
     }
 
+    // MARK: Look and readout
+
+    /// Shoots through `look` from now on (nil: the clean picture); the live picture shows it.
+    func setLook(_ look: Look?) {
+        guard !isRecording || mode == .photo else { return }
+        self.look = look
+        frameTap.look = look
+        Haptics.detent()
+    }
+
+    /// Where the picture through the look is shown, once it's on screen.
+    func attachLookRenderer(_ renderer: AVSampleBufferVideoRenderer) {
+        frameTap.renderer = renderer
+    }
+
+    private func readCameraData() {
+        guard let device = videoInput?.device, mode != .sound else { return }
+        let gains = device.deviceWhiteBalanceGains
+        let range = 1...device.maxWhiteBalanceGain
+        let valid = range.contains(gains.redGain) && range.contains(gains.greenGain) && range.contains(gains.blueGain)
+        let next = CameraData(
+            aperture: device.lensAperture, shutter: device.exposureDuration.seconds, iso: device.iso,
+            kelvin: valid ? device.temperatureAndTintValues(for: gains).temperature : 0)
+        if next != cameraData { cameraData = next }
+    }
+
+    // MARK: Exposure, white balance, frame rate
+
+    /// Learns what the new camera can do by hand and starts it automatic, at the chosen rate.
+    private func readExposure(_ device: AVCaptureDevice) {
+        let format = device.activeFormat
+        canExpose = device.isExposureModeSupported(.custom)
+        canBalance = device.isLockingWhiteBalanceWithCustomDeviceGainsSupported
+        isoRange = format.minISO...max(format.minISO, format.maxISO)
+        let low = max(1.0 / 8000, format.minExposureDuration.seconds)
+        shutterRange = low...max(low, format.maxExposureDuration.seconds)
+        biasRange = max(-3, device.minExposureTargetBias)...min(3, device.maxExposureTargetBias)
+        let ranges = format.videoSupportedFrameRateRanges
+        frameRates = [24, 25, 30, 48, 50, 60].filter { rate in
+            ranges.contains { Double(rate) >= $0.minFrameRate && Double(rate) <= $0.maxFrameRate }
+        }
+        if frameRates.isEmpty { frameRates = [30] }
+        isAutoExposure = true
+        isAutoWhiteBalance = true
+        exposureBias = 0
+        adjust(device) { device in
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            }
+            device.setExposureTargetBias(0, completionHandler: nil)
+            if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                device.whiteBalanceMode = .continuousAutoWhiteBalance
+            }
+        }
+        setFrameRate(frameRates.contains(frameRate) ? frameRate : frameRates.contains(30) ? 30 : frameRates[0])
+    }
+
+    /// The longest shutter the frame rate allows: one frame.
+    var longestShutter: Double { min(shutterRange.upperBound, 1 / Double(frameRate)) }
+
+    /// Shoots video at `rate` frames a second.
+    func setFrameRate(_ rate: Int) {
+        guard let device = videoInput?.device, frameRates.contains(rate), !isRecording else { return }
+        frameRate = rate
+        UserDefaults.standard.set(rate, forKey: Self.frameRateKey)
+        let frame = CMTime(value: 1, timescale: CMTimeScale(rate))
+        adjust(device) { device in
+            device.activeVideoMinFrameDuration = frame
+            device.activeVideoMaxFrameDuration = frame
+        }
+        if !isAutoExposure, shutterSpeed > longestShutter { setShutter(longestShutter) }
+    }
+
+    /// Holds the shutter at `seconds`; exposure becomes manual, keeping the ISO it had.
+    func setShutter(_ seconds: Double) {
+        guard canExpose else { return }
+        takeExposure()
+        shutterSpeed = min(longestShutter, max(shutterRange.lowerBound, seconds))
+        applyExposure()
+    }
+
+    /// Holds the ISO; exposure becomes manual, keeping the shutter it had.
+    func setISO(_ value: Float) {
+        guard canExpose else { return }
+        takeExposure()
+        iso = min(isoRange.upperBound, max(isoRange.lowerBound, value))
+        applyExposure()
+    }
+
+    /// Manual exposure, starting where the camera had it, and back to automatic.
+    func toggleAutoExposure() {
+        guard canExpose, let device = videoInput?.device else { return }
+        Haptics.detent()
+        if isAutoExposure {
+            takeExposure()
+            applyExposure()
+        } else {
+            isAutoExposure = true
+            adjust(device) { $0.exposureMode = .continuousAutoExposure }
+        }
+    }
+
+    /// Brighter or darker than the camera's own exposure, in stops.
+    func setExposureBias(_ stops: Float) {
+        guard let device = videoInput?.device else { return }
+        exposureBias = min(biasRange.upperBound, max(biasRange.lowerBound, stops))
+        let bias = exposureBias
+        adjust(device) { $0.setExposureTargetBias(bias, completionHandler: nil) }
+    }
+
+    private func takeExposure() {
+        guard isAutoExposure, let device = videoInput?.device else { return }
+        isAutoExposure = false
+        shutterSpeed = min(longestShutter, max(shutterRange.lowerBound, device.exposureDuration.seconds))
+        iso = min(isoRange.upperBound, max(isoRange.lowerBound, device.iso))
+    }
+
+    private func applyExposure() {
+        guard let device = videoInput?.device else { return }
+        let duration = CMTime(seconds: shutterSpeed, preferredTimescale: 1_000_000)
+        let iso = iso
+        adjust(device) { $0.setExposureModeCustom(duration: duration, iso: iso, completionHandler: nil) }
+    }
+
+    /// Holds the white balance at `kelvin` and `tint`.
+    func setWhiteBalance(kelvin: Float? = nil, tint: Float? = nil) {
+        guard canBalance, let device = videoInput?.device else { return }
+        if isAutoWhiteBalance {
+            isAutoWhiteBalance = false
+            self.kelvin = cameraData.kelvin > 0 ? cameraData.kelvin : 5600
+            self.tint = 0
+        }
+        if let kelvin { self.kelvin = min(Self.kelvinRange.upperBound, max(Self.kelvinRange.lowerBound, kelvin)) }
+        if let tint { self.tint = min(Self.tintRange.upperBound, max(Self.tintRange.lowerBound, tint)) }
+        let values = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: self.kelvin, tint: self.tint)
+        var gains = device.deviceWhiteBalanceGains(for: values)
+        let top = device.maxWhiteBalanceGain
+        gains.redGain = min(top, max(1, gains.redGain))
+        gains.greenGain = min(top, max(1, gains.greenGain))
+        gains.blueGain = min(top, max(1, gains.blueGain))
+        adjust(device) { $0.setWhiteBalanceModeLocked(with: gains, completionHandler: nil) }
+    }
+
+    /// Holds the white balance where the camera had it, and back to automatic.
+    func toggleAutoWhiteBalance() {
+        guard canBalance, let device = videoInput?.device else { return }
+        Haptics.detent()
+        if isAutoWhiteBalance {
+            setWhiteBalance()
+        } else {
+            isAutoWhiteBalance = true
+            adjust(device) { $0.whiteBalanceMode = .continuousAutoWhiteBalance }
+        }
+    }
+
     // MARK: Lens
 
     /// Learns the new camera's zoom and focus and starts it at 1× and automatic focus.
@@ -252,6 +495,7 @@ final class CameraRig {
         choosePhotoSize(for: device)
         setZoom(1)
         turnFocus(to: Self.autoFocusDial)
+        readExposure(device)
     }
 
     /// Zooms to `value` as shown (1 is the main camera).
@@ -342,6 +586,7 @@ final class CameraRig {
     private func startVideo() {
         guard cameraAccess == .granted, hasCamera, !movieOutput.isRecording else { return }
         applyCaptureRotation(to: movieOutput.connection(with: .video))
+        takeLook = look
         movieOutput.startRecording(to: Self.tempURL("mov"), recordingDelegate: delegate)
         began()
     }
@@ -363,30 +608,11 @@ final class CameraRig {
 
     private func startSound() {
         guard micAccess == .granted else { return }
+        if !sound.isRunning { sound.start() }
         do {
-            let audio = AVAudioSession.sharedInstance()
-            try audio.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
-            try audio.setActive(true)
-            let settings: [String: Any] = [
-                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 1,
-                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-            ]
-            let recorder = try AVAudioRecorder(url: Self.tempURL("m4a"), settings: settings)
-            recorder.isMeteringEnabled = true
-            guard recorder.record() else { throw RecordError.couldNotStart }
-            self.recorder = recorder
+            try sound.startRecording(to: Self.tempURL("m4a"))
             began()
-            meterTask = Task { [weak self] in
-                while !Task.isCancelled {
-                    guard let self, let recorder = self.recorder else { return }
-                    recorder.updateMeters()
-                    // −50 dB and below reads as nothing.
-                    self.level = max(0, min(1, (recorder.averagePower(forChannel: 0) + 50) / 50))
-                    try? await Task.sleep(for: .milliseconds(50))
-                }
-            }
         } catch {
-            Self.restorePlayback()
             onError("Couldn't start recording sound. \(error.localizedDescription)")
         }
     }
@@ -402,14 +628,7 @@ final class CameraRig {
         case .video:
             if movieOutput.isRecording { movieOutput.stopRecording() }
         case .sound:
-            meterTask?.cancel()
-            level = 0
-            if let recorder {
-                recorder.stop()
-                self.recorder = nil
-                onTake(.sound(recorder.url))
-            }
-            Self.restorePlayback()
+            if let url = sound.stopRecording() { onTake(.sound(url)) }
         case .photo:
             break
         }
@@ -426,7 +645,7 @@ final class CameraRig {
             error == nil
             || ((error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? false)
         if usable {
-            onTake(.video(url))
+            onTake(.video(url, takeLook))
         } else {
             try? FileManager.default.removeItem(at: url)
             onError("The take couldn't be saved. \(error?.localizedDescription ?? "")")
@@ -439,18 +658,13 @@ final class CameraRig {
 
     fileprivate func finishedPhoto(_ data: Data?, error: Error?) {
         if let data {
-            onTake(.photo(data))
+            onTake(.photo(data, look))
         } else {
             onError("The photo couldn't be taken. \(error?.localizedDescription ?? "")")
         }
     }
 
     // MARK: Helpers
-
-    private enum RecordError: LocalizedError {
-        case couldNotStart
-        var errorDescription: String? { "The microphone didn't start." }
-    }
 
     /// The back camera with all its lenses, so the zoom ring reaches the ultra wide and the
     /// telephoto; the front one as it is.
@@ -473,6 +687,8 @@ final class CameraRig {
     private static func tempURL(_ ext: String) -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
     }
+
+    private static let frameRateKey = "record.frameRate"
 
     /// Back to the app's own sound setting: playback, as set at launch.
     static func restorePlayback() {
@@ -499,22 +715,87 @@ private final class CaptureDelegate: NSObject, AVCaptureFileOutputRecordingDeleg
     }
 }
 
-/// Reads the histogram from every third frame of the picture, off the main thread.
-private final class HistogramTap: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+/// Takes the copy of each frame off the main thread: draws it through the look (when there is
+/// one) into the live picture, and reads the histogram from every third frame, through the look
+/// too, so it measures what's being shot.
+private final class FrameTap: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     weak var rig: CameraRig?
+
+    var look: Look? {
+        get { lock.withLock { lockedLook } }
+        set { lock.withLock { lockedLook = newValue } }
+    }
+    var renderer: AVSampleBufferVideoRenderer? {
+        get { lock.withLock { lockedRenderer } }
+        set { lock.withLock { lockedRenderer = newValue } }
+    }
+
+    private let lock = NSLock()
+    private var lockedLook: Look?
+    private var lockedRenderer: AVSampleBufferVideoRenderer?
     private var frame = 0
     private var last: RGBHistogram?
+    private let context = CIContext(options: [.cacheIntermediates: false])
+    private var pool: CVPixelBufferPool?
+    private var poolSize = CGSize.zero
 
     func captureOutput(
         _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection
     ) {
+        guard var pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        if let look, let renderer, let graded = draw(pixels, through: look) {
+            show(graded, at: CMSampleBufferGetPresentationTimeStamp(sampleBuffer), in: renderer)
+            pixels = graded
+        }
         frame += 1
-        guard frame % 3 == 0, let pixels = CMSampleBufferGetImageBuffer(sampleBuffer),
-            var reading = RGBHistogram(pixels)
-        else { return }
+        guard frame % 3 == 0, var reading = RGBHistogram(pixels) else { return }
         // A little of the last reading, so the scope moves smoothly rather than flickering.
         if let last { reading = reading.blended(with: last, keeping: 0.35) }
         last = reading
         Task { @MainActor [weak rig, reading] in rig?.received(reading) }
+    }
+
+    private func draw(_ pixels: CVPixelBuffer, through look: Look) -> CVPixelBuffer? {
+        let size = CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels))
+        if pool == nil || size != poolSize {
+            poolSize = size
+            let attributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: Int(size.width),
+                kCVPixelBufferHeightKey as String: Int(size.height),
+                kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
+            ]
+            pool = nil
+            CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pool)
+        }
+        guard let pool else { return nil }
+        var made: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, pool, &made)
+        guard let out = made else { return nil }
+        context.render(LookLibrary.apply(look, to: CIImage(cvPixelBuffer: pixels)), to: out)
+        return out
+    }
+
+    private func show(_ pixels: CVPixelBuffer, at time: CMTime, in renderer: AVSampleBufferVideoRenderer) {
+        var format: CMVideoFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pixels, formatDescriptionOut: &format)
+        guard let format else { return }
+        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: time, decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: nil, imageBuffer: pixels, formatDescription: format, sampleTiming: &timing,
+            sampleBufferOut: &sample)
+        guard let sample else { return }
+        // Shown as it arrives rather than scheduled against a clock.
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true),
+            CFArrayGetCount(attachments) > 0
+        {
+            let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+            CFDictionarySetValue(
+                dictionary, Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+        }
+        if renderer.status == .failed { renderer.flush() }
+        renderer.enqueue(sample)
     }
 }

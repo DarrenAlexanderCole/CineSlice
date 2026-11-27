@@ -197,6 +197,9 @@ struct BinView: View {
             } label: {
                 Label("Add to timeline", systemImage: "plus.rectangle.on.rectangle")
             }
+            if case .picture(let source) = item {
+                lookMenu(for: source)
+            }
             Button {
                 draftName = item.name
                 renaming = item
@@ -210,6 +213,36 @@ struct BinView: View {
             }
         } preview: {
             BinInfoCard(item: item, url: url(of: item), uses: uses)
+        }
+    }
+
+    /// Changes the look a picture plays through, or takes it off; its clips follow.
+    private func lookMenu(for source: SourceAsset) -> some View {
+        Menu {
+            Button {
+                model.setLook(nil, forSource: source.id)
+            } label: {
+                Label("Clean", systemImage: source.look == nil ? "checkmark" : "circle.slash")
+            }
+            let imported = LookLibrary.imported()
+            ForEach(LookLibrary.builtInGroups + (imported.isEmpty ? [] : [("Imported", imported)]), id: \.title) {
+                group in
+                Menu(group.title) {
+                    ForEach(group.looks, id: \.id) { look in
+                        Button {
+                            model.setLook(look, forSource: source.id)
+                        } label: {
+                            if source.look?.id == look.id {
+                                Label(look.name, systemImage: "checkmark")
+                            } else {
+                                Text(look.name)
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("Look: \(source.look?.name ?? "Clean")", systemImage: "camera.filters")
         }
     }
 
@@ -346,7 +379,7 @@ private struct BinPicture: View {
             switch item {
             case .picture(let source):
                 Color.black
-                VideoFrameView(url: url, time: Self.frameTime(source), maxPixel: maxPixel)
+                VideoFrameView(url: url, time: Self.frameTime(source), maxPixel: maxPixel, look: source.look)
                     .aspectRatio(Self.aspect(source), contentMode: .fit)
             case .sound:
                 LinearGradient(
@@ -493,6 +526,7 @@ private struct BinInfoCard: View {
 
     private var rows: [(String, String)] {
         var rows = [("KIND", item.kind), ("FROM", item.isTake ? "TAKE" : "IMPORTED")]
+        if case .picture(let source) = item { rows.append(("LOOK", source.look?.name ?? "CLEAN")) }
         switch item {
         case .picture(let source) where source.isStill:
             rows.append(("SIZE", "\(source.width) × \(source.height)"))
