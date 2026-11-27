@@ -183,11 +183,14 @@ public struct SplitClipCommand: EditingCommand {
         guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
         let clip = project.clips[i]
         guard Self.canSplit(clip, at: sourceTime) else { throw EditError.invalidRange }
+        // The fade in stays with the first half and the fade out with the second.
         var first = clip
         first.sourceRange = MediaTimeRange(start: clip.sourceRange.start, end: sourceTime)
+        first.fadeOut = .zero
         var second = clip
         second.id = newClipID
         second.gap = .zero
+        second.fadeIn = .zero
         second.sourceRange = MediaTimeRange(start: sourceTime, end: clip.sourceRange.end)
         project.clips[i] = first
         project.clips.insert(second, at: i + 1)
@@ -370,6 +373,46 @@ public struct SetMusicVolumeCommand: EditingCommand {
     public func apply(to project: inout Project) throws {
         guard project.referenceAudio != nil else { throw EditError.sourceNotFound }
         project.referenceAudio?.volume = min(max(volume, 0), 1)
+    }
+}
+
+/// Sets a clip's sound fades: in from silence at its start, out to silence at its end. Kept to
+/// the clip's length, the two together never longer than it.
+public struct SetClipFadesCommand: EditingCommand {
+    public let clipID: UUID
+    public let fadeIn: MediaTime
+    public let fadeOut: MediaTime
+    public init(clipID: UUID, fadeIn: MediaTime, fadeOut: MediaTime) {
+        self.clipID = clipID
+        self.fadeIn = fadeIn
+        self.fadeOut = fadeOut
+    }
+    public var actionName: String { "Clip Fades" }
+    public func apply(to project: inout Project) throws {
+        guard let i = project.index(ofClip: clipID) else { throw EditError.clipNotFound }
+        let length = project.clips[i].compositionDuration
+        let fadeIn = fadeIn.clamped(to: .zero, length)
+        project.clips[i].fadeIn = fadeIn
+        project.clips[i].fadeOut = fadeOut.clamped(to: .zero, length - fadeIn)
+    }
+}
+
+/// Sets the song's fades: in from silence where it starts being heard, out to silence where it
+/// stops. Kept to the part that's heard.
+public struct SetMusicFadesCommand: EditingCommand {
+    public let fadeIn: MediaTime
+    public let fadeOut: MediaTime
+    public init(fadeIn: MediaTime, fadeOut: MediaTime) {
+        self.fadeIn = fadeIn
+        self.fadeOut = fadeOut
+    }
+    public var actionName: String { "Music Fades" }
+    public func apply(to project: inout Project) throws {
+        guard let music = project.referenceAudio else { throw EditError.sourceNotFound }
+        let length = max(project.musicHeardRange(music).duration, .zero)
+        let fadeIn = fadeIn.clamped(to: .zero, length)
+        project.referenceAudio?.fadeIn = fadeIn
+        project.referenceAudio?.fadeOut = fadeOut.clamped(to: .zero, length - fadeIn)
     }
 }
 

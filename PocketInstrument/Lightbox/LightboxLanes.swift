@@ -97,6 +97,14 @@ struct FilmStripClip: View {
                 .frame(width: max(0, vx1 - vx0 - 4), height: waveBand)
                 .offset(x: 2, y: perforationBand + imageHeight)
             }
+            if waveBand > 0, clip.fadeIn > .zero || clip.fadeOut > .zero {
+                GlassLevelLine(
+                    start: start, length: duration, volume: 1, fadeIn: clip.fadeIn.seconds,
+                    fadeOut: clip.fadeOut.seconds, viewport: viewport, vx0: vx0, ink: Theme.ivory
+                )
+                .frame(width: max(0, vx1 - vx0), height: waveBand)
+                .offset(y: perforationBand + imageHeight)
+            }
         }
         .frame(width: max(0, vx1 - vx0), height: height, alignment: .topLeading)
         .clipShape(shape)
@@ -193,6 +201,7 @@ struct AudioGlassClip: View {
     let height: Double
     /// Held up by a long press and sliding: shows where the song now starts.
     var isLifted = false
+    var isSelected = false
 
     var body: some View {
         let start = music.timelineRange.start.seconds
@@ -221,6 +230,13 @@ struct AudioGlassClip: View {
                     color: Theme.acetateInk.opacity(0.9)
                 )
                 .padding(.horizontal, 2)
+            }
+            if music.fadeIn > .zero || music.fadeOut > .zero {
+                // Over the part that's heard: the fade out ends where the sequence does.
+                GlassLevelLine(
+                    start: start, length: max(min(end, sequenceEnd) - start, 0), volume: 1,
+                    fadeIn: music.fadeIn.seconds, fadeOut: music.fadeOut.seconds, viewport: viewport, vx0: vx0,
+                    ink: Theme.acetateInk)
             }
         }
         .frame(width: max(0, vx1 - vx0), height: height)
@@ -253,10 +269,11 @@ struct AudioGlassClip: View {
         }
         .overlay(
             shape.strokeBorder(
-                isLifted ? Theme.signal : Theme.acetateInk.opacity(0.35), lineWidth: isLifted ? 2.5 : 1)
+                isLifted || isSelected ? Theme.signal : Theme.acetateInk.opacity(0.35),
+                lineWidth: isLifted || isSelected ? 2.5 : 1)
         )
         .opacity(audible ? 1 : 0.4)
-        .shadow(color: Theme.acetate.opacity(0.5), radius: 3)
+        .shadow(color: isSelected ? Theme.signal.opacity(0.6) : Theme.acetate.opacity(0.5), radius: isSelected ? 5 : 3)
         .offset(x: vx0)
         .accessibilityElement()
         .accessibilityLabel("Music: \(music.originalFilename ?? "reference track")")
@@ -265,7 +282,9 @@ struct AudioGlassClip: View {
                 + (music.isLocked ? ", locked" : "")
         )
         .accessibilityHint(
-            music.isLocked ? "Unlock it in Mix to move it." : "Hold and drag to slide it along or onto another lane.")
+            music.isLocked ? "Unlock it in Mix to move it." : "Hold and drag to slide it along or onto another lane."
+        )
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
     /// Position in the song at composition time `t`.
@@ -356,28 +375,48 @@ struct SoundGlassClip: View {
     /// The sound's level across it, the fades as slopes: the glass above the line is shaded off,
     /// as what's cut away.
     private func levelLine(vx0: Double) -> some View {
-        Canvas { context, size in
-            let length = clip.sourceRange.duration.seconds
-            let x = { (t: Double) in viewport.x(for: start + t) - vx0 }
-            let y = { (v: Float) in 4 + (1 - Double(v)) * (size.height - 8) }
-            var line = Path()
-            line.move(to: CGPoint(x: x(0), y: y(clip.fadeIn > .zero ? 0 : clip.volume)))
-            line.addLine(to: CGPoint(x: x(clip.fadeIn.seconds), y: y(clip.volume)))
-            line.addLine(to: CGPoint(x: x(length - clip.fadeOut.seconds), y: y(clip.volume)))
-            line.addLine(to: CGPoint(x: x(length), y: y(clip.fadeOut > .zero ? 0 : clip.volume)))
-            var shade = line
-            shade.addLine(to: CGPoint(x: x(length), y: 0))
-            shade.addLine(to: CGPoint(x: x(0), y: 0))
-            shade.closeSubpath()
-            context.fill(shade, with: .color(Theme.soundInk.opacity(0.28)))
-            context.stroke(line, with: .color(Theme.soundInk), lineWidth: 1.5)
-        }
-        .allowsHitTesting(false)
+        GlassLevelLine(
+            start: start, length: clip.sourceRange.duration.seconds, volume: clip.volume,
+            fadeIn: clip.fadeIn.seconds, fadeOut: clip.fadeOut.seconds, viewport: viewport, vx0: vx0,
+            ink: Theme.soundInk)
     }
 
     /// Position in the file at timeline time `t`.
     private func fileTime(_ t: Double) -> MediaTime {
         clip.sourceRange.start + MediaTime(seconds: min(max(t - start, 0), clip.sourceRange.duration.seconds))
+    }
+}
+
+/// A level printed on a clip, sound or song: flat at its level, ramping from and to silence
+/// across its fades, the part above shaded. `start` and `length` are in seconds on the timeline;
+/// `vx0` is the timeline x where the view's left edge sits.
+struct GlassLevelLine: View {
+    let start: Double
+    let length: Double
+    let volume: Float
+    let fadeIn: Double
+    let fadeOut: Double
+    let viewport: TimelineViewport
+    let vx0: Double
+    let ink: Color
+
+    var body: some View {
+        Canvas { context, size in
+            let x = { (t: Double) in viewport.x(for: start + t) - vx0 }
+            let y = { (v: Float) in 4 + (1 - Double(v)) * (size.height - 8) }
+            var line = Path()
+            line.move(to: CGPoint(x: x(0), y: y(fadeIn > 0 ? 0 : volume)))
+            line.addLine(to: CGPoint(x: x(fadeIn), y: y(volume)))
+            line.addLine(to: CGPoint(x: x(length - fadeOut), y: y(volume)))
+            line.addLine(to: CGPoint(x: x(length), y: y(fadeOut > 0 ? 0 : volume)))
+            var shade = line
+            shade.addLine(to: CGPoint(x: x(length), y: 0))
+            shade.addLine(to: CGPoint(x: x(0), y: 0))
+            shade.closeSubpath()
+            context.fill(shade, with: .color(ink.opacity(0.28)))
+            context.stroke(line, with: .color(ink), lineWidth: 1.5)
+        }
+        .allowsHitTesting(false)
     }
 }
 

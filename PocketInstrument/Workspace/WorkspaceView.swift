@@ -29,6 +29,9 @@ struct WorkspaceView: View {
     @State private var lightbox = LightboxState()
     /// Where the playhead was when LIGHTBOX's Preview opened Watch; closing returns there.
     @State private var previewReturn: MediaTime?
+    /// The Record page is open, in this mode; its takes go in the bin.
+    @State private var showsRecord = false
+    @State private var recordMode = CameraRig.Mode.video
 
     var body: some View {
         ZStack {
@@ -46,7 +49,8 @@ struct WorkspaceView: View {
                     onDone: { OrientationLock.returnToPortrait() },
                     onAddClips: { photos in pick(.clips, photos: photos, atPlayhead: true) },
                     onAddMusic: { fromVideo in pick(.music, photos: fromVideo) },
-                    onAddSound: { fromVideo in pick(.sound, photos: fromVideo) }
+                    onAddSound: { fromVideo in pick(.sound, photos: fromVideo) },
+                    onRecord: { mode in record(mode) }
                 )
                 .transition(.opacity)
             } else {
@@ -109,6 +113,14 @@ struct WorkspaceView: View {
             case .music: if let url = urls.first { Task { await model.importMusicFile(url) } }
             case .sound: if let url = urls.first { Task { await model.importSoundFile(url) } }
             }
+        }
+        .fullScreenCover(isPresented: $showsRecord) {
+            RecordView(model: model, mode: recordMode) { showsRecord = false }
+        }
+        .sheet(isPresented: $model.isBinOpen) {
+            BinView(model: model)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showExport) {
             ExportSheet(model: model)
@@ -347,8 +359,22 @@ struct WorkspaceView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 280)
             HStack(spacing: 10) {
+                Button {
+                    record(.video)
+                } label: {
+                    Label("Record", systemImage: "record.circle")
+                }
+                .buttonStyle(.instrument(.prominent))
                 Button("Photos") { pick(.clips, photos: true) }.buttonStyle(.instrument(.prominent))
                 Button("Files") { pick(.clips, photos: false) }.buttonStyle(.instrument(.dark))
+            }
+            if !model.project.sources.isEmpty {
+                Button {
+                    model.isBinOpen = true
+                } label: {
+                    Label("Open the bin", systemImage: "tray.full")
+                }
+                .buttonStyle(.instrument(.dark))
             }
             Button("Demo clips") { Task { await model.addDemoClips() } }
                 .buttonStyle(.instrument(.dark))
@@ -361,6 +387,11 @@ struct WorkspaceView: View {
 
     /// Opens a picker; clips go in at `index` in the sequence, or at the end, or at the playhead
     /// on the lowest lane with room (LIGHTBOX).
+    private func record(_ mode: CameraRig.Mode) {
+        recordMode = mode
+        showsRecord = true
+    }
+
     private func pick(_ purpose: PickPurpose, photos: Bool, at index: Int? = nil, atPlayhead: Bool = false) {
         pickPurpose = purpose
         if purpose == .clips {
@@ -372,15 +403,16 @@ struct WorkspaceView: View {
 
     private var deck: some View {
         VStack(spacing: 8) {
-            if !model.project.clips.isEmpty {
-                StateSwitcher(model: model)
+            if !model.project.sources.isEmpty {
+                StateSwitcher(model: model, onRecord: { record(.video) }, onBin: { model.isBinOpen = true })
             }
             switch model.mode {
             case .arrange:
                 ArrangeDeck(
                     model: model,
                     onAddPhotos: { pick(.clips, photos: true) },
-                    onAddFiles: { pick(.clips, photos: false) }
+                    onAddFiles: { pick(.clips, photos: false) },
+                    onRecord: { record(.video) }
                 )
                 .transition(.opacity)
             case .explore:
@@ -727,13 +759,33 @@ struct LoopButton: View {
     }
 }
 
-/// Switches among the workspace's contextual states. Preview and transport stay put.
+/// Switches among the workspace's contextual states. Preview and transport stay put. Record
+/// and Bin lead the row: Record opens the camera, whose takes go in the bin's TAKES folder;
+/// Bin opens the bin. Every key is as wide as its label, and the row sits centred.
 struct StateSwitcher: View {
     var model: WorkspaceModel
+    var onRecord: () -> Void
+    var onBin: () -> Void
 
     var body: some View {
         // The state keys in one recessed slot, like a rocker; the current one is lit.
-        HStack(spacing: 6) {
+        HStack(spacing: 3) {
+            Button(action: onRecord) {
+                HStack(spacing: 3) {
+                    Circle().fill(Theme.playhead).frame(width: 5, height: 5)
+                    Text("REC").font(Theme.mono(9, weight: .bold))
+                }
+            }
+            .buttonStyle(.instrument(.dark, height: 24))
+            .accessibilityLabel("Record")
+            .accessibilityHint("Opens the camera. Takes go in the bin's TAKES folder.")
+            Button(action: onBin) {
+                Text("BIN").font(Theme.mono(9, weight: .bold))
+            }
+            .buttonStyle(.instrument(.dark, height: 24))
+            .accessibilityLabel("Bin")
+            .accessibilityHint("Everything brought in and shot, to add to the sequence.")
+            Rectangle().fill(Theme.hairline).frame(width: 1, height: 16).padding(.horizontal, 2)
             ForEach(WorkspaceModel.Mode.allCases, id: \.self) { mode in
                 let isCurrent = model.mode == mode
                 Button {
@@ -742,18 +794,25 @@ struct StateSwitcher: View {
                     HStack(spacing: 4) {
                         // A split being made carries on whatever state is showing: say so here too.
                         if mode == .audio, model.isProcessingVoice { LED(isOn: true, blinks: true) }
-                        Text(mode.title).font(Theme.mono(10, weight: .bold))
+                        Text(mode.title.uppercased()).font(Theme.mono(9, weight: .bold))
                     }
-                    .frame(maxWidth: .infinity)
                 }
                 .accessibilityValue(mode == .audio && model.isProcessingVoice ? "Processing sound" : "")
-                .buttonStyle(.instrument(.dark, active: isCurrent, height: 28))
-                .disabled(mode == .explore && model.selectedClip == nil)
+                .buttonStyle(.instrument(.dark, active: isCurrent, height: 24))
+                .disabled(isUnavailable(mode))
                 .accessibilityAddTraits(isCurrent ? .isSelected : [])
             }
         }
-        .recessed(cornerRadius: 11, padding: 3)
+        .fixedSize()
+        .recessed(cornerRadius: 10, padding: 3)
+        .frame(maxWidth: .infinity)
         .helpTopic(.pages)
+    }
+
+    /// Trim needs a clip picked; every page but Arrange needs a sequence.
+    private func isUnavailable(_ mode: WorkspaceModel.Mode) -> Bool {
+        if mode == .explore && model.selectedClip == nil { return true }
+        return mode != .arrange && model.project.clips.isEmpty
     }
 }
 

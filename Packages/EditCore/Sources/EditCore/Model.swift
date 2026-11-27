@@ -18,11 +18,14 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
     /// A photo, stored as a silent movie that holds the picture for `duration`.
     public var isStill: Bool
     public var importedAt: Date
+    /// Shot on the Record page: the bin keeps it in its TAKES folder.
+    public var isTake: Bool
 
     public init(
         id: UUID = UUID(), fileName: String, originalFilename: String? = nil,
         duration: MediaTime, width: Int, height: Int,
-        nominalFrameRate: Double = 30, hasAudio: Bool = false, isStill: Bool = false, importedAt: Date = Date()
+        nominalFrameRate: Double = 30, hasAudio: Bool = false, isStill: Bool = false, importedAt: Date = Date(),
+        isTake: Bool = false
     ) {
         self.id = id
         self.fileName = fileName
@@ -34,11 +37,27 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
         self.hasAudio = hasAudio
         self.isStill = isStill
         self.importedAt = importedAt
+        self.isTake = isTake
     }
 
     enum CodingKeys: String, CodingKey {
         case id, fileName, originalFilename, duration, width, height, nominalFrameRate, hasAudio, isStill
-        case importedAt
+        case importedAt, isTake
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(fileName, forKey: .fileName)
+        try c.encodeIfPresent(originalFilename, forKey: .originalFilename)
+        try c.encode(duration, forKey: .duration)
+        try c.encode(width, forKey: .width)
+        try c.encode(height, forKey: .height)
+        try c.encode(nominalFrameRate, forKey: .nominalFrameRate)
+        try c.encode(hasAudio, forKey: .hasAudio)
+        try c.encode(isStill, forKey: .isStill)
+        try c.encode(importedAt, forKey: .importedAt)
+        if isTake { try c.encode(isTake, forKey: .isTake) }
     }
 
     public init(from decoder: Decoder) throws {
@@ -53,6 +72,7 @@ public struct SourceAsset: Codable, Hashable, Identifiable, Sendable {
         hasAudio = try c.decode(Bool.self, forKey: .hasAudio)
         isStill = try c.decodeIfPresent(Bool.self, forKey: .isStill) ?? false
         importedAt = try c.decode(Date.self, forKey: .importedAt)
+        isTake = try c.decodeIfPresent(Bool.self, forKey: .isTake) ?? false
     }
 
     /// How long a photo plays when first added; its source runs longer, so it can be stretched.
@@ -169,6 +189,10 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     /// Black and silence before it, after the clip before (or the sequence's start). Zero keeps
     /// it against that clip, as every clip was before LIGHTBOX could leave gaps.
     public var gap: MediaTime = .zero
+    /// How long its sound takes to rise from silence at its start, and to fall to silence at its
+    /// end, on the composition timeline. The picture doesn't fade.
+    public var fadeIn: MediaTime = .zero
+    public var fadeOut: MediaTime = .zero
 
     public init(
         id: UUID = UUID(), sourceID: UUID, sourceRange: MediaTimeRange,
@@ -187,7 +211,7 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceID, sourceRange, speed, framing, crop, volume, levelCurve, balance, gap
+        case id, sourceID, sourceRange, speed, framing, crop, volume, levelCurve, balance, gap, fadeIn, fadeOut
         /// Before the levels: "voiceOnly" or "reduceVoice". Read, never written.
         case voice
     }
@@ -204,6 +228,8 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         try c.encode(levelCurve, forKey: .levelCurve)
         try c.encodeIfPresent(balance, forKey: .balance)
         if gap > .zero { try c.encode(gap, forKey: .gap) }
+        if fadeIn > .zero { try c.encode(fadeIn, forKey: .fadeIn) }
+        if fadeOut > .zero { try c.encode(fadeOut, forKey: .fadeOut) }
     }
 
     public init(from decoder: Decoder) throws {
@@ -217,6 +243,8 @@ public struct TimelineClip: Codable, Hashable, Identifiable, Sendable {
         volume = try c.decodeIfPresent(Float.self, forKey: .volume) ?? 1
         levelCurve = try c.decodeIfPresent(AutomationLane.self, forKey: .levelCurve) ?? AutomationLane()
         gap = try c.decodeIfPresent(MediaTime.self, forKey: .gap) ?? .zero
+        fadeIn = try c.decodeIfPresent(MediaTime.self, forKey: .fadeIn) ?? .zero
+        fadeOut = try c.decodeIfPresent(MediaTime.self, forKey: .fadeOut) ?? .zero
         if let balance = try c.decodeIfPresent(SoundBalance.self, forKey: .balance) {
             self.balance = balance
         } else {
@@ -254,6 +282,10 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
     /// Which of LIGHTBOX's audio lanes it sits on (0 is the first); nil in projects from before
     /// it could move between them, read as 0.
     public var lane: Int?
+    /// How long the song takes to rise from silence where it starts being heard, and to fall to
+    /// silence where it stops (its end, or the sequence's if that comes first).
+    public var fadeIn: MediaTime = .zero
+    public var fadeOut: MediaTime = .zero
 
     public init(
         id: UUID = UUID(), fileName: String, originalFilename: String? = nil,
@@ -272,7 +304,7 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, fileName, originalFilename, duration, offset, volume, isLocked, reference, lane
+        case id, fileName, originalFilename, duration, offset, volume, isLocked, reference, lane, fadeIn, fadeOut
     }
 
     /// The audio lane it sits on.
@@ -298,6 +330,23 @@ public struct AudioTrack: Codable, Hashable, Identifiable, Sendable {
         isLocked = try c.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
         reference = try c.decodeIfPresent(MusicReference.self, forKey: .reference)
         lane = try c.decodeIfPresent(Int.self, forKey: .lane)
+        fadeIn = try c.decodeIfPresent(MediaTime.self, forKey: .fadeIn) ?? .zero
+        fadeOut = try c.decodeIfPresent(MediaTime.self, forKey: .fadeOut) ?? .zero
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(fileName, forKey: .fileName)
+        try c.encodeIfPresent(originalFilename, forKey: .originalFilename)
+        try c.encode(duration, forKey: .duration)
+        try c.encode(offset, forKey: .offset)
+        try c.encode(volume, forKey: .volume)
+        try c.encode(isLocked, forKey: .isLocked)
+        try c.encodeIfPresent(reference, forKey: .reference)
+        try c.encodeIfPresent(lane, forKey: .lane)
+        if fadeIn > .zero { try c.encode(fadeIn, forKey: .fadeIn) }
+        if fadeOut > .zero { try c.encode(fadeOut, forKey: .fadeOut) }
     }
 }
 
@@ -489,6 +538,8 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
     public var exportSettings: ExportSettings
     /// The EQ on the whole mix.
     public var masterEQ: MasterEQ
+    /// Sounds kept in the bin, to put on a sound lane later. Pictures in the bin are `sources`.
+    public var binSounds: [BinSound]
 
     public init(id: UUID = UUID(), name: String, createdAt: Date = Date()) {
         self.schemaVersion = Project.currentSchemaVersion
@@ -505,12 +556,13 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         self.loop = nil
         self.exportSettings = .vertical1080
         self.masterEQ = .flat
+        self.binSounds = []
     }
 
     // Tolerant decoding: new optional fields can be added without breaking old files.
     enum CodingKeys: String, CodingKey {
         case schemaVersion, id, name, createdAt, modifiedAt, sources, clips
-        case referenceAudio, soundTracks, videoLayers, automation, loop, exportSettings, masterEQ
+        case referenceAudio, soundTracks, videoLayers, automation, loop, exportSettings, masterEQ, binSounds
     }
 
     /// The oldest schema that holds everything in the project: 2 for sound lanes, gaps between
@@ -535,6 +587,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         try c.encodeIfPresent(loop, forKey: .loop)
         try c.encode(exportSettings, forKey: .exportSettings)
         try c.encode(masterEQ, forKey: .masterEQ)
+        if !binSounds.isEmpty { try c.encode(binSounds, forKey: .binSounds) }
     }
 
     /// Keys older files wrote that are no longer stored.
@@ -573,6 +626,7 @@ public struct Project: Codable, Hashable, Identifiable, Sendable {
         loop = try c.decodeIfPresent(LoopRange.self, forKey: .loop)
         exportSettings = try c.decodeIfPresent(ExportSettings.self, forKey: .exportSettings) ?? .vertical1080
         masterEQ = try c.decodeIfPresent(MasterEQ.self, forKey: .masterEQ) ?? .flat
+        binSounds = try c.decodeIfPresent([BinSound].self, forKey: .binSounds) ?? []
         // Phase 3 builds kept the clip curve project-wide in composition time; hand it to the clips.
         if let old = try c.decodeIfPresent(LegacyAutomation.self, forKey: .automation)?.clipAudio {
             for pass in old.segments { writeClipLevel(pass) }

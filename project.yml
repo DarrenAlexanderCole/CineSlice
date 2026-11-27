@@ -66,6 +66,8 @@ targets:
         UIRequiresFullScreen: true
         UIUserInterfaceStyle: Dark
         NSPhotoLibraryAddUsageDescription: CineSlice saves your finished exports to Photos.
+        NSCameraUsageDescription: CineSlice records video and photos straight into your project.
+        NSMicrophoneUsageDescription: CineSlice records sound with your videos, and sound on its own, into your project.
         # No encryption beyond what iOS itself provides, so uploads skip the export-compliance question.
         ITSAppUsesNonExemptEncryption: false
         # Only to show "Open Instagram" after saving, when Instagram is installed.

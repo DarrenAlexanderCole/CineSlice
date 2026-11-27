@@ -24,6 +24,8 @@ struct LightboxView: View {
     var onAddMusic: (_ fromVideo: Bool) -> Void
     /// Opens Files (false) or a video's sound (true) for a sound at the playhead.
     var onAddSound: (_ fromVideo: Bool) -> Void
+    /// Opens the Record page in a mode; takes go in at the playhead.
+    var onRecord: (CameraRig.Mode) -> Void
 
     @State private var panLast: Double?
     @State private var zoomLast: Double?
@@ -242,7 +244,7 @@ struct LightboxView: View {
     private func bringInKeys(_ axis: Axis) -> some View {
         LightboxBringInKeys(
             model: model, axis: axis, onAddClips: onAddClips,
-            onAddMusic: onAddMusic, onAddSound: onAddSound)
+            onAddMusic: onAddMusic, onAddSound: onAddSound, onRecord: onRecord)
     }
 
     private var counter: some View {
@@ -637,8 +639,9 @@ struct LightboxView: View {
                         AudioGlassClip(
                             music: shown, sequenceEnd: model.project.duration.seconds, waveform: model.waveform,
                             viewport: state.viewport, lanesWidth: state.lanesWidth, height: section.laneHeight,
-                            isLifted: moving != nil
+                            isLifted: moving != nil, isSelected: model.isMusicSelected
                         )
+                        .onTapGesture { model.selectMusic() }
                         .overlay { blockedTint(moving?.fits == false) }
                         .shadow(color: .black.opacity(moving == nil ? 0 : 0.4), radius: 8, y: 6)
                         .offset(y: laneY(shown.audioLane) - (moving == nil ? 0 : 4))

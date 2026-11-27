@@ -409,7 +409,65 @@ extension Project {
             if t > .zero { envelope.append(AutomationPoint(time: t, value: left)) }
             if t < end, t == .zero || right != left { envelope.append(AutomationPoint(time: t, value: right)) }
         }
-        return envelope
+        return Self.applyingFades(envelope, regions: fadeRegions(for: target))
+    }
+
+    /// Where the song is heard: from where it starts (or 0) to its end or the sequence's,
+    /// whichever comes first. Empty if it ends before the sequence starts or starts after it ends.
+    public func musicHeardRange(_ music: AudioTrack) -> MediaTimeRange {
+        let song = music.timelineRange
+        return MediaTimeRange(start: song.start, end: max(min(song.end, duration), song.start))
+    }
+
+    /// Where `target` plays with a fade: each clip with one, or the song where it's heard.
+    func fadeRegions(for target: AutomationTarget) -> [FadeRegion] {
+        switch target {
+        case .clipAudio:
+            let map = SequenceMap(project: self)
+            return zip(clips, map.entries).compactMap { clip, entry in
+                FadeRegion(range: entry.compositionRange, fadeIn: clip.fadeIn, fadeOut: clip.fadeOut)
+            }
+        case .music:
+            guard let music = referenceAudio else { return [] }
+            return [FadeRegion(range: musicHeardRange(music), fadeIn: music.fadeIn, fadeOut: music.fadeOut)]
+                .compactMap { $0 }
+        }
+    }
+
+    /// `envelope` scaled by the fades: each rises from 0 at its region's start and falls to 0 at
+    /// its end. Steps where envelope or fade meet stay steps; where both ramp at once the product
+    /// curves, so it's followed in short pieces.
+    static func applyingFades(_ envelope: [AutomationPoint], regions: [FadeRegion]) -> [AutomationPoint] {
+        guard !regions.isEmpty, let first = envelope.first, let last = envelope.last else { return envelope }
+
+        // Two points at one time are a step: the left side reads the first, the right the second.
+        func level(at t: MediaTime, fromLeft: Bool) -> Float {
+            for (a, b) in zip(envelope, envelope.dropFirst()) where b.time > a.time {
+                if fromLeft ? (a.time < t && t <= b.time) : (a.time <= t && t < b.time) { return lerp(a, b, at: t) }
+            }
+            return t <= first.time ? first.value : last.value
+        }
+
+        var times = Set(envelope.map(\.time))
+        let pieces = 6
+        for region in regions {
+            let ramps = [
+                (region.range.start, region.range.start + region.fadeIn),
+                (region.range.end - region.fadeOut, region.range.end),
+            ]
+            for (from, to) in ramps where to > from {
+                for i in 0...pieces { times.insert(from + (to - from).scaled(by: Double(i) / Double(pieces))) }
+            }
+        }
+
+        var faded: [AutomationPoint] = []
+        for t in times.filter({ $0 >= first.time && $0 <= last.time }).sorted() {
+            let left = level(at: t, fromLeft: true) * FadeRegion.gain(regions, at: t, fromLeft: true)
+            let right = level(at: t, fromLeft: false) * FadeRegion.gain(regions, at: t, fromLeft: false)
+            if t > first.time { faded.append(AutomationPoint(time: t, value: left)) }
+            if t < last.time, t == first.time || right != left { faded.append(AutomationPoint(time: t, value: right)) }
+        }
+        return faded
     }
 
     /// Static levels as steps: each takes over at `start` and holds until the next.
@@ -424,5 +482,37 @@ extension Project {
             guard let music = referenceAudio else { return [] }
             return [(.zero, music.volume)]
         }
+    }
+}
+
+/// A stretch of a lane that fades in from silence at its start and out to silence at its end.
+struct FadeRegion {
+    let range: MediaTimeRange
+    let fadeIn: MediaTime
+    let fadeOut: MediaTime
+
+    /// nil when there's no fade. The fades are kept inside the range, never overlapping.
+    init?(range: MediaTimeRange, fadeIn: MediaTime, fadeOut: MediaTime) {
+        guard range.duration > .zero, fadeIn > .zero || fadeOut > .zero else { return nil }
+        self.range = range
+        self.fadeIn = min(max(fadeIn, .zero), range.duration)
+        self.fadeOut = min(max(fadeOut, .zero), range.duration - self.fadeIn)
+    }
+
+    /// The fade's gain at `t`, 0…1, on the asked-for side; 1 outside every region.
+    static func gain(_ regions: [FadeRegion], at t: MediaTime, fromLeft: Bool) -> Float {
+        guard
+            let region = regions.first(where: {
+                fromLeft ? $0.range.start < t && t <= $0.range.end : $0.range.start <= t && t < $0.range.end
+            })
+        else { return 1 }
+        var gain = 1.0
+        if region.fadeIn > .zero, t < region.range.start + region.fadeIn {
+            gain = (t - region.range.start).seconds / region.fadeIn.seconds
+        }
+        if region.fadeOut > .zero, t > region.range.end - region.fadeOut {
+            gain = min(gain, (region.range.end - t).seconds / region.fadeOut.seconds)
+        }
+        return Float(min(max(gain, 0), 1))
     }
 }

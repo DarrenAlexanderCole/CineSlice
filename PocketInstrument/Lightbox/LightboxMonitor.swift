@@ -148,6 +148,8 @@ struct LightboxBringInKeys: View {
     var onAddMusic: (_ fromVideo: Bool) -> Void
     /// Opens Files (false) or a video's sound (true) for a sound.
     var onAddSound: (_ fromVideo: Bool) -> Void
+    /// Opens the Record page: video for clips, sound for a sound.
+    var onRecord: (CameraRig.Mode) -> Void
 
     @State private var showsMusic = false
     @State private var pendingPick: MusicSourceSheet.Pick?
@@ -155,7 +157,21 @@ struct LightboxBringInKeys: View {
     var body: some View {
         let layout = axis == .horizontal ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 8))
         layout {
+            Button {
+                model.engine.pause()
+                model.isBinOpen = true
+            } label: {
+                Image(systemName: "tray.full").font(.system(size: 14, weight: .bold))
+            }
+            .buttonStyle(.instrument(.key, height: 34))
+            .accessibilityLabel("Bin")
+            .accessibilityHint("Everything brought in and shot. Picked media goes in at the playhead.")
             Menu {
+                Button {
+                    onRecord(.video)
+                } label: {
+                    Label("Record", systemImage: "record.circle")
+                }
                 Button {
                     onAddClips(true)
                 } label: {
@@ -167,7 +183,7 @@ struct LightboxBringInKeys: View {
                     Label("From Files", systemImage: "folder")
                 }
                 Button {
-                    Task { await model.addDemoClips(atPlayhead: true) }
+                    Task { await model.addDemoClips() }
                 } label: {
                     Label("Demo clips", systemImage: "film.stack")
                 }
@@ -177,7 +193,7 @@ struct LightboxBringInKeys: View {
             .menuStyle(.button)
             .buttonStyle(.instrument(.key, height: 34))
             .accessibilityLabel("Add clips")
-            .accessibilityHint("New clips go in at the playhead, on the lowest video lane with room there.")
+            .accessibilityHint("Shoots or brings in clips. They go in the bin, to add from there.")
             Button {
                 model.engine.pause()
                 showsMusic = true
@@ -188,6 +204,11 @@ struct LightboxBringInKeys: View {
             .accessibilityLabel("Music")
             .accessibilityHint("Chooses the music under the sequence.")
             Menu {
+                Button {
+                    onRecord(.sound)
+                } label: {
+                    Label("Record sound", systemImage: "mic")
+                }
                 Button {
                     onAddSound(false)
                 } label: {
@@ -209,7 +230,7 @@ struct LightboxBringInKeys: View {
             .menuStyle(.button)
             .buttonStyle(.instrument(.key, height: 34))
             .accessibilityLabel("Add sound")
-            .accessibilityHint("A sound goes in at the playhead, on the first sound lane with room.")
+            .accessibilityHint("Records or brings in a sound. It goes in the bin, to add from there.")
         }
         .sheet(isPresented: $showsMusic, onDismiss: openPendingPick) {
             MusicSourceSheet(model: model) { pendingPick = $0 }

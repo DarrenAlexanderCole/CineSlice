@@ -28,6 +28,10 @@
 	<array>
 		<string>instagram</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>CineSlice records video and photos straight into your project.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>CineSlice records sound with your videos, and sound on its own, into your project.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>CineSlice saves your finished exports to Photos.</string>
 	<key>UIApplicationSceneManifest</key>

@@ -35,6 +35,7 @@ final class WorkspaceModel {
                 selectedCurvePoint = nil
             }
             cropDraft = nil
+            if selectedClipID != nil { isMusicSelected = false }
         }
     }
     /// Explore only: loops the clip's in/out range. Arrange and Mix use the project's loop region.
@@ -167,6 +168,7 @@ final class WorkspaceModel {
         }
         if let id = selectedSoundID, project.sound(id: id) == nil { selectedSoundID = nil }
         if let id = selectedLayerClipID, project.layerClip(id: id) == nil { selectedLayerClipID = nil }
+        if project.referenceAudio == nil { isMusicSelected = false }
         if mode == .explore, selectedClip == nil { mode = .arrange }
         if previous.referenceAudio?.fileName != project.referenceAudio?.fileName { loadWaveform() }
         scheduleSave()
@@ -315,15 +317,25 @@ final class WorkspaceModel {
     /// Sets the player's levels; `clip` (for the selected clip) and `music` override the project's
     /// for live fader previews, as `balance` does the selected clip's voice and scene levels. A
     /// fader being recorded is always heard as it is. `sound` stands in for the sound of its id,
-    /// for LIGHTBOX's level and fade faders.
+    /// for LIGHTBOX's level and fade faders; `clipFades` and `musicFades` stand in for the selected
+    /// clip's and the song's fades.
     func applyLevels(
-        clip: Float? = nil, music: Float? = nil, balance: SoundBalance? = nil, sound: SoundClip? = nil
+        clip: Float? = nil, music: Float? = nil, balance: SoundBalance? = nil, sound: SoundClip? = nil,
+        clipFades: (in: MediaTime, out: MediaTime)? = nil, musicFades: (in: MediaTime, out: MediaTime)? = nil
     ) {
         equalizer.set(project.masterEQ)
         guard mode != .explore, let item = engine.player.currentItem else { return }
         var mixed = mixProject
         if let sound, let at = mixed.soundLocation(id: sound.id) {
             mixed.soundTracks[at.track].clips[at.index] = sound
+        }
+        if let clipFades, let id = selectedClipID, let i = mixed.index(ofClip: id) {
+            mixed.clips[i].fadeIn = clipFades.in
+            mixed.clips[i].fadeOut = clipFades.out
+        }
+        if let musicFades {
+            mixed.referenceAudio?.fadeIn = musicFades.in
+            mixed.referenceAudio?.fadeOut = musicFades.out
         }
         item.audioMix = CompositionBuilder.audioMix(
             project: mixed, clipAudioTrackID: loadedTrackIDs.clip, musicTrackID: loadedTrackIDs.music,
@@ -367,9 +379,11 @@ final class WorkspaceModel {
     /// LIGHTBOX: selects a clip (or clears the selection) without moving the playhead, so the
     /// scissors can cut the selected clip where the playhead already is.
     func selectInPlace(_ clipID: UUID?) {
-        guard clipID != selectedClipID || selectedSoundID != nil || selectedLayerClipID != nil else { return }
+        guard clipID != selectedClipID || selectedSoundID != nil || selectedLayerClipID != nil || isMusicSelected
+        else { return }
         selectedSoundID = nil
         selectedLayerClipID = nil
+        isMusicSelected = false
         selectedClipID = clipID
         Haptics.detent()
     }
@@ -383,6 +397,7 @@ final class WorkspaceModel {
         guard id != selectedSoundID else { return }
         selectedClipID = nil
         selectedLayerClipID = nil
+        isMusicSelected = false
         selectedSoundID = id
         Haptics.detent()
     }
@@ -390,7 +405,7 @@ final class WorkspaceModel {
     func importSoundFile(_ url: URL) async {
         importStatus = "Importing sound…"
         do {
-            addSound(try await MediaImporter.importAudioFile(url, store: store, projectID: project.id))
+            binSound(try await MediaImporter.importAudioFile(url, store: store, projectID: project.id))
         } catch {
             finishMusicImport(error)
         }
@@ -399,7 +414,7 @@ final class WorkspaceModel {
     func importSound(fromVideo item: PhotosPickerItem) async {
         importStatus = "Extracting sound…"
         do {
-            addSound(try await MediaImporter.importAudio(fromVideo: item, store: store, projectID: project.id))
+            binSound(try await MediaImporter.importAudio(fromVideo: item, store: store, projectID: project.id))
         } catch {
             finishMusicImport(error)
         }
@@ -408,10 +423,25 @@ final class WorkspaceModel {
     func addDemoSound() async {
         importStatus = "Generating demo sound…"
         do {
-            addSound(try await DemoMediaGenerator.makeDemoSound(store: store, projectID: project.id))
+            binSound(try await DemoMediaGenerator.makeDemoSound(store: store, projectID: project.id))
         } catch {
             finishMusicImport(error)
         }
+    }
+
+    /// A sound brought in goes to the bin, which opens to show it.
+    private func binSound(_ file: AudioTrack, isTake: Bool = false) {
+        importStatus = nil
+        perform(AddToBinCommand(sounds: [Self.binSound(of: file, isTake: isTake)]))
+        if !isTake {
+            isBinOpen = true
+            Haptics.success()
+        }
+    }
+
+    private static func binSound(of file: AudioTrack, isTake: Bool) -> BinSound {
+        BinSound(
+            fileName: file.fileName, originalFilename: file.originalFilename, duration: file.duration, isTake: isTake)
     }
 
     /// A new sound starts at the playhead, on the first lane with room there.
@@ -493,7 +523,20 @@ final class WorkspaceModel {
         guard id != selectedLayerClipID else { return }
         selectedClipID = nil
         selectedSoundID = nil
+        isMusicSelected = false
         selectedLayerClipID = id
+        Haptics.detent()
+    }
+
+    /// LIGHTBOX: the song is selected, for Volume and Fade. Selecting anything else clears it.
+    private(set) var isMusicSelected = false
+
+    func selectMusic() {
+        guard !isMusicSelected, project.referenceAudio != nil else { return }
+        selectedClipID = nil
+        selectedSoundID = nil
+        selectedLayerClipID = nil
+        isMusicSelected = true
         Haptics.detent()
     }
 
@@ -548,6 +591,30 @@ final class WorkspaceModel {
         let command = SplitLayerClipCommand(clipID: id, time: time)
         perform(command)
         selectedLayerClipID = command.newClipID
+        Haptics.press()
+    }
+
+    /// What LIGHTBOX's Trim works on: the selected stacked clip, sound or clip of the sequence.
+    var trimTarget: TrimTarget? {
+        if let id = selectedLayerClipID { return .layerClip(id) }
+        if let id = selectedSoundID { return .sound(id) }
+        if let id = selectedClipID { return .clip(id) }
+        return nil
+    }
+
+    /// Whether the selection can lose its start (or end) up to the playhead.
+    func canTrimSelection(_ edge: TrimEdge) -> Bool {
+        guard let target = trimTarget else { return false }
+        return TrimAtCommand.canTrim(target, edge: edge, at: currentTime, in: project)
+    }
+
+    /// Trims the selection back to the playhead from one end. What's kept stays where it played.
+    func trimSelection(_ edge: TrimEdge) {
+        guard let target = trimTarget, canTrimSelection(edge) else {
+            Haptics.warning()
+            return
+        }
+        perform(TrimAtCommand(target: target, edge: edge, time: currentTime))
         Haptics.press()
     }
 
@@ -835,6 +902,22 @@ final class WorkspaceModel {
         perform(SetClipVolumeCommand(clipID: id, volume: volume))
     }
     func setMusicVolume(_ volume: Float) { perform(SetMusicVolumeCommand(volume: volume)) }
+
+    /// The selected clip's sound fades, as one undo step.
+    func setClipFades(in fadeIn: MediaTime, out fadeOut: MediaTime) {
+        guard let clip = selectedClip, clip.fadeIn != fadeIn || clip.fadeOut != fadeOut else {
+            return applyLevels()
+        }
+        perform(SetClipFadesCommand(clipID: clip.id, fadeIn: fadeIn, fadeOut: fadeOut))
+    }
+
+    /// The song's fades, as one undo step.
+    func setMusicFades(in fadeIn: MediaTime, out fadeOut: MediaTime) {
+        guard let music = project.referenceAudio, music.fadeIn != fadeIn || music.fadeOut != fadeOut else {
+            return applyLevels()
+        }
+        perform(SetMusicFadesCommand(fadeIn: fadeIn, fadeOut: fadeOut))
+    }
 
     // MARK: Voice (Audio state)
 
@@ -1637,10 +1720,163 @@ final class WorkspaceModel {
         finishImport(sources, errors)
     }
 
+    // MARK: Record
+
+    /// Takes brought in from the Record page this visit, for its count.
+    private(set) var takesThisVisit = 0
+    /// Takes from the Record page still being saved.
+    private(set) var takesSaving = 0
+    @ObservationIgnored private var takeSaving: Task<Void, Never>?
+
+    func beginRecording() {
+        engine.pause()
+        takesThisVisit = 0
+    }
+
+    /// Adds a take from the Record page to the bin's TAKES folder; nothing goes straight onto
+    /// the timeline. Takes save one after another in the order they were taken, so the shutter
+    /// never waits for the last one to finish.
+    func addTake(_ take: RecordedTake) async {
+        let name = "Take " + Self.takeTime.string(from: .now)
+        let previous = takeSaving
+        takesSaving += 1
+        importStatus = takesSaving == 1 ? "Saving take…" : "Saving \(takesSaving) takes…"
+        let saving = Task {
+            await previous?.value
+            await saveTake(take, named: name)
+        }
+        takeSaving = saving
+        await saving.value
+        takesSaving -= 1
+        if takesSaving > 0 { importStatus = takesSaving == 1 ? "Saving take…" : "Saving \(takesSaving) takes…" }
+    }
+
+    private func saveTake(_ take: RecordedTake, named name: String) async {
+        do {
+            switch take {
+            case .video(let url):
+                var source = try await MediaImporter.adopt(
+                    tempURL: url, originalName: name, store: store, projectID: project.id)
+                source.isTake = true
+                importStatus = nil
+                perform(AddToBinCommand(sources: [source]))
+            case .photo(let data):
+                var source = try await MediaImporter.adoptStill(
+                    imageData: data, originalName: name, label: name, store: store, projectID: project.id)
+                source.isTake = true
+                importStatus = nil
+                perform(AddToBinCommand(sources: [source]))
+            case .sound(let url):
+                let file = try await MediaImporter.adoptAudio(
+                    tempURL: url, originalName: name, store: store, projectID: project.id)
+                binSound(file, isTake: true)
+            }
+            takesThisVisit += 1
+        } catch {
+            importStatus = nil
+            alertMessage = "The take couldn't be added. \(error.localizedDescription)"
+            Haptics.warning()
+        }
+    }
+
+    // MARK: Bin
+
+    /// The bin is showing. Imports open it, so what came in can be picked for the timeline.
+    var isBinOpen = false
+
+    /// A piece of media in the bin: a picture (video or photo) or a sound.
+    enum BinItem: Identifiable, Hashable {
+        case picture(SourceAsset)
+        case sound(BinSound)
+
+        var id: UUID {
+            switch self {
+            case .picture(let source): source.id
+            case .sound(let sound): sound.id
+            }
+        }
+        var name: String {
+            switch self {
+            case .picture(let source): source.originalFilename ?? source.fileName
+            case .sound(let sound): sound.originalFilename ?? sound.fileName
+            }
+        }
+        var isTake: Bool {
+            switch self {
+            case .picture(let source): source.isTake
+            case .sound(let sound): sound.isTake
+            }
+        }
+        var importedAt: Date {
+            switch self {
+            case .picture(let source): source.importedAt
+            case .sound(let sound): sound.importedAt
+            }
+        }
+        var duration: MediaTime {
+            switch self {
+            case .picture(let source): source.duration
+            case .sound(let sound): sound.duration
+            }
+        }
+        var fileName: String {
+            switch self {
+            case .picture(let source): source.fileName
+            case .sound(let sound): sound.fileName
+            }
+        }
+    }
+
+    /// Everything in the bin, newest first.
+    var binItems: [BinItem] {
+        (project.sources.map(BinItem.picture) + project.binSounds.map(BinItem.sound))
+            .sorted { $0.importedAt > $1.importedAt }
+    }
+
+    func binUses(of id: UUID) -> Int { project.binUses(of: id) }
+
+    func mediaURL(forFile fileName: String) -> URL {
+        store.mediaDirectory(for: project.id).appendingPathComponent(fileName)
+    }
+
+    /// Media from the bin onto the timeline, in the order given. Pictures go on the end of the
+    /// sequence, or at the playhead on the lowest lane with room in LIGHTBOX; sounds at the
+    /// playhead on the first sound lane with room.
+    func addFromBin(_ ids: [UUID]) {
+        let items = ids.compactMap { id in binItems.first { $0.id == id } }
+        let pictures = items.compactMap { item -> SourceAsset? in
+            if case .picture(let source) = item { return source }
+            return nil
+        }
+        if !pictures.isEmpty {
+            importsAtPlayhead = isInLightbox
+            importInsertIndex = nil
+            addSources(pictures)
+        }
+        for case .sound(let sound) in items {
+            let file = AudioTrack(
+                fileName: sound.fileName, originalFilename: sound.originalFilename, duration: sound.duration)
+            addSound(file)
+        }
+    }
+
+    /// Takes media out of the bin and off the timeline wherever it's used (undo brings it back).
+    func removeFromBin(_ ids: Set<UUID>) {
+        perform(RemoveFromBinCommand(ids: ids))
+    }
+
+    func renameMedia(_ id: UUID, to name: String) {
+        perform(RenameMediaCommand(id: id, name: name))
+    }
+
+    private static let takeTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH.mm.ss"
+        return formatter
+    }()
+
     /// Demo clips into the sequence at `index`, or at the playhead on the lowest lane with room.
-    func addDemoClips(at index: Int? = nil, atPlayhead: Bool = false) async {
-        importInsertIndex = index
-        importsAtPlayhead = atPlayhead
+    func addDemoClips() async {
         importStatus = "Generating demo clips…"
         do {
             let sources = try await DemoMediaGenerator.makeDemoSources(store: store, projectID: project.id)
@@ -1650,9 +1886,14 @@ final class WorkspaceModel {
         }
     }
 
+    /// What was brought in goes to the bin, which opens to show it; nothing goes straight onto
+    /// the timeline.
     private func finishImport(_ sources: [SourceAsset], _ errors: [Error]) {
         importStatus = nil
-        addSources(sources)
+        if !sources.isEmpty {
+            perform(AddToBinCommand(sources: sources))
+            isBinOpen = true
+        }
         if !errors.isEmpty {
             alertMessage = errors.map { $0.localizedDescription }.joined(separator: "\n")
         } else if !sources.isEmpty {

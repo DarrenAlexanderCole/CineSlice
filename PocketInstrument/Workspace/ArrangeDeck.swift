@@ -10,10 +10,11 @@ struct ArrangeDeck: View {
     var model: WorkspaceModel
     var onAddPhotos: () -> Void
     var onAddFiles: () -> Void
+    var onRecord: () -> Void
 
     var body: some View {
         VStack(spacing: 8) {
-            ClipStrip(model: model, onAddPhotos: onAddPhotos, onAddFiles: onAddFiles)
+            ClipStrip(model: model, onAddPhotos: onAddPhotos, onAddFiles: onAddFiles, onRecord: onRecord)
             SequenceLane(model: model).helpTopic(.lane)
             selectedClipBar
             // Play, then Split and Loop, at the wheel's ends: no row of their own, so the picture
@@ -149,6 +150,8 @@ struct ClipStrip: View {
     var model: WorkspaceModel
     var onAddPhotos: () -> Void
     var onAddFiles: () -> Void
+    /// Opens the Record page; takes go on the end of the sequence.
+    var onRecord: () -> Void
 
     private let tileWidth: CGFloat = 50
     private let tileHeight: CGFloat = 62
@@ -390,6 +393,16 @@ struct ClipStrip: View {
 
     private var addMenu: some View {
         Menu {
+            Button {
+                model.isBinOpen = true
+            } label: {
+                Label("Open the bin", systemImage: "tray.full")
+            }
+            Button {
+                onRecord()
+            } label: {
+                Label("Record", systemImage: "record.circle")
+            }
             Button {
                 onAddPhotos()
             } label: {
