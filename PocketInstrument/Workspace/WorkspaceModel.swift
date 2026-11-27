@@ -1745,14 +1745,16 @@ final class WorkspaceModel {
     /// Adds a take from the Record page to the bin's TAKES folder; nothing goes straight onto
     /// the timeline. Takes save one after another in the order they were taken, so the shutter
     /// never waits for the last one to finish.
-    func addTake(_ take: RecordedTake) async {
+    /// Adds a take to the bin; with `saveToDevice`, a copy also goes to Photos (video and photo,
+    /// through its look) or the Files app's Sounds folder (sound), without holding up the next.
+    func addTake(_ take: RecordedTake, saveToDevice: Bool = false) async {
         let name = "Take " + Self.takeTime.string(from: .now)
         let previous = takeSaving
         takesSaving += 1
         importStatus = takesSaving == 1 ? "Saving take…" : "Saving \(takesSaving) takes…"
         let saving = Task {
             await previous?.value
-            await saveTake(take, named: name)
+            await saveTake(take, named: name, saveToDevice: saveToDevice)
         }
         takeSaving = saving
         await saving.value
@@ -1760,7 +1762,7 @@ final class WorkspaceModel {
         if takesSaving > 0 { importStatus = takesSaving == 1 ? "Saving take…" : "Saving \(takesSaving) takes…" }
     }
 
-    private func saveTake(_ take: RecordedTake, named name: String) async {
+    private func saveTake(_ take: RecordedTake, named name: String, saveToDevice: Bool) async {
         do {
             switch take {
             case .video(let url, let look):
@@ -1770,6 +1772,10 @@ final class WorkspaceModel {
                 source.look = look
                 importStatus = nil
                 perform(AddToBinCommand(sources: [source]))
+                if saveToDevice {
+                    let stored = store.mediaURL(for: source, projectID: project.id)
+                    copyToDevice { try await DeviceSaver.saveVideo(stored, look: look) }
+                }
             case .photo(let data, let look):
                 var source = try await MediaImporter.adoptStill(
                     imageData: data, originalName: name, label: name, store: store, projectID: project.id)
@@ -1777,16 +1783,32 @@ final class WorkspaceModel {
                 source.look = look
                 importStatus = nil
                 perform(AddToBinCommand(sources: [source]))
+                if saveToDevice { copyToDevice { try await DeviceSaver.savePhoto(data, look: look) } }
             case .sound(let url):
                 let file = try await MediaImporter.adoptAudio(
                     tempURL: url, originalName: name, store: store, projectID: project.id)
                 binSound(file, isTake: true)
+                if saveToDevice {
+                    let stored = mediaURL(forFile: file.fileName)
+                    copyToDevice { try DeviceSaver.saveSound(stored, named: name) }
+                }
             }
             takesThisVisit += 1
         } catch {
             importStatus = nil
             alertMessage = "The take couldn't be added. \(error.localizedDescription)"
             Haptics.warning()
+        }
+    }
+
+    /// Makes a take's copy on the phone in the background; only a failure is reported.
+    private func copyToDevice(_ copy: @escaping @Sendable () async throws -> Void) {
+        Task {
+            do {
+                try await copy()
+            } catch {
+                alertMessage = "The take is in the bin, but its copy couldn't be saved. \(error.localizedDescription)"
+            }
         }
     }
 

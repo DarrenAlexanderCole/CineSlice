@@ -75,8 +75,7 @@ final class CameraRig {
     private(set) var cameraData = CameraData()
     /// The live picture can be shown through a look (the phone can afford the frame copy).
     private(set) var canShowLooks = true
-    /// The camera's lens can be set by hand, so the focus ring turns it (front cameras
-    /// usually can't).
+    /// The camera's lens can be set by hand, so the focus ring turns it.
     private(set) var canFocus = false
 
     /// Exposure is the camera's own; off, `shutterSpeed` and `iso` hold.
@@ -118,8 +117,32 @@ final class CameraRig {
     private let photoOutput = AVCapturePhotoOutput()
     private let frameOutput = AVCaptureVideoDataOutput()
     private nonisolated let frameQueue = DispatchQueue(label: "cineslice.record.frames")
-    /// The zoom factor of the main camera on a camera with an ultra wide: 1× as shown.
-    private var zoomBaseline: CGFloat = 1
+    /// One of the camera's lenses as a camera of its own, and where it starts on the zoom scale
+    /// (0.5 the ultra wide, 1 the main camera, 3 or 5 the telephoto).
+    private struct Lens {
+        let device: AVCaptureDevice
+        let base: Double
+        /// Where, on the zoom scale, a combined camera changes lens inside itself.
+        var changes: [Double] = []
+    }
+
+    /// How the back camera's lenses are used. ZOOM is the phone's combined camera: one smooth
+    /// zoom across every lens, but it won't take focus, exposure or white balance by hand, only
+    /// hold them (lock). PRIME uses each lens on its own, with everything by hand; the zoom ring
+    /// changes lens at its marks.
+    enum LensMode: String {
+        case zoom, prime
+    }
+
+    private(set) var lensMode = LensMode.zoom
+    /// This side can choose between ZOOM and PRIME (a back camera with more than one lens).
+    private(set) var hasLensChoice = false
+
+    /// This side's lenses, widest first: the combined camera alone for ZOOM, each lens for PRIME.
+    private var lenses: [Lens] = []
+    /// Exposure and white balance can be held where the camera has them, though not set.
+    private(set) var canLockExposure = false
+    private(set) var canLockBalance = false
     private var photoSize: CMVideoDimensions?
     private var videoInput: AVCaptureDeviceInput?
     private var configured = false
@@ -139,6 +162,7 @@ final class CameraRig {
         delegate.rig = self
         frameTap.rig = self
         if let saved = UserDefaults.standard.object(forKey: Self.frameRateKey) as? Int { frameRate = saved }
+        lensMode = UserDefaults.standard.string(forKey: Self.lensModeKey).flatMap(LensMode.init) ?? .zoom
         sound.onError = { [weak self] in self?.onError($0) }
         sound.onInterruptedTake = { [weak self] url in
             guard let self, self.mode == .sound, self.isRecording else { return }
@@ -214,8 +238,9 @@ final class CameraRig {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.sessionPreset = .high
-        guard let camera = Self.camera(at: position), let input = try? AVCaptureDeviceInput(device: camera),
-            session.canAddInput(input)
+        lenses = Self.lenses(at: position, mode: lensMode)
+        guard let camera = (lenses.first { $0.base == 1 } ?? lenses.first)?.device,
+            let input = try? AVCaptureDeviceInput(device: camera), session.canAddInput(input)
         else {
             hasCamera = false
             return
@@ -237,9 +262,7 @@ final class CameraRig {
                 photoOutput.isFastCapturePrioritizationEnabled = true
             }
         }
-        if let connection = movieOutput.connection(with: .video), connection.isVideoStabilizationSupported {
-            connection.preferredVideoStabilizationMode = .auto
-        }
+        stabilize()
         // A copy of the picture for the histogram; the recording itself is untouched.
         frameOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         frameOutput.alwaysDiscardsLateVideoFrames = true
@@ -250,8 +273,7 @@ final class CameraRig {
             if session.hardwareCost > 1 { session.removeOutput(frameOutput) }
         }
         canShowLooks = session.outputs.contains(frameOutput)
-        readLens()
-        followRotation()
+        readLenses()
     }
 
     /// The live picture's layer, once it's on screen: the session plays into it and it turns
@@ -301,22 +323,23 @@ final class CameraRig {
     func flipCamera() {
         guard !isRecording, let old = videoInput else { return }
         let next: AVCaptureDevice.Position = position == .back ? .front : .back
-        guard let camera = Self.camera(at: next), let input = try? AVCaptureDeviceInput(device: camera) else { return }
+        let nextLenses = Self.lenses(at: next, mode: lensMode)
+        guard let camera = (nextLenses.first { $0.base == 1 } ?? nextLenses.first)?.device,
+            let input = try? AVCaptureDeviceInput(device: camera)
+        else { return }
         session.beginConfiguration()
         session.removeInput(old)
         if session.canAddInput(input) {
             session.addInput(input)
             videoInput = input
             position = next
+            lenses = nextLenses
         } else {
             session.addInput(old)
         }
-        if let connection = movieOutput.connection(with: .video), connection.isVideoStabilizationSupported {
-            connection.preferredVideoStabilizationMode = .auto
-        }
+        stabilize()
         session.commitConfiguration()
-        readLens()
-        followRotation()
+        readLenses()
         Haptics.detent()
     }
 
@@ -348,11 +371,15 @@ final class CameraRig {
 
     // MARK: Exposure, white balance, frame rate
 
-    /// Learns what the new camera can do by hand and starts it automatic, at the chosen rate.
-    private func readExposure(_ device: AVCaptureDevice) {
+    /// What this camera can do by hand.
+    private func learn(_ device: AVCaptureDevice) {
         let format = device.activeFormat
+        canFocus = device.isLockingFocusWithCustomLensPositionSupported
         canExpose = device.isExposureModeSupported(.custom)
         canBalance = device.isLockingWhiteBalanceWithCustomDeviceGainsSupported
+        canLockExposure = device.isExposureModeSupported(.locked)
+        canLockBalance = device.isWhiteBalanceModeSupported(.locked)
+        hasLensChoice = Self.combinedCamera(at: position) != nil
         isoRange = format.minISO...max(format.minISO, format.maxISO)
         let low = max(1.0 / 8000, format.minExposureDuration.seconds)
         shutterRange = low...max(low, format.maxExposureDuration.seconds)
@@ -362,19 +389,38 @@ final class CameraRig {
             ranges.contains { Double(rate) >= $0.minFrameRate && Double(rate) <= $0.maxFrameRate }
         }
         if frameRates.isEmpty { frameRates = [30] }
-        isAutoExposure = true
-        isAutoWhiteBalance = true
-        exposureBias = 0
+    }
+
+    /// After a change of lens or side: learns the camera and carries every setting taken by hand
+    /// onto it (or back to automatic where this camera can't hold it).
+    private func lensChanged() {
+        guard let device = videoInput?.device else { return }
+        learn(device)
+        choosePhotoSize(for: device)
+        followRotation()
+        if !canFocus { focusDial = Self.autoFocusDial }
+        turnFocus(to: focusDial)
+        // A held (locked) setting doesn't carry to another camera: it goes back to automatic.
+        if !canExpose { isAutoExposure = true }
+        if !canBalance { isAutoWhiteBalance = true }
+        exposureBias = min(biasRange.upperBound, max(biasRange.lowerBound, exposureBias))
+        let (autoExposure, autoBalance, bias) = (isAutoExposure, isAutoWhiteBalance, exposureBias)
         adjust(device) { device in
-            if device.isExposureModeSupported(.continuousAutoExposure) {
+            if autoExposure, device.isExposureModeSupported(.continuousAutoExposure) {
                 device.exposureMode = .continuousAutoExposure
             }
-            device.setExposureTargetBias(0, completionHandler: nil)
-            if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+            device.setExposureTargetBias(bias, completionHandler: nil)
+            if autoBalance, device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                 device.whiteBalanceMode = .continuousAutoWhiteBalance
             }
         }
         setFrameRate(frameRates.contains(frameRate) ? frameRate : frameRates.contains(30) ? 30 : frameRates[0])
+        if !isAutoExposure {
+            shutterSpeed = min(longestShutter, max(shutterRange.lowerBound, shutterSpeed))
+            iso = min(isoRange.upperBound, max(isoRange.lowerBound, iso))
+            applyExposure()
+        }
+        if !isAutoWhiteBalance { setWhiteBalance() }
     }
 
     /// The longest shutter the frame rate allows: one frame.
@@ -410,12 +456,18 @@ final class CameraRig {
     }
 
     /// Manual exposure, starting where the camera had it, and back to automatic.
+    /// Where exposure can't be set by hand (ZOOM), it's held where the camera has it instead.
     func toggleAutoExposure() {
-        guard canExpose, let device = videoInput?.device else { return }
+        guard canExpose || canLockExposure, let device = videoInput?.device else { return }
         Haptics.detent()
-        if isAutoExposure {
+        if isAutoExposure, canExpose {
             takeExposure()
             applyExposure()
+        } else if isAutoExposure {
+            isAutoExposure = false
+            shutterSpeed = device.exposureDuration.seconds
+            iso = device.iso
+            adjust(device) { $0.exposureMode = .locked }
         } else {
             isAutoExposure = true
             adjust(device) { $0.exposureMode = .continuousAutoExposure }
@@ -464,11 +516,17 @@ final class CameraRig {
     }
 
     /// Holds the white balance where the camera had it, and back to automatic.
+    /// Where white balance can't be set by hand (ZOOM), it's held where the camera has it instead.
     func toggleAutoWhiteBalance() {
-        guard canBalance, let device = videoInput?.device else { return }
+        guard canBalance || canLockBalance, let device = videoInput?.device else { return }
         Haptics.detent()
-        if isAutoWhiteBalance {
+        if isAutoWhiteBalance, canBalance {
             setWhiteBalance()
+        } else if isAutoWhiteBalance {
+            isAutoWhiteBalance = false
+            kelvin = cameraData.kelvin > 0 ? cameraData.kelvin : kelvin
+            tint = 0
+            adjust(device) { $0.whiteBalanceMode = .locked }
         } else {
             isAutoWhiteBalance = true
             adjust(device) { $0.whiteBalanceMode = .continuousAutoWhiteBalance }
@@ -477,33 +535,87 @@ final class CameraRig {
 
     // MARK: Lens
 
-    /// Learns the new camera's zoom and focus and starts it at 1× and automatic focus.
-    private func readLens() {
-        guard let device = videoInput?.device else { return }
-        let hasUltraWide = device.constituentDevices.contains { $0.deviceType == .builtInUltraWideCamera }
-        zoomBaseline = hasUltraWide ? CGFloat(truncating: device.virtualDeviceSwitchOverVideoZoomFactors.first ?? 1) : 1
-        let low = Double(device.minAvailableVideoZoomFactor / zoomBaseline)
-        let high = Double(min(device.maxAvailableVideoZoomFactor, zoomBaseline * 10) / zoomBaseline)
-        zoomRange = low...max(low, high)
-        let lensChanges = device.virtualDeviceSwitchOverVideoZoomFactors.map {
-            Double(truncating: $0) / Double(zoomBaseline)
-        }
-        zoomMarks = Set([0.5, 1, 2, 3, 5, 10] + lensChanges.map { ($0 * 10).rounded() / 10 })
-            .filter { zoomRange.contains($0) }
-            .sorted()
-        canFocus = device.isLockingFocusWithCustomLensPositionSupported
-        choosePhotoSize(for: device)
+    /// Learns this side's lenses and starts at 1×, everything automatic.
+    private func readLenses() {
+        guard let top = lenses.last, let widest = lenses.first else { return }
+        let high = min(10, top.base * Double(top.device.maxAvailableVideoZoomFactor))
+        zoomRange = widest.base...max(widest.base, high)
+        let lensStarts: [Double] = lenses.flatMap { [$0.base] + $0.changes }.map { ($0 * 10).rounded() / 10 }
+        let stops: [Double] = [0.5, 1, 2, 3, 5, 10]
+        zoomMarks = Set(stops + lensStarts).filter { zoomRange.contains($0) }.sorted()
+        focusDial = Self.autoFocusDial
+        isAutoExposure = true
+        isAutoWhiteBalance = true
+        exposureBias = 0
+        lensChanged()
         setZoom(1)
-        turnFocus(to: Self.autoFocusDial)
-        readExposure(device)
     }
 
-    /// Zooms to `value` as shown (1 is the main camera).
+    /// Zooms to `value` as shown (1 is the main camera), changing lens where the zoom passes
+    /// one's start. Not while recording: then it zooms only within the lens in use.
     func setZoom(_ value: Double) {
-        guard let device = videoInput?.device else { return }
-        let shown = min(zoomRange.upperBound, max(zoomRange.lowerBound, value))
+        var shown = min(zoomRange.upperBound, max(zoomRange.lowerBound, value))
+        if !isRecording, let target = lens(for: shown), target.device != videoInput?.device { use(target) }
+        guard let device = videoInput?.device, let lens = lenses.first(where: { $0.device == device }) else { return }
+        shown = min(lens.base * Double(device.maxAvailableVideoZoomFactor), max(lens.base, shown))
         zoom = shown
-        adjust(device) { $0.videoZoomFactor = CGFloat(shown) * self.zoomBaseline }
+        let factor = CGFloat(shown / lens.base)
+        adjust(device) { $0.videoZoomFactor = factor }
+    }
+
+    /// The narrowest lens that reaches `shown`. A lens in use holds a little below its start,
+    /// so a ring resting on 3× doesn't flicker between lenses.
+    private func lens(for shown: Double) -> Lens? {
+        let current = lenses.first { $0.device == videoInput?.device }
+        if let current, shown < current.base, shown >= current.base * 0.97 { return current }
+        return lenses.last { $0.base <= shown + 0.0001 } ?? lenses.first
+    }
+
+    /// Changes to another lens on the same side, keeping the settings taken by hand.
+    private func use(_ lens: Lens) {
+        guard let old = videoInput, let input = try? AVCaptureDeviceInput(device: lens.device) else { return }
+        session.beginConfiguration()
+        session.removeInput(old)
+        if session.canAddInput(input) {
+            session.addInput(input)
+            videoInput = input
+        } else {
+            session.addInput(old)
+        }
+        stabilize()
+        session.commitConfiguration()
+        lensChanged()
+        Haptics.detent()
+    }
+
+    /// ZOOM or PRIME; the camera starts again at 1×, automatic.
+    func setLensMode(_ mode: LensMode) {
+        guard mode != lensMode, !isRecording, hasLensChoice, let old = videoInput else { return }
+        let next = Self.lenses(at: position, mode: mode)
+        guard let camera = (next.first { $0.base == 1 } ?? next.first)?.device,
+            let input = try? AVCaptureDeviceInput(device: camera)
+        else { return }
+        session.beginConfiguration()
+        session.removeInput(old)
+        if session.canAddInput(input) {
+            session.addInput(input)
+            videoInput = input
+            lenses = next
+            lensMode = mode
+            UserDefaults.standard.set(mode.rawValue, forKey: Self.lensModeKey)
+        } else {
+            session.addInput(old)
+        }
+        stabilize()
+        session.commitConfiguration()
+        readLenses()
+        Haptics.press()
+    }
+
+    private func stabilize() {
+        if let connection = movieOutput.connection(with: .video), connection.isVideoStabilizationSupported {
+            connection.preferredVideoStabilizationMode = .auto
+        }
     }
 
     /// Turns the focus ring: past the near end into AF is automatic focus, otherwise the lens
@@ -666,14 +778,37 @@ final class CameraRig {
 
     // MARK: Helpers
 
-    /// The back camera with all its lenses, so the zoom ring reaches the ultra wide and the
-    /// telephoto; the front one as it is.
-    private static func camera(at position: AVCaptureDevice.Position) -> AVCaptureDevice? {
-        let kinds: [AVCaptureDevice.DeviceType] =
-            position == .back
-            ? [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
-            : [.builtInWideAngleCamera]
-        return kinds.lazy.compactMap { AVCaptureDevice.default($0, for: .video, position: position) }.first
+    /// The back's combined camera (all its lenses behind one smooth zoom), if it has one.
+    private static func combinedCamera(at position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        guard position == .back else { return nil }
+        let kinds: [AVCaptureDevice.DeviceType] = [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera]
+        return kinds.lazy.compactMap { AVCaptureDevice.default($0, for: .video, position: .back) }.first
+    }
+
+    /// The lenses on `position`, widest first, with where each starts on the zoom scale (1× is
+    /// the main camera), read from the combined camera's switch-over points: for ZOOM the
+    /// combined camera alone, for PRIME each lens as a camera of its own. The front has one.
+    private static func lenses(at position: AVCaptureDevice.Position, mode: LensMode) -> [Lens] {
+        if let combined = combinedCamera(at: position) {
+            let rank: [AVCaptureDevice.DeviceType: Int] = [
+                .builtInUltraWideCamera: 0, .builtInWideAngleCamera: 1, .builtInTelephotoCamera: 2,
+            ]
+            let parts = combined.constituentDevices.sorted { rank[$0.deviceType] ?? 9 < rank[$1.deviceType] ?? 9 }
+            let starts = [1.0] + combined.virtualDeviceSwitchOverVideoZoomFactors.map { Double(truncating: $0) }
+            if parts.count == starts.count,
+                let main = parts.firstIndex(where: { $0.deviceType == .builtInWideAngleCamera })
+            {
+                let shown = starts.map { $0 / starts[main] }
+                if mode == .zoom {
+                    return [Lens(device: combined, base: shown[0], changes: Array(shown.dropFirst()))]
+                }
+                return parts.indices.map { Lens(device: parts[$0], base: shown[$0]) }
+            }
+        }
+        guard let wide = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
+            return []
+        }
+        return [Lens(device: wide, base: 1)]
     }
 
     private static func access(for media: AVMediaType) async -> Access {
@@ -689,6 +824,7 @@ final class CameraRig {
     }
 
     private static let frameRateKey = "record.frameRate"
+    private static let lensModeKey = "record.lensMode"
 
     /// Back to the app's own sound setting: playback, as set at launch.
     static func restorePlayback() {

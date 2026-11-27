@@ -48,6 +48,7 @@
 		A864D3E97243EA3A5A032444 /* LookCompositor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81BDAA72A69300F1881938E0 /* LookCompositor.swift */; };
 		ABB5BAC565BB1FCD6EC0B081 /* MixDeck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DF8AE6F304D0E552467BBF /* MixDeck.swift */; };
 		ABC80865925DFE487980EC3C /* MusicPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2D6B1E8FD79E15B152394E /* MusicPipelineTests.swift */; };
+		B0E543932E2AC5613FB57C3A /* DeviceSaver.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2472CBA3B502C672BB5062B /* DeviceSaver.swift */; };
 		B1164580EECF2F570841C6F1 /* LightboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DF916EBC3376B858F976BA3 /* LightboxView.swift */; };
 		B234F02052D46C663B23BBA8 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48E6F5D7028543BECDE616A1 /* Components.swift */; };
 		B529DE553CCA0A0B250EE47F /* LookLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 494265D3282588C0C9548788 /* LookLibrary.swift */; };
@@ -136,6 +137,7 @@
 		B9B0C3A1C8C4892E6D55422F /* HelpManualTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpManualTests.swift; sourceTree = "<group>"; };
 		BB503F9E82671553893CF232 /* PocketInstrument.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PocketInstrument.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BFE6E096ADE5D307BAB58C60 /* TigerStep.mlpackage */ = {isa = PBXFileReference; path = TigerStep.mlpackage; sourceTree = "<group>"; };
+		C2472CBA3B502C672BB5062B /* DeviceSaver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceSaver.swift; sourceTree = "<group>"; };
 		C75D056A78186D7396308549 /* HelpTopic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpTopic.swift; sourceTree = "<group>"; };
 		C8B666C98A969E96EAFB5102 /* TigerFront.mlpackage */ = {isa = PBXFileReference; path = TigerFront.mlpackage; sourceTree = "<group>"; };
 		CC973418764FD2780772793F /* LightboxRollers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightboxRollers.swift; sourceTree = "<group>"; };
@@ -203,6 +205,7 @@
 			isa = PBXGroup;
 			children = (
 				1DD87945B2DA503EA01F9888 /* CameraRig.swift */,
+				C2472CBA3B502C672BB5062B /* DeviceSaver.swift */,
 				B4B4BF59DA20572B2B251CFD /* Histogram.swift */,
 				CFE9C84F16897CC81FB1572C /* LensRing.swift */,
 				E1BB9026179EC449F10A0385 /* RecordView.swift */,
@@ -500,6 +503,7 @@
 				B234F02052D46C663B23BBA8 /* Components.swift in Sources */,
 				4DE251C57513F0C5A47BCA57 /* CompositionBuilder.swift in Sources */,
 				8F6A0FA38E90D1D37E773F85 /* DemoMediaGenerator.swift in Sources */,
+				B0E543932E2AC5613FB57C3A /* DeviceSaver.swift in Sources */,
 				F78ADA3B97060B3A89D95A88 /* ExploreDeck.swift in Sources */,
 				CF5BB531EC77106A70E817FF /* ExportService.swift in Sources */,
 				6A64129068E57B9FF8A29FC4 /* ExportSheet.swift in Sources */,

@@ -11,9 +11,9 @@ import UniformTypeIdentifiers
 /// picture upright, stood up on its left held sideways, where the left hand works them like a
 /// lens. Their pages: LENS (zoom, focus), EXPO (shutter, then ISO by hand or exposure
 /// compensation on automatic) and WB (colour temperature, tint), with the frame rate beside
-/// them. In the picture's corner: the camera's settings, the look (shot through, shown live and
-/// kept on every take) and a live RGB histogram of the picture through it; each taps or swipes
-/// down out of the way. Sound mode's screen is a small recorder desk (`SoundDesk`).
+/// them. In the picture's bottom corners: on the left the look key (shot through, shown live and
+/// kept on every take); on the right the camera's settings and a live RGB histogram of the
+/// picture through the look, each tapping or swiping down out of the way. Sound mode's screen is a small recorder desk (`SoundDesk`).
 struct RecordView: View {
     var model: WorkspaceModel
     var onDone: () -> Void
@@ -22,7 +22,11 @@ struct RecordView: View {
     /// Where the picture was last tapped to focus, shown for a moment.
     @State private var focusMark: CGPoint?
     @State private var showsCubeImport = false
+    /// The list of looks is open over the picture.
+    @State private var showsLooks = false
     @AppStorage("record.ringPage") private var ringPage = RingPage.lens
+    /// Takes are copied to Photos (or Files, for sound) as well as going into the bin.
+    @AppStorage("record.saveToDevice") private var saveToDevice = false
     /// The look last shot with, so the next visit starts with it.
     @AppStorage("record.look") private var savedLook = Data()
 
@@ -47,7 +51,7 @@ struct RecordView: View {
                 }
                 if !wide, showsRings { rings(vertical: false).frame(height: 106) }
                 controls(wide: wide)
-                    .frame(width: wide ? 132 : nil, height: wide ? nil : 190)
+                    .frame(width: wide ? 132 : nil, height: wide ? nil : 230)
             }
             .padding(.horizontal, wide ? 12 : 10)
             .padding(.vertical, 8)
@@ -59,7 +63,7 @@ struct RecordView: View {
         .statusBarHidden()
         .task {
             model.beginRecording()
-            rig.onTake = { take in Task { await model.addTake(take) } }
+            rig.onTake = { take in Task { await model.addTake(take, saveToDevice: saveToDevice) } }
             rig.onError = { model.alertMessage = $0 }
             if let look = try? JSONDecoder().decode(Look.self, from: savedLook), LookLibrary.cube(for: look) != nil {
                 rig.setLook(look)
@@ -67,6 +71,8 @@ struct RecordView: View {
             await rig.start()
         }
         .onDisappear { rig.stop() }
+        .onChange(of: rig.mode) { showsLooks = false }
+        .onChange(of: rig.isRecording) { if rig.isRecording, rig.mode == .video { showsLooks = false } }
         .onChange(of: rig.look) { _, look in
             savedLook = look.flatMap { try? JSONEncoder().encode($0) } ?? Data()
         }
@@ -111,15 +117,32 @@ struct RecordView: View {
                     .overlay(alignment: .topLeading) { focusSquare }
                 if rig.flash { Color.white.opacity(0.7).allowsHitTesting(false) }
                 HStack(alignment: .bottom, spacing: 6) {
-                    CameraReadout(rig: rig) { showsCubeImport = true }
+                    LookKey(rig: rig, isOpen: showsLooks) {
+                        withAnimation(.easeOut(duration: 0.15)) { showsLooks.toggle() }
+                    }
+                    Spacer(minLength: 6)
+                    CameraReadout(rig: rig)
                     ScopeCorner(rig: rig)
                 }
                 .padding(10)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                if showsLooks {
+                    // A tap anywhere else closes the list.
+                    Color.black.opacity(0.001)
+                        .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { showsLooks = false } }
+                    LookPanel(rig: rig) { importing in
+                        withAnimation(.easeOut(duration: 0.15)) { showsLooks = false }
+                        if importing { showsCubeImport = true }
+                    }
+                    .padding(.leading, 10)
+                    .padding(.top, 44)
+                    .padding(.bottom, 44)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottomLeading)))
+                }
             }
             if let status = model.importStatus {
                 VStack(alignment: .leading) {
-                    Spacer()
                     HStack(spacing: 6) {
                         ProgressView().tint(Theme.signal).controlSize(.mini)
                         Text(status.uppercased()).font(Theme.mono(9, weight: .bold)).foregroundStyle(Theme.label)
@@ -127,7 +150,9 @@ struct RecordView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(Color.black.opacity(0.7)))
-                    .padding(10)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 46)
+                    Spacer()
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -154,20 +179,27 @@ struct RecordView: View {
                 switch ringPage {
                 case .lens:
                     ringRow(
-                        "ZOOM", String(format: "%.1f×", rig.zoom), vertical: vertical,
-                        ring: zoomRing(vertical: vertical))
+                        rig.lensMode == .zoom ? "ZOOM" : "PRIME", String(format: "%.1f×", rig.zoom),
+                        vertical: vertical, ring: zoomRing(vertical: vertical),
+                        key: rig.hasLensChoice
+                            ? PlateKey(
+                                active: rig.lensMode == .prime, enabled: !rig.isRecording, label: "Prime lenses",
+                                hint:
+                                    "On, each lens on its own with everything by hand; the ring changes lens at its marks. Off, one smooth zoom across the lenses, with exposure and white balance automatic or held."
+                            ) { rig.setLensMode(rig.lensMode == .zoom ? .prime : .zoom) } : nil)
                     ringRow(
-                        "FOCUS", focusReadout, vertical: vertical, ring: focusRing(vertical: vertical),
+                        "FOCUS", focusReadout, vertical: vertical, ring: focusRing(vertical: vertical), note: primeNote,
                         key: PlateKey(
                             active: !rig.isAutoFocus, enabled: rig.canFocus, label: "Manual focus",
                             hint: "Turn the ring to focus by hand. Off, the camera focuses itself."
                         ) { rig.toggleManualFocus() })
                 case .exposure:
                     ringRow(
-                        rig.isAutoExposure ? "AE" : "SHUTTER", shutterReadout, vertical: vertical,
-                        ring: shutterRing(vertical: vertical),
+                        rig.isAutoExposure ? "AE" : rig.canExpose ? "SHUTTER" : "AE LOCK", shutterReadout,
+                        vertical: vertical, ring: shutterRing(vertical: vertical), note: primeNote,
                         key: PlateKey(
-                            active: !rig.isAutoExposure, enabled: rig.canExpose, label: "Manual exposure",
+                            active: !rig.isAutoExposure, enabled: rig.canExpose || rig.canLockExposure,
+                            label: rig.canExpose ? "Manual exposure" : "Hold exposure",
                             hint: "On, the shutter and ISO hold where you set them. Off, the camera exposes itself."
                         ) { rig.toggleAutoExposure() })
                     if rig.isAutoExposure {
@@ -179,21 +211,23 @@ struct RecordView: View {
                             ) { rig.setExposureBias(0) })
                     } else {
                         ringRow(
-                            "ISO", "\(Int(rig.iso.rounded()))", vertical: vertical, ring: isoRing(vertical: vertical))
+                            "ISO", "\(Int(rig.iso.rounded()))", vertical: vertical, ring: isoRing(vertical: vertical),
+                            note: primeNote)
                     }
                 case .balance:
                     ringRow(
-                        rig.isAutoWhiteBalance ? "AWB" : "WB", kelvinReadout, vertical: vertical,
-                        ring: kelvinRing(vertical: vertical),
+                        rig.isAutoWhiteBalance ? "AWB" : rig.canBalance ? "WB" : "WB LOCK", kelvinReadout,
+                        vertical: vertical, ring: kelvinRing(vertical: vertical), note: primeNote,
                         key: PlateKey(
-                            active: !rig.isAutoWhiteBalance, enabled: rig.canBalance, label: "Manual white balance",
+                            active: !rig.isAutoWhiteBalance, enabled: rig.canBalance || rig.canLockBalance,
+                            label: rig.canBalance ? "Manual white balance" : "Hold white balance",
                             hint: "On, the colour holds where you set it. Off, the camera balances itself."
                         ) { rig.toggleAutoWhiteBalance() })
                     ringRow(
-                        "TINT", tintReadout, vertical: vertical, ring: tintRing(vertical: vertical),
+                        "TINT", tintReadout, vertical: vertical, ring: tintRing(vertical: vertical), note: primeNote,
                         key: PlateKey(
-                            active: rig.tint != 0 && !rig.isAutoWhiteBalance,
-                            enabled: rig.tint != 0 && !rig.isAutoWhiteBalance, label: "Tint",
+                            active: rig.tint != 0 && !rig.isAutoWhiteBalance && rig.canBalance,
+                            enabled: rig.tint != 0 && !rig.isAutoWhiteBalance && rig.canBalance, label: "Tint",
                             hint: "Back to no tint."
                         ) { rig.setWhiteBalance(tint: 0) })
                 }
@@ -270,10 +304,14 @@ struct RecordView: View {
         let action: () -> Void
     }
 
-    /// A ring with its name and reading beside it. With a `key`, the name plate is a key.
-    private func ringRow(_ title: String, _ readout: String, vertical: Bool, ring: LensRing, key: PlateKey? = nil)
-        -> some View
-    {
+    /// Said over a ring that ZOOM can't turn by hand.
+    private var primeNote: String? { rig.lensMode == .zoom && rig.hasLensChoice ? "BY HAND IN PRIME" : nil }
+
+    /// A ring with its name and reading beside it. With a `key`, the name plate is a key; a
+    /// `note` is shown over the ring while it can't be turned.
+    private func ringRow(
+        _ title: String, _ readout: String, vertical: Bool, ring: LensRing, note: String? = nil, key: PlateKey? = nil
+    ) -> some View {
         let layout = vertical ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 6))
         let plate = VStack(spacing: 1) {
             Text(title).font(Theme.mono(7, weight: .bold)).foregroundStyle(Theme.secondaryLabel)
@@ -294,7 +332,20 @@ struct RecordView: View {
             } else {
                 plate.frame(width: 48).accessibilityHidden(true)
             }
-            ring
+            ring.overlay {
+                if let note, !ring.enabled {
+                    Text(note)
+                        .font(Theme.mono(7, weight: .heavy))
+                        .tracking(1)
+                        .foregroundStyle(LensRing.engraving)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.black.opacity(0.75)))
+                        .rotationEffect(.degrees(vertical ? -90 : 0))
+                        .fixedSize()
+                        .allowsHitTesting(false)
+                }
+            }
         }
     }
 
@@ -537,6 +588,7 @@ struct RecordView: View {
                     flipKey
                 }
             }
+            saveKey
             Spacer(minLength: 0)
         }
     }
@@ -576,6 +628,45 @@ struct RecordView: View {
         .disabled(rig.isRecording)
         .accessibilityLabel("Done")
         .accessibilityValue("\(model.takesThisVisit) takes added")
+    }
+
+    /// Copies every take out to the phone too: Photos for video and photos, Files for sound.
+    /// Turning it on asks for leave to add to Photos.
+    private var saveKey: some View {
+        Button {
+            if saveToDevice {
+                saveToDevice = false
+                Haptics.detent()
+            } else {
+                Task {
+                    if await DeviceSaver.canAddToPhotos() {
+                        saveToDevice = true
+                        Haptics.detent()
+                    } else {
+                        model.alertMessage =
+                            "CineSlice isn't allowed to add to Photos. Turn it on in Settings › CineSlice › Photos."
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                LED(isOn: saveToDevice)
+                Image(systemName: rig.mode == .sound ? "folder" : "photo.on.rectangle")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(rig.mode == .sound ? "ALSO SAVE TO FILES" : "ALSO SAVE TO PHOTOS")
+                    .font(Theme.mono(9, weight: .bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.instrument(.dark, active: saveToDevice, height: 30))
+        .accessibilityLabel(rig.mode == .sound ? "Also save to Files" : "Also save to Photos")
+        .accessibilityValue(saveToDevice ? "On" : "Off")
+        .accessibilityHint(
+            "Takes still go into the bin. On, a copy also goes to Photos, with its look, or for sound to the Files app."
+        )
     }
 
     @ViewBuilder
@@ -724,12 +815,10 @@ private struct ScopeCorner: View {
 }
 
 /// The camera's settings beside the histogram, on the same smoked panel: f-stop, shutter, ISO
-/// and white balance (in the rings' yellow when set by hand), and under them the look, a menu
-/// of the app's looks by kind, imported ones and importing a `.cube`. A tap on the settings, or
-/// a swipe down, folds it to a small CAM key (lit while a look is on); the key brings it back.
+/// and white balance (in the rings' yellow when set by hand). A tap, or a swipe down, folds it
+/// to a small CAM key; the key brings it back.
 private struct CameraReadout: View {
     let rig: CameraRig
-    let onImport: () -> Void
     @AppStorage("record.showsCameraData") private var shows = true
 
     var body: some View {
@@ -740,7 +829,7 @@ private struct CameraReadout: View {
                 Button {
                     Folding(shows: $shows).fold()
                 } label: {
-                    FoldedKey(title: "CAM", lit: rig.look != nil)
+                    FoldedKey(title: "CAM")
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Show camera settings")
@@ -766,11 +855,9 @@ private struct CameraReadout: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isButton)
             .accessibilityHint("Folds the camera settings away.")
-            lookMenu
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 6)
-        .frame(height: 56)
         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.black.opacity(0.8)))
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -796,58 +883,117 @@ private struct CameraReadout: View {
     private var iso: String { data.iso > 0 ? "ISO \(Int(data.iso.rounded()))" : "ISO –" }
 
     private var kelvin: String { data.kelvin > 0 ? "\(Int((data.kelvin / 100).rounded()) * 100)K" : "AWB" }
+}
 
-    private var lookMenu: some View {
-        Menu {
-            Button {
-                rig.setLook(nil)
-            } label: {
-                Label("Clean", systemImage: rig.look == nil ? "checkmark" : "circle.slash")
-            }
-            ForEach(LookLibrary.builtInGroups, id: \.title) { group in
-                Menu(group.title) {
-                    ForEach(group.looks, id: \.id) { look in lookButton(look) }
-                }
-            }
-            let imported = LookLibrary.imported()
-            if !imported.isEmpty {
-                Menu("Imported") {
-                    ForEach(imported, id: \.id) { look in lookButton(look) }
-                }
-            }
-            Button(action: onImport) {
-                Label("Import .cube…", systemImage: "square.and.arrow.down")
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(rig.look == nil ? Theme.secondaryLabel.opacity(0.4) : Theme.signal)
-                    .frame(width: 5, height: 5)
-                Text(rig.look?.name ?? "CLEAN")
-                    .font(Theme.mono(8, weight: .bold))
-                    .foregroundStyle(rig.look == nil ? Theme.secondaryLabel : Theme.signal)
-                    .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 6, weight: .bold))
-                    .foregroundStyle(Theme.secondaryLabel)
-            }
-            .frame(maxWidth: 96, alignment: .leading)
+/// The look's key in the picture's other corner: a small LUT key like the CAM and RGB keys,
+/// lit while a look is on, that opens the list of looks (`LookPanel`). It's easy to hit for its
+/// size: the touch area reaches past the capsule.
+private struct LookKey: View {
+    let rig: CameraRig
+    let isOpen: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            FoldedKey(title: "LUT", lit: rig.look != nil)
+                .overlay(Capsule().strokeBorder(isOpen ? Theme.signal.opacity(0.8) : .clear, lineWidth: 1))
+                .padding(10)
+                .contentShape(Rectangle())
+                .padding(-10)
         }
+        .buttonStyle(.plain)
         .disabled(!rig.canShowLooks || (rig.isRecording && rig.mode == .video))
         .accessibilityLabel("Look")
         .accessibilityValue(rig.look?.name ?? "Clean")
         .accessibilityHint("The look the picture is shot through. It stays on the take, and can be changed in the bin.")
     }
+}
 
-    private func lookButton(_ look: Look) -> some View {
-        Button {
-            rig.setLook(look)
-        } label: {
-            if rig.look?.id == look.id {
-                Label(look.name, systemImage: "checkmark")
-            } else {
-                Text(look.name)
+/// The looks, listed on a smoked panel above the look key: clean, the app's own by kind, the
+/// imported ones, and importing a `.cube`. Choosing one shoots through it and closes the list.
+private struct LookPanel: View {
+    let rig: CameraRig
+    /// Closes the list; true when it closes to import a `.cube`.
+    let onClose: (Bool) -> Void
+
+    @State private var imported = LookLibrary.imported()
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                row("CLEAN", selected: rig.look == nil) { choose(nil) }
+                ForEach(groups, id: \.title) { group in
+                    Text(group.title.uppercased())
+                        .font(Theme.mono(7, weight: .heavy))
+                        .tracking(1.5)
+                        .foregroundStyle(Theme.aluminum.opacity(0.6))
+                        .padding(.horizontal, 12)
+                        .padding(.top, 10)
+                        .padding(.bottom, 3)
+                        .accessibilityAddTraits(.isHeader)
+                    ForEach(group.looks, id: \.id) { look in
+                        row(look.name, selected: rig.look?.id == look.id) { choose(look) }
+                    }
+                }
+                Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6)
+                Button {
+                    onClose(true)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.and.arrow.down").font(.system(size: 11, weight: .semibold))
+                        Text("IMPORT .CUBE…").font(Theme.mono(10, weight: .bold))
+                        Spacer()
+                    }
+                    .foregroundStyle(Theme.label)
+                    .padding(.horizontal, 12)
+                    .frame(height: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
+            .padding(.vertical, 6)
         }
+        .scrollIndicators(.hidden)
+        .frame(width: 210)
+        .frame(maxHeight: 420)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.black.opacity(0.88)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(
+                Theme.aluminum.opacity(0.5), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .shadow(color: .black.opacity(0.5), radius: 8, y: 4)
+    }
+
+    private var groups: [(title: String, looks: [Look])] {
+        LookLibrary.builtInGroups + (imported.isEmpty ? [] : [("Imported", imported)])
+    }
+
+    private func choose(_ look: Look?) {
+        rig.setLook(look)
+        onClose(false)
+    }
+
+    private func row(_ name: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(selected ? Theme.signal : Theme.aluminum.opacity(0.2))
+                    .frame(width: 6, height: 6)
+                    .shadow(color: selected ? Theme.signal : .clear, radius: 3)
+                Text(name)
+                    .font(Theme.mono(10, weight: .bold))
+                    .foregroundStyle(selected ? Theme.signal : Theme.label)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(selected ? Theme.signal.opacity(0.1) : .clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

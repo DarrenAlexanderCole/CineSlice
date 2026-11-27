@@ -28,17 +28,21 @@
 	<array>
 		<string>instagram</string>
 	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>CineSlice records video and photos straight into your project.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>CineSlice records sound with your videos, and sound on its own, into your project.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>CineSlice saves your finished exports to Photos.</string>
+	<string>CineSlice saves your finished exports, and your takes when you ask, to Photos.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiresFullScreen</key>

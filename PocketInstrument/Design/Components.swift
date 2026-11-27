@@ -40,7 +40,8 @@ struct InstrumentButtonStyle: ButtonStyle {
 
 /// A machined key: a cap seated in a dark well, bevelled light on top and shadowed below, that
 /// sinks when pressed. Dark caps are graphite, `.key` caps brushed aluminum, `.prominent` Signal.
-/// A lit cap shows an LED and a Signal ring.
+/// A lit cap shows a Signal ring, and on full-size keys an LED in its corner (on slim keys the
+/// LED would sit on the label, and the ring says it already).
 struct KeyCap: View {
     var kind: InstrumentButtonStyle.Kind = .dark
     var isLit = false
@@ -79,9 +80,9 @@ struct KeyCap: View {
                     shape.strokeBorder(isLit ? Theme.signal : .clear, lineWidth: 1.4)
                         .shadow(color: isLit ? Theme.signal.opacity(0.75) : .clear, radius: 7)
                 )
-                .overlay(alignment: compact ? .leading : .topTrailing) {
-                    if isLit {
-                        LED(isOn: true).padding(compact ? 8 : 5)
+                .overlay(alignment: .topTrailing) {
+                    if isLit && !compact {
+                        LED(isOn: true).padding(5)
                     }
                 }
                 .shadow(
